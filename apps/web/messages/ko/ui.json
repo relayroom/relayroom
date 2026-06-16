@@ -1,0 +1,89 @@
+{
+  "confirm": {
+    "defaultCancel": "취소",
+    "defaultConfirm": "확인"
+  },
+  "commandPalette": {
+    "title": "명령어 팔레트",
+    "description": "페이지 이동 및 빠른 실행",
+    "inputPlaceholder": "스레드·이벤트·에이전트 검색, 또는 페이지 이동…",
+    "empty": "결과 없음",
+    "groupNav": "이동",
+    "groupQuick": "빠른 실행",
+    "navDashboard": "대시보드",
+    "navProjects": "프로젝트",
+    "navOrganizations": "조직",
+    "navProfile": "내 정보",
+    "navSettings": "설정",
+    "quickNewProject": "새 프로젝트",
+    "quickNewOrg": "조직 만들기",
+    "groupThreads": "스레드",
+    "groupEvents": "이벤트",
+    "groupAgents": "에이전트",
+    "searching": "검색 중…"
+  },
+  "imageDropzone": {
+    "errorInvalidType": "PNG, JPEG, WebP 이미지만 업로드할 수 있습니다.",
+    "errorTooLarge": "파일 크기는 5MB 이하여야 합니다.",
+    "errorUploadFailed": "업로드 실패",
+    "loading": "이미지 업로드 중...",
+    "success": "이미지가 업로드되었습니다.",
+    "errorUploadFailedToast": "이미지 업로드에 실패했습니다.",
+    "ariaUploadArea": "이미지 업로드 영역",
+    "previewAlt": "미리보기",
+    "ariaRemove": "이미지 제거",
+    "prompt": "드래그하거나 클릭하여 업로드",
+    "constraints": "PNG, JPEG, WebP · 최대 5MB"
+  },
+  "themeSwitcher": {
+    "ariaToggle": "테마 전환"
+  },
+  "themeSettings": {
+    "title": "테마",
+    "description": "인터페이스의 색상 테마를 선택합니다.",
+    "light": "라이트",
+    "dark": "다크",
+    "system": "시스템",
+    "lightDesc": "밝은 배경의 환한 인터페이스입니다.",
+    "darkDesc": "어두운 배경으로 눈의 피로를 줄입니다.",
+    "systemDesc": "운영체제 설정에 따라 라이트와 다크를 자동으로 전환합니다."
+  },
+  "liveUpdates": {
+    "connected": "실시간 연결됨",
+    "connecting": "연결 중",
+    "disconnected": "연결 끊김",
+    "ariaStatus": "연결 상태: {label}"
+  },
+  "markdownEditor": {
+    "defaultPlaceholder": "내용을 입력하세요...",
+    "previewEmpty": "미리볼 내용이 없습니다",
+    "write": "작성",
+    "preview": "미리보기",
+    "supportsMarkdown": "마크다운을 지원합니다"
+  },
+  "newThreadForm": {
+    "errorSelectPart": "수신 파트를 하나 이상 선택하거나 입력해 주세요.",
+    "errorSubjectRequired": "제목을 입력해 주세요.",
+    "errorBodyRequired": "내용을 입력해 주세요.",
+    "errorSendFailed": "전송에 실패했습니다.",
+    "subjectLabel": "제목",
+    "subjectPlaceholder": "협의 제목",
+    "partsLabel": "수신 파트",
+    "newPartPlaceholder": "새 파트 이름 직접 입력 (선택)",
+    "bodyLabel": "내용",
+    "bodyPlaceholder": "첫 메시지를 입력하세요...",
+    "submitting": "전송 중...",
+    "submit": "협의 시작",
+    "cancel": "취소"
+  },
+  "replyForm": {
+    "closed": "닫힌 스레드입니다",
+    "errorSendFailed": "전송에 실패했습니다.",
+    "placeholder": "메시지를 입력하세요...",
+    "submitting": "전송 중...",
+    "submit": "보내기"
+  },
+  "dashboard": {
+    "skipToContent": "본문 바로가기"
+  }
+}

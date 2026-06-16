@@ -1,0 +1,76 @@
+{
+  "profile": {
+    "pageTitle": "내 프로필",
+    "pageDescription": "계정 정보를 확인하고 이름을 수정합니다.",
+    "accountInfo": {
+      "title": "계정 정보",
+      "description": "이메일은 변경할 수 없습니다.",
+      "emailLabel": "이메일",
+      "readOnly": "읽기 전용"
+    },
+    "editName": {
+      "title": "이름 수정",
+      "description": "표시 이름을 변경합니다."
+    },
+    "form": {
+      "nameLabel": "이름",
+      "namePlaceholder": "홍길동",
+      "nicknameLabel": "닉네임",
+      "nicknamePlaceholder": "대시보드에 표시할 이름 (선택)",
+      "nicknameHint": "설정하면 대시보드 곳곳에서 이름 대신 표시됩니다.",
+      "save": "저장",
+      "nameRequired": "이름을 입력하세요",
+      "nameTooLong": "이름은 100자 이하여야 합니다",
+      "nicknameTooLong": "닉네임은 50자 이하여야 합니다",
+      "saving": "저장 중...",
+      "saveSuccess": "프로필이 업데이트됐습니다",
+      "saveError": "프로필 업데이트에 실패했습니다"
+    }
+  },
+  "password": {
+    "pageTitle": "비밀번호 변경",
+    "pageDescription": "현재 비밀번호를 확인한 후 새 비밀번호로 변경합니다.",
+    "cardTitle": "비밀번호 변경",
+    "cardDescription": "비밀번호 변경 후 다른 기기의 세션이 자동으로 만료됩니다.",
+    "form": {
+      "currentPasswordLabel": "현재 비밀번호",
+      "currentPasswordPlaceholder": "현재 비밀번호",
+      "newPasswordLabel": "새 비밀번호",
+      "newPasswordPlaceholder": "8자 이상",
+      "confirmPasswordLabel": "새 비밀번호 확인",
+      "confirmPasswordPlaceholder": "새 비밀번호 재입력",
+      "submit": "비밀번호 변경",
+      "showPassword": "비밀번호 보기",
+      "hidePassword": "비밀번호 숨기기",
+      "currentPasswordRequired": "현재 비밀번호를 입력하세요",
+      "newPasswordTooShort": "새 비밀번호는 8자 이상이어야 합니다",
+      "newPasswordTooLong": "비밀번호는 128자 이하여야 합니다",
+      "confirmPasswordRequired": "비밀번호 확인을 입력하세요",
+      "passwordMismatch": "새 비밀번호가 일치하지 않습니다",
+      "changing": "비밀번호를 변경하는 중...",
+      "changeSuccess": "비밀번호가 변경됐습니다. 다른 기기의 세션이 만료됩니다.",
+      "changeError": "비밀번호 변경에 실패했습니다"
+    }
+  },
+  "organizations": {
+    "pageTitle": "내 조직 멤버십",
+    "pageDescription": "소속된 조직과 역할을 확인하고 활성 조직을 전환합니다.",
+    "listTitle": "멤버십 목록",
+    "listDescriptionWithCount": "총 {count}개 조직에 속해 있습니다.",
+    "listDescriptionEmpty": "아직 속한 조직이 없습니다.",
+    "emptyState": "아직 속한 조직이 없습니다.",
+    "createOrg": "조직 만들기",
+    "viewButton": "보기",
+    "setActiveButton": "활성으로 설정",
+    "settingActive": "설정 중...",
+    "activeBadge": "활성",
+    "roles": {
+      "owner": "소유자",
+      "admin": "관리자",
+      "member": "멤버"
+    },
+    "setActiveLoading": "활성 조직을 변경하는 중...",
+    "setActiveSuccess": "활성 조직이 변경됐습니다",
+    "setActiveError": "활성 조직 설정에 실패했습니다"
+  }
+}

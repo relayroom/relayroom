@@ -1,0 +1,57 @@
+{
+  "createForm": {
+    "cardTitle": "Create Team",
+    "cardDescription": "Create a new team (organization) and invite members.",
+    "nameLabel": "Team Name",
+    "namePlaceholder": "e.g. Acme Inc",
+    "slugLabel": "Slug",
+    "slugPlaceholder": "e.g. acme",
+    "slugHint": "Lowercase letters, numbers, and hyphens only (e.g. my-team)",
+    "submit": "Create Team",
+    "submitting": "Creating...",
+    "nameRequired": "Please enter a team name",
+    "nameTooLong": "Team name must be 50 characters or fewer",
+    "slugRequired": "Please enter a slug",
+    "slugTooLong": "Slug must be 50 characters or fewer",
+    "slugInvalid": "Only lowercase letters, numbers, and hyphens are allowed (e.g. my-team)",
+    "creating": "Creating team...",
+    "createSuccess": "Team \"{name}\" created",
+    "createError": "Failed to create team"
+  },
+  "inviteForm": {
+    "emailLabel": "Email",
+    "roleLabel": "Role",
+    "submit": "Send Invite",
+    "submitting": "Sending...",
+    "emailRequired": "Please enter an email address",
+    "emailInvalid": "Please enter a valid email address",
+    "roleRequired": "Please select a role",
+    "sending": "Sending invitation...",
+    "sendSuccess": "Invitation sent to {email}",
+    "sendError": "Failed to send invitation"
+  },
+  "orgList": {
+    "title": "My Teams",
+    "descriptionEmpty": "You are not in any team yet. Create one above.",
+    "description": "View your teams and roles, and switch your active team.",
+    "activeBadge": "Active",
+    "setActiveButton": "Set as Active Team",
+    "settingActive": "Setting...",
+    "setActiveSuccess": "Active team updated",
+    "setActiveError": "Failed to set active team"
+  },
+  "pendingInvitations": {
+    "empty": "No pending invitations.",
+    "colEmail": "Email",
+    "colRole": "Role",
+    "colStatus": "Status",
+    "colExpires": "Expires",
+    "colActions": "Actions",
+    "copyLinkButton": "Copy Invite Link",
+    "cancelButton": "Cancel",
+    "copySuccess": "Invite link copied",
+    "copyError": "Failed to copy to clipboard",
+    "cancelSuccess": "Invitation cancelled",
+    "cancelError": "Failed to cancel invitation"
+  }
+}

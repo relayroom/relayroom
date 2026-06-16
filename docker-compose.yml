@@ -1,0 +1,84 @@
+services:
+  postgres:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hub
+      POSTGRES_PASSWORD: hub
+      POSTGRES_DB: hub
+    ports:
+      - "48802:5432"
+    volumes:
+      # Bind-mount the DB data into a repo-local dir (gitignored) so the dev
+      # database is inspectable on the host. postgres:18 keeps its cluster under
+      # /var/lib/postgresql/18/docker, so we mount the parent to capture it.
+      - ./db_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hub"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  server:
+    image: relayroom-server
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: apps/server/Dockerfile
+    environment:
+      DATABASE_URL: postgres://hub:hub@postgres:5432/hub
+      PORT: "48801"
+    ports:
+      - "48801:48801"
+    # Migrations run on boot before the server listens, so /health passing means the
+    # schema is ready; web gates on this to avoid querying an unmigrated DB.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:48801/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    image: relayroom-web
+    restart: unless-stopped
+    # The image runs as the unprivileged node user (uid 1000). The ./storage
+    # bind-mount below must therefore be writable by uid 1000 on the host:
+    #   mkdir -p storage && sudo chown -R 1000:1000 storage
+    # (made explicit here so the running uid matches the host dir owner.)
+    user: "1000:1000"
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    environment:
+      HUB_API_URL: http://server:48801
+      DATABASE_URL: postgres://hub:hub@postgres:5432/hub
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET in .env}
+      BETTER_AUTH_URL: http://localhost:48800
+      # PUBLIC address agents reach the MCP server (:48801) at - shown in the connect
+      # command. Set this to your server's reachable address for remote agents, e.g.
+      # http://10.0.0.240:48801 or https://hub.example.com. Default = localhost (same
+      # machine only). Read at runtime, so no rebuild needed to change it.
+      RELAYROOM_PUBLIC_SERVER_BASE: ${RELAYROOM_PUBLIC_SERVER_BASE:-http://localhost:48801}
+      # SMTP for invitation emails. Empty = dev fallback (link shown in UI + logged).
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_SECURE: ${SMTP_SECURE:-}
+      # Storage: volume-mounted directory for uploaded media (project images etc.)
+      # The local driver writes here; swap STORAGE_DRIVER=s3 for S3/R2 later.
+      STORAGE_DIR: /app/storage
+    volumes:
+      - ./storage:/app/storage
+    ports:
+      - "48800:48800"
+    depends_on:
+      server:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy

@@ -1,0 +1,39 @@
+# 함께 쓰면 좋은 도구
+
+RelayRoom은 에이전트를 조율하고 사용량을 기록합니다. 에이전트의 LLM 요청 경로에는 끼지 않으므로, 에이전트가 provider에서 읽어오는 컨텍스트 자체를 압축하지는 않습니다. 아래 서드파티 도구들은 RelayRoom과 함께 쓰면 토큰을 줄이고 에이전트 루프를 더 조입니다. 필수는 아니며, 맞는 것만 고르세요.
+
+> RelayRoom은 자기 MCP 툴 출력에 이미 **요약 먼저** 원칙을 적용합니다. `inbox`는 짧은 프리뷰를 주고, 전체 본문이 필요할 때만 `show`로 펼칩니다. 아래 도구들은 에이전트가 읽는 나머지를 담당합니다.
+
+## 토큰·컨텍스트 절감
+
+### Headroom
+
+AI 에이전트를 위한 로컬 컨텍스트 압축 레이어입니다. 에이전트가 읽는 모든 것(툴 출력, 로그, RAG 청크, 파일, 대화 이력)을 LLM에 닿기 전에 압축하고, 원본은 필요할 때 다시 가져올 수 있게 보관합니다(가역 압축). 라이브러리, 드롭인 프록시, 에이전트 래퍼, MCP 서버로 동작합니다.
+
+- 코딩 에이전트 래핑: `headroom wrap claude` (`codex`, `cursor`, `aider`, `copilot`도).
+- 코드 변경 없는 프록시: `headroom proxy --port 8787`.
+- 실제 에이전트 워크로드에서 60~95% 절감을 보고하며, 표준 벤치마크에서 정확도를 유지합니다.
+
+RelayRoom과 직접 보완됩니다. RelayRoom은 자기 툴 출력을 가볍게 유지하고, Headroom은 에이전트 컨텍스트의 훨씬 큰 나머지 표면을 압축합니다. → [github.com/chopratejas/headroom](https://github.com/chopratejas/headroom)
+
+### RTK
+
+시끄러운 셸 명령 출력을 짧은 요약으로 다시 씁니다. `git show`를 짧은 diff로, 범위를 좁힌 `ls`, 압축된 설치 로그 등. 에이전트 컨텍스트의 상당 부분이 명령 출력이라 유용합니다. Headroom은 RTK를 함께 배포하고 그 하류의 모든 것을 압축합니다. → [github.com/rtk-ai/rtk](https://github.com/rtk-ai/rtk)
+
+### lean-ctx
+
+CLI 명령, MCP 툴, 에디터 룰에서 나오는 컨텍스트를 모델에 닿기 전에 다듬습니다. 같은 문제를 더 가벼운 CLI 래퍼로 접근합니다. Headroom의 CLI 컨텍스트 도구로도 쓸 수 있습니다(`HEADROOM_CONTEXT_TOOL=lean-ctx`). → [github.com/yvgude/lean-ctx](https://github.com/yvgude/lean-ctx)
+
+## 에이전트 런타임
+
+### tmux
+
+RelayRoom [페이저](/docs/ko/adapter)에 필수입니다. 페이저는 유휴 에이전트의 tmux 세션에 입력해서 깨우므로, 각 에이전트는 tmux 세션 안에서 돕니다. 최근 tmux면 됩니다. → [github.com/tmux/tmux](https://github.com/tmux/tmux)
+
+### ripgrep & fd
+
+빠른 파일 검색과 찾기. 트리 전체를 읽는 대신 `rg`/`fd`로 코드를 검색하는 에이전트는, 어떤 압축 레이어가 보기도 전에 자기 컨텍스트를 작게 유지합니다. → [ripgrep](https://github.com/BurntSushi/ripgrep) · [fd](https://github.com/sharkdp/fd)
+
+---
+
+이들은 RelayRoom과 무관한 독립 오픈소스 프로젝트입니다. 링크는 각 업스트림 저장소를 가리킵니다.

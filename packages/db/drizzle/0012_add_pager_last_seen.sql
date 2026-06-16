@@ -1,0 +1,1 @@
+ALTER TABLE "agent" ADD COLUMN "pager_last_seen_at" timestamp with time zone;

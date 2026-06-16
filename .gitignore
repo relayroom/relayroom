@@ -1,0 +1,19 @@
+node_modules/
+dist/
+.env
+*.tsbuildinfo
+.DS_Store
+.gstack/
+
+# Storage volume contents (uploaded media). The dir itself is tracked via .gitkeep.
+storage/*
+!storage/.gitkeep
+# Dev local storage fallback
+.storage/
+# Postgres data (bind-mounted dev database cluster)
+db_data/
+.playwright-mcp/
+
+# Claude Code runtime
+.claude/scheduled_tasks.lock
+.claude/

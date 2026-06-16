@@ -1,0 +1,70 @@
+# 운영 콘솔 (rr.sh)
+
+`relayroom init`은 각 워크트리 **루트에 `rr.sh`**(RELAYROOM.md 옆)를 만듭니다. RelayRoom을 쓰면서 필요한 명령(세션 재구동, 페이저, MCP 재등록 등)을 한 곳에서 처리합니다. `.relayroom/config.json`(`code`/`part`/`target`/`agent`/`token`)을 읽어 동작하므로, 긴 플래그를 다시 칠 필요가 없습니다.
+
+`rr.sh`와 `.relayroom/`는 gitignore되며, 토큰은 이미 CLI 설정(`.claude.json` 등)에 있는 값과 동일하게 로컬에만 저장됩니다.
+
+## 명령
+
+```bash
+./rr.sh up [--bypass]      # tmux 세션 재생성 + 페이저 시작 + attach (재부팅 복구)
+./rr.sh launch [--bypass]  # 세션 안에서: wake 전달 결정 + 페이저 시작 + 에이전트 실행
+./rr.sh down               # 페이저 정지 + tmux 세션 종료
+./rr.sh status             # tmux + 페이저 상태
+./rr.sh info               # 저장된 설정 출력
+
+./rr.sh tmux start|continue|exit|status
+./rr.sh pager start|stop|restart|status
+./rr.sh claude|gemini|codex  mcp-add|hooks|run [--bypass]
+./rr.sh setup   # 설정된 모든 CLI에 mcp-add + hooks 한 번에
+```
+
+| 명령 | 하는 일 |
+| --- | --- |
+| `up` | 저장된 세션명으로 tmux를 되살리고(저장된 CLI 실행), 페이저를 켠 뒤 attach |
+| `launch` | 세션 내 런처: 이미 tmux 세션 안일 때(예: 연결 가이드 붙여넣기). wake 전달 모드(가능하면 Claude Channels, 아니면 페이저)를 정하고 그 모드로 페이저를 켠 뒤 첫 CLI 실행 - Channels가 켜지도록 올바른 순서로. `up`은 세션 밖에서 쓰는 대응물. |
+| `down` | 페이저를 멈추고 tmux 세션을 종료 |
+| `tmux start` | 세션이 없으면 만들고(에이전트 실행), 있으면 attach |
+| `tmux continue` | 떠 있는 세션에 attach |
+| `tmux exit` | 세션 종료 |
+| `pager start/stop/restart/status` | 페이저 제어 (pidfile + `.relayroom/pager.log`로 추적) |
+| `<cli> mcp-add` | 그 CLI의 relayroom MCP 재등록 (config의 토큰 사용) |
+| `<cli> hooks` | 그 CLI의 usage 훅 재설치 |
+| `setup` | 설정된 모든 CLI에 `mcp-add` + `hooks` |
+
+`--bypass`는 CLI의 "모든 승인 프롬프트 건너뛰기" 실행 플래그를 붙입니다(Claude
+`--dangerously-skip-permissions`, Codex `--dangerously-bypass-approvals-and-sandbox`,
+Gemini `--yolo`). 옵트인이며 RelayRoom뿐 아니라 **모든** 권한 확인을 건너뛰므로 신뢰하는
+로컬 에이전트에만 사용하세요. RelayRoom MCP 도구만 자동 허용하려면 CLI 권한을 스코프하면
+됩니다(예: Claude `permissions.allow: ["mcp__relayroom"]`).
+
+CLI는 글로벌 `relayroom` 또는 `npx -y @relayroom/cli`를 자동으로 찾습니다.
+
+## tmux 상태바 연동
+
+`rr.sh statusline`은 tmux 하단에 표시할 한 줄을 출력합니다:
+
+```
+part │ inbox: 2 │ ● MCP │ ● Pager
+```
+
+- **part**: 이름이 **대시보드에서 고른 그 에이전트 색**으로 표시됩니다(페이저가 heartbeat로 받아 `.relayroom/color`에 캐시 → statusline이 사용).
+- **inbox: N**: 아직 처리해야 할 메시지 수(열린 스레드의 open-unread, 닫힌 스레드 제외). N > 0이면 노란색 강조, 0이면 흐리게 표시 - 채팅창을 잡고 있어도 처리할 게 있는지 보입니다. 상태바 주기마다(짧은 캐시) 갱신되어 서버를 과하게 안 두드리면서 근실시간.
+- **MCP**: 서버 도달 가능하면 초록 `●`, 안 되면 빨강 `○ !MCP`. (20초 캐시 + 1초 타임아웃이라 상태바를 안 느리게 함.)
+- **Pager**: 페이저 실행 중이면 초록 `●`, 멈췄으면 빨강 `○ !Pager`로 강조.
+
+빨강 `!Pager`가 보이면 에이전트에게 "pager 다시 가동해줘"라고 하면 됩니다 - 에이전트가 `./rr.sh pager start`를 직접 실행합니다. `~/.tmux.conf`에서:
+
+```tmux
+set -g status-interval 5
+set -g status-left-length 40
+set -g status-right "#(cd '#{pane_current_path}' 2>/dev/null && [ -x ./rr.sh ] && ./rr.sh statusline 2>/dev/null) #[fg=colour244]%H:%M "
+```
+
+이러면 워크트리에 있는 pane마다 어느 에이전트인지(색 + part)와 페이저 상태가 하단에 보입니다.
+
+## 재부팅 후
+
+tmux 세션과 페이저는 재부팅 시 사라집니다. 워크트리에서 **`./rr.sh up`** 한 번이면 세션을 같은 이름으로 되살리고(저장된 CLI 실행), 페이저까지 켜고 attach합니다. 자세한 복구 절차와 흔한 문제는 [문제 해결](/docs/ko/troubleshooting)을 보세요.
+
+→ 다음: [문제 해결](/docs/ko/troubleshooting)

@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Cancel superseded runs on the same ref to save minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # The db/server tests run against a real Postgres. global-setup.ts connects to
+    # localhost:48802 (user/password hub) and creates a fresh hub_test database.
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: hub
+          POSTGRES_PASSWORD: hub
+        ports:
+          - 48802:5432
+        options: >-
+          --health-cmd "pg_isready -U hub"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Test
+        run: pnpm test
+      - name: Build publishable CLI
+        run: pnpm --filter @relayroom/cli build

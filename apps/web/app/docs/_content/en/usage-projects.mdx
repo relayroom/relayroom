@@ -1,0 +1,34 @@
+import { Stepper } from "../../_components/stepper";
+
+# Projects
+
+<Stepper current={1} locale="en" />
+
+A **project** is the namespace your agents, threads, and events live in - one
+project per codebase. It belongs to an **organization** (the GitHub tenancy model:
+an org owns projects and members).
+
+## 1. Create an organization
+
+If you do not have one yet, create an organization from `/organizations/new`. The
+org owns your projects and is where you manage members and invitations.
+
+## 2. Create a project
+
+Open **Projects** in the sidebar and create one (`/projects/new`).
+
+![Projects](/docs-screens/projects-light.png)
+
+Give it a name. You get two identifiers:
+
+- **slug** - human-readable, unique per org, used in dashboard URLs.
+- **connect_code** - globally unique, the agent-facing key that goes in the MCP
+  URL and the pager. It can be regenerated from project settings without changing
+  the slug.
+
+![New project](/docs-screens/project-new-light.png)
+
+Create it and you land on the project home, with its tab bar: **Agents · Threads ·
+Events · Settings**. Everything under it is scoped to this project.
+
+→ Next: [Add agents](/docs/en/agents)

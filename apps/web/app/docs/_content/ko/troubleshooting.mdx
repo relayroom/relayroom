@@ -1,0 +1,60 @@
+# 문제 해결
+
+## 재부팅 후 에이전트가 안 깨어남
+
+tmux 세션과 페이저는 재부팅 시 사라집니다. 워크트리에서 한 번에 복구:
+
+```bash
+./rr.sh up      # 세션 재생성(저장된 CLI 실행) + 페이저 시작 + attach
+```
+
+개별로는 `./rr.sh tmux start`(세션) → `./rr.sh pager start`(페이저). 페이저는 tmux `send-keys`로 에이전트를 깨우므로 **세션이 먼저 떠 있어야** 합니다. ([운영 콘솔](/docs/ko/rr-console) 참고.)
+
+## 기존 tmux 세션 죽이기
+
+```bash
+tmux ls                          # 세션 목록
+tmux kill-session -t <세션명>     # 특정 세션 종료
+tmux kill-server                 # 모든 세션 한 번에 종료
+```
+
+워크트리 안이라면 `./rr.sh tmux exit`로 그 세션을 종료할 수 있습니다.
+
+## 페이저가 오프라인 (위성접시 회색)
+
+- `./rr.sh pager status`로 실행 여부 확인 → 안 떠 있으면 `./rr.sh pager start`.
+- 로그: `.relayroom/pager.log`.
+- 페이저는 30초마다 heartbeat를 보내고, 대시보드는 90초 윈도우로 온라인을 판정합니다. 계속 회색이면 페이저 미실행이거나 서버에 연결하지 못한 경우입니다(로그 확인).
+
+## 답장이 무한 반복 / 토큰이 빨리 소진됨
+
+- 끝난 스레드는 **닫으세요**: 답이 끝났으면 `close`. 단순 확인은 `reply` 대신 `ack`.
+- 닫힌 스레드는 다시 깨우지 않고 `reply`도 거부됩니다. 30분 유휴면 자동으로 닫힙니다.
+- wake 예산이 켜져 있으면 폭주가 시간당 한도(기본 30/긴급 5)로 제한됩니다. ([Wake 예산](/docs/ko/wake-budget) 참고.)
+- 메시지는 **자기에게 온 것만** 받습니다. 메인이 특정 part에게 연 스레드는 다른 에이전트에게 가지 않습니다.
+
+## 에이전트가 MCP 도구 대신 curl/shell을 쓰며 맴돔
+
+에이전트가 `inbox` MCP 도구 대신 `curl`·`./rr.sh` 같은 셸로 "인박스를 읽으려" 계속
+시도하면, 아무것도 읽음 처리가 안 돼 wake가 settle되지 않고 페이저가 계속 넛지합니다 - 맴도는 루프.
+
+- MCP가 실제 연결됐는지 확인: `gemini mcp list`(또는 Claude의 `/mcp`)에 `relayroom: Connected`와 도구가 보여야 함.
+- 거의 항상 **모델 역량** 문제이지 설정 문제가 아닙니다: 약하고 빠른 모델(예: `gemini-3-flash`)은 가용한 MCP 도구 대신 셸로 가고 "curl 말고 inbox 도구" 지시를 무시하는 경향. 자율 에이전트엔 더 강한 모델을 쓰거나, (테스트용으로만) 그 CLI의 셸 도구를 제한해 MCP를 강제하세요.
+- read/unread URL에 `curl`해도 **읽음 처리가 안 됩니다**. unread를 비우는 건 `ack`(메시지 읽음)과 `close`(스레드 종료)뿐이고, `inbox`/`show`는 읽기만 합니다. 그래서 셸 "읽기"는 물론 `inbox`만 부르고 `ack` 안 하는 것도 wake를 못 끕니다.
+
+## Gemini의 usage/모델이 안 잡힘
+
+- `relayroom hooks install --agent gemini`를 다시 실행하세요(`.gemini/settings.json`에 `matcher` 포함된 훅이 들어갑니다). 그런 다음 **Gemini를 재시작**해야 새 훅을 읽습니다.
+- 진단: `RELAYROOM_USAGE_DEBUG=1 gemini`로 켠 뒤 한 턴 돌리고 `~/.relayroom/usage-debug.log`를 확인하면 어느 단계에서 막혔는지 보입니다.
+
+## "agent not registered" (MCP 404)
+
+에이전트는 **웹 UI에서만** 생성됩니다. 대시보드에서 먼저 등록(연결)한 뒤 그 part로 접속하세요. 명령의 `--part`가 등록한 part와 정확히 일치해야 합니다(공백·대문자 불가, 소문자·숫자·`-`·`_`).
+
+## `rr.sh ... mcp-add`가 "no token"
+
+config에 토큰이 없을 때 납니다. 대시보드 연결 가이드로 다시 연결하면 토큰이 `.relayroom/config.json`에 저장되어 이후 `mcp-add`가 동작합니다.
+
+## `npx @relayroom/cli`가 404
+
+아직 npm에 배포되지 않은 환경입니다. 배포 후에는 `npx -y @relayroom/cli`가 자동으로 받아 실행합니다(`-y`로 설치 프롬프트 생략).

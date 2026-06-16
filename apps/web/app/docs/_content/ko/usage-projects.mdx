@@ -1,0 +1,28 @@
+import { Stepper } from "../../_components/stepper";
+
+# 프로젝트
+
+<Stepper current={1} locale="ko" />
+
+**프로젝트**는 에이전트·스레드·이벤트가 사는 네임스페이스입니다 - 코드베이스 하나당 프로젝트 하나. 프로젝트는 **조직(org)** 에 속합니다(GitHub 테넌시 모델: org가 프로젝트와 멤버를 소유).
+
+## 1. 조직 만들기
+
+없으면 `/organizations/new`에서 조직을 만듭니다. org가 프로젝트를 소유하고, 멤버·초대를 관리하는 곳입니다.
+
+## 2. 프로젝트 만들기
+
+사이드바에서 **Projects**를 열고 만듭니다(`/projects/new`).
+
+![프로젝트](/docs-screens/projects-light.png)
+
+이름을 주면 두 식별자가 생깁니다:
+
+- **slug** - 사람이 읽는, org 안에서 유일, 대시보드 URL에 사용.
+- **connect_code** - 전역 유일, MCP URL과 페이저에 들어가는 에이전트용 키. slug를 바꾸지 않고 프로젝트 설정에서 재발급 가능.
+
+![새 프로젝트](/docs-screens/project-new-light.png)
+
+만들면 프로젝트 홈으로 가고, 탭바가 있습니다: **Agents · Threads · Events · Settings**. 아래 전부 이 프로젝트로 스코프됩니다.
+
+→ 다음: [에이전트 추가](/docs/ko/agents)

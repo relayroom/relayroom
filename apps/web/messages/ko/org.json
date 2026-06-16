@@ -1,0 +1,87 @@
+{
+  "roles": {
+    "owner": "소유자",
+    "admin": "관리자",
+    "member": "멤버"
+  },
+  "list": {
+    "pageTitle": "조직",
+    "pageDescription": "내가 속한 조직과 역할을 관리합니다.",
+    "createButton": "조직 만들기",
+    "memberCount": "{count}명",
+    "emptyTitle": "조직이 없습니다",
+    "emptyDescription": "조직을 만들면 팀원을 초대하고 프로젝트를 공유할 수 있습니다.",
+    "emptyCreateButton": "첫 조직 만들기"
+  },
+  "new": {
+    "pageTitle": "조직 만들기",
+    "pageDescription": "새 조직을 만들고 팀원을 초대하세요."
+  },
+  "form": {
+    "nameLabel": "조직 이름 *",
+    "namePlaceholder": "예: Acme Inc",
+    "nameRequired": "조직 이름을 입력하세요",
+    "nameTooLong": "조직 이름은 50자 이하여야 합니다",
+    "slugLabel": "슬러그 *",
+    "slugPlaceholder": "my-org",
+    "slugHint": "소문자, 숫자, 하이픈만 사용 (예: acme-inc)",
+    "slugRequired": "슬러그를 입력하세요",
+    "slugTooLong": "슬러그는 50자 이하여야 합니다",
+    "slugInvalid": "소문자, 숫자, 하이픈만 사용 가능합니다 (예: my-org)",
+    "descLabel": "설명 (선택)",
+    "descPlaceholder": "조직의 목적을 간략히 설명하세요",
+    "descHint": "조직 설명은 현재 저장되지 않습니다 (향후 지원 예정).",
+    "cancelButton": "취소",
+    "submitButton": "조직 만들기",
+    "toastLoading": "조직을 생성하는 중...",
+    "toastSuccess": "\"{name}\" 조직이 생성됐습니다",
+    "toastError": "조직 생성에 실패했습니다",
+    "createError": "조직 생성에 실패했습니다"
+  },
+  "detail": {
+    "newProjectButton": "새 프로젝트",
+    "membersTitle": "멤버 목록",
+    "membersDescription": "{count}명이 이 조직에 속해 있습니다.",
+    "membersEmpty": "멤버가 없습니다.",
+    "tableEmail": "이메일",
+    "tableName": "이름",
+    "tableRole": "역할",
+    "tableJoinedAt": "가입일",
+    "inviteTitle": "팀원 초대",
+    "inviteDescription": "이메일로 팀원을 초대합니다. SMTP가 설정되지 않은 경우 초대 링크를 직접 복사해 전달하세요.",
+    "pendingTitle": "대기 중인 초대",
+    "projectsTitle": "프로젝트",
+    "projectsDescription": "이 조직의 프로젝트 목록입니다.",
+    "projectsEmpty": "아직 프로젝트가 없습니다.",
+    "projectsCreateFirst": "첫 프로젝트 만들기"
+  },
+  "invite": {
+    "emailLabel": "이메일",
+    "roleLabel": "역할",
+    "submitButton": "초대 발송",
+    "submittingButton": "발송 중...",
+    "emailRequired": "이메일을 입력하세요",
+    "emailInvalid": "올바른 이메일 형식을 입력하세요",
+    "roleRequired": "역할을 선택하세요",
+    "toastLoading": "초대를 발송하는 중...",
+    "toastSuccess": "{email}에 초대를 발송했습니다",
+    "toastError": "초대 발송에 실패했습니다",
+    "sendError": "초대 발송에 실패했습니다"
+  },
+  "pending": {
+    "tableEmail": "이메일",
+    "tableRole": "역할",
+    "tableStatus": "상태",
+    "tableExpires": "만료일",
+    "tableActions": "액션",
+    "copyButton": "초대 링크 복사",
+    "copyTitle": "초대 링크 복사",
+    "cancelButton": "취소",
+    "cancelTitle": "초대 취소",
+    "copySuccess": "초대 링크가 복사되었습니다",
+    "copyError": "클립보드 복사에 실패했습니다",
+    "cancelSuccess": "초대가 취소되었습니다",
+    "cancelError": "초대 취소에 실패했습니다",
+    "empty": "대기 중인 초대가 없습니다."
+  }
+}

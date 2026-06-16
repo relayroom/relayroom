@@ -1,0 +1,33 @@
+{
+  "name": "@relayroom/server",
+  "version": "0.3.0",
+  "type": "module",
+  "exports": {
+    "./src/app": "./src/app.ts",
+    "./src/bus": "./src/bus.ts"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.0.4",
+    "@hono/zod-validator": "^0.8.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@relayroom/db": "workspace:*",
+    "@relayroom/shared": "workspace:*",
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.12.25",
+    "pg": "^8.21.0",
+    "zod": "^4.4.3",
+    "@relayroom/telemetry": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.20.0",
+    "postgres": "^3.4.9",
+    "tsx": "^4.22.4",
+    "vitest": "^4.1.8"
+  },
+  "private": true
+}

@@ -1,0 +1,206 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* Hide the scrollbar UI while keeping scroll (touch swipe / shift+wheel). Used by
+   horizontally-scrollable tab bars so overflow tabs don't add a page scrollbar. */
+@utility scrollbar-hide {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@theme inline {
+  /* Extra breakpoint below sm(40rem) for small phones. Enables `xs:` utilities.
+     rem (not px) to match Tailwind v4's defaults and scale with the user's base
+     font size. 30rem = 480px at the default 16px root. */
+  --breakpoint-xs: 30rem;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  --font-heading: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  /* thread/agent status hues (fg/bg) → text-status-*-fg / bg-status-*-bg */
+  --color-status-open-fg: var(--status-open-fg);
+  --color-status-open-bg: var(--status-open-bg);
+  --color-status-answered-fg: var(--status-answered-fg);
+  --color-status-answered-bg: var(--status-answered-bg);
+  --color-status-holding-fg: var(--status-holding-fg);
+  --color-status-holding-bg: var(--status-holding-bg);
+  --color-status-canceled-fg: var(--status-canceled-fg);
+  --color-status-canceled-bg: var(--status-canceled-bg);
+  --color-status-closed-fg: var(--status-closed-fg);
+  --color-status-closed-bg: var(--status-closed-bg);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/* ─── RelayRoom brand tokens — light (Navy ink + Teal accent on cool slate) ─── */
+/* Brand: Deep Navy #0f172a (ink/CTA) + Teal #14b8a6 (the one live accent) on a
+   slate neutral scale. Values are OKLCH. Teal is reserved for --ring/live; the
+   shadcn --accent stays a subtle slate so hover surfaces remain calm. */
+:root {
+  /* surfaces */
+  --background: oklch(0.9850 0.0010 250.00);   /* neutral near-white canvas (~#fafafa, no blue tint) */
+  --foreground: oklch(0.2077 0.0398 265.75);   /* navy — ink/headings */
+  --card: oklch(1.0000 0 0);                   /* white panels */
+  --card-foreground: oklch(0.2077 0.0398 265.75);
+  --popover: oklch(1.0000 0 0);
+  --popover-foreground: oklch(0.2077 0.0398 265.75);
+
+  /* primary CTA = navy */
+  --primary: oklch(0.2077 0.0398 265.75);
+  --primary-foreground: oklch(1.0000 0 0);
+
+  /* secondary = neutral gray-100 */
+  --secondary: oklch(0.9700 0.0015 250.00);
+  --secondary-foreground: oklch(0.2077 0.0398 265.75);
+
+  /* muted */
+  --muted: oklch(0.9700 0.0015 250.00);
+  --muted-foreground: oklch(0.5544 0.0150 258.00);   /* neutral gray-500 */
+
+  /* accent = subtle neutral hover surface (teal is reserved for ring/live) */
+  --accent: oklch(0.9700 0.0015 250.00);
+  --accent-foreground: oklch(0.2077 0.0398 265.75);
+
+  /* semantic */
+  --destructive: oklch(0.5771 0.2152 27.33);   /* red */
+  --border: oklch(0.8800 0.0030 250.00);       /* neutral gray-300 - visible edge on the near-white canvas */
+  --input: oklch(0.8900 0.0030 250.00);
+  --ring: oklch(0.7038 0.1230 182.50);         /* teal — the one live accent (focus) */
+
+  /* charts — brand palette */
+  --chart-1: oklch(0.7038 0.1230 182.50);      /* teal */
+  --chart-2: oklch(0.5461 0.2152 262.88);      /* blue */
+  --chart-3: oklch(0.3717 0.0392 257.29);      /* slate-700 */
+  --chart-4: oklch(0.6658 0.1574 58.32);       /* amber */
+  --chart-5: oklch(0.5960 0.1274 163.23);      /* emerald */
+
+  --radius: 0.375rem;               /* 6px (sharp corners = separate step) */
+
+  /* sidebar */
+  --sidebar: oklch(1.0000 0 0);
+  --sidebar-foreground: oklch(0.2077 0.0398 265.75);
+  --sidebar-primary: oklch(0.2077 0.0398 265.75);
+  --sidebar-primary-foreground: oklch(1.0000 0 0);
+  --sidebar-accent: oklch(0.9700 0.0015 250.00);
+  --sidebar-accent-foreground: oklch(0.2077 0.0398 265.75);
+  --sidebar-border: oklch(0.9320 0.0030 250.00);
+  --sidebar-ring: oklch(0.7038 0.1230 182.50);
+
+  /* thread/agent status — fg/bg pairs */
+  --status-open-fg: oklch(0.5461 0.2152 262.88);     --status-open-bg: oklch(0.9705 0.0142 254.60);
+  --status-answered-fg: oklch(0.5960 0.1274 163.23); --status-answered-bg: oklch(0.9793 0.0207 166.11);
+  --status-holding-fg: oklch(0.6658 0.1574 58.32);   --status-holding-bg: oklch(0.9869 0.0214 95.28);
+  --status-canceled-fg: oklch(0.5771 0.2152 27.33);  --status-canceled-bg: oklch(0.9705 0.0129 17.38);
+  --status-closed-fg: oklch(0.5544 0.0150 258.00);   --status-closed-bg: oklch(0.9700 0.0015 250.00);
+}
+
+/* ─── RelayRoom brand tokens — dark (navy becomes surface, teal stays live) ─── */
+.dark {
+  /* Neutral charcoal scale (Vercel-style): chroma ~0 so surfaces read as one
+     "black family", separated by borders rather than lightness jumps. Brand and
+     semantic colors (teal ring, charts, status) keep their chroma below. */
+  --background: oklch(0.1300 0.0030 265.00);   /* deep neutral near-black canvas */
+  --foreground: oklch(0.9683 0.0050 247.90);   /* near-white */
+  --card: oklch(0.1650 0.0040 265.00);         /* subtle charcoal, border-defined (ΔL ~3.5p) */
+  --card-foreground: oklch(0.9683 0.0050 247.90);
+  --popover: oklch(0.1900 0.0045 265.00);      /* one step up so menus read as elevated */
+  --popover-foreground: oklch(0.9683 0.0050 247.90);
+
+  /* primary flips near-white in dark */
+  --primary: oklch(0.9683 0.0050 247.90);
+  --primary-foreground: oklch(0.1650 0.0040 265.00);
+
+  --secondary: oklch(0.2500 0.0050 265.00);    /* neutral gray-800 */
+  --secondary-foreground: oklch(0.9683 0.0050 247.90);
+
+  --muted: oklch(0.2500 0.0050 265.00);
+  --muted-foreground: oklch(0.7150 0.0150 258.00);   /* cool gray, readable */
+
+  --accent: oklch(0.2500 0.0050 265.00);       /* subtle neutral hover */
+  --accent-foreground: oklch(0.9683 0.0050 247.90);
+
+  --destructive: oklch(0.7106 0.1661 22.22);   /* red-light */
+  --border: oklch(0.2550 0.0050 265.00);       /* neutral edge - does the surface separation */
+  --input: oklch(0.2550 0.0050 265.00);
+  --ring: oklch(0.7845 0.1325 181.91);         /* teal-400 */
+
+  --chart-1: oklch(0.7845 0.1325 181.91);      /* teal-400 */
+  --chart-2: oklch(0.7137 0.1434 254.62);      /* blue-light */
+  --chart-3: oklch(0.7107 0.0351 256.79);      /* slate-400 */
+  --chart-4: oklch(0.8369 0.1644 84.43);       /* amber-light */
+  --chart-5: oklch(0.7729 0.1535 163.22);      /* emerald-light */
+
+  --sidebar: oklch(0.1300 0.0030 265.00);      /* merges with the canvas, split by border */
+  --sidebar-foreground: oklch(0.9683 0.0050 247.90);
+  --sidebar-primary: oklch(0.9683 0.0050 247.90);
+  --sidebar-primary-foreground: oklch(0.1650 0.0040 265.00);
+  --sidebar-accent: oklch(0.2500 0.0050 265.00);
+  --sidebar-accent-foreground: oklch(0.9683 0.0050 247.90);
+  --sidebar-border: oklch(0.2550 0.0050 265.00);
+  --sidebar-ring: oklch(0.7845 0.1325 181.91);
+
+  /* status — light fg on a translucent tint of the hue */
+  --status-open-fg: oklch(0.7137 0.1434 254.62);     --status-open-bg: color-mix(in oklab, oklch(0.5461 0.2152 262.88) 20%, transparent);
+  --status-answered-fg: oklch(0.7729 0.1535 163.22); --status-answered-bg: color-mix(in oklab, oklch(0.5960 0.1274 163.23) 20%, transparent);
+  --status-holding-fg: oklch(0.8369 0.1644 84.43);   --status-holding-bg: color-mix(in oklab, oklch(0.6658 0.1574 58.32) 20%, transparent);
+  --status-canceled-fg: oklch(0.7106 0.1661 22.22);  --status-canceled-bg: color-mix(in oklab, oklch(0.5771 0.2152 27.33) 20%, transparent);
+  --status-closed-fg: oklch(0.7150 0.0150 258.00);   --status-closed-bg: oklch(0.2500 0.0050 265.00);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  /* Always reserve the scrollbar gutter so pages with/without vertical scroll
+     don't shift the mx-auto centered content (and tab bars) sideways. */
+  html {
+    scrollbar-gutter: stable;
+  }
+  html {
+    @apply font-sans;
+  }
+}

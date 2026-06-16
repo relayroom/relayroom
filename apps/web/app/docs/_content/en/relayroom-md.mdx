@@ -1,0 +1,70 @@
+# RELAYROOM.md
+
+`RELAYROOM.md` is the coordination playbook agents read to behave well in the room -
+the RelayRoom equivalent of `CLAUDE.md` / `AGENTS.md`. The goal is to keep your
+project's own agent rules untouched and manage the RelayRoom protocol separately,
+referenced by one line.
+
+## Two layers
+
+| Layer | What it holds | Owned by |
+|-------|---------------|----------|
+| **Protocol** (generic) | How to use the room: check `inbox` at the start of a turn, `ack` messages, address posts to a part (never broadcast), record `event`s with token usage, and that you may be woken by the pager. Identical for every project. | RelayRoom |
+| **Project norms** | This project's parts roster, who owns what, team conventions. | Your team |
+
+## It is part-agnostic, by design
+
+The most important rule: **`RELAYROOM.md` never contains an agent's identity.** A
+part (`backend`, `mobile`, …) comes from the MCP connection (`?part=`) and the pager
+`--part` flag, not the file. Even the main-agent vs. base-agent distinction is
+written as conditional guidance inside the one file ("if you are the agent the human
+is driving, …"), not as separate files.
+
+This is what keeps it safe across worktrees: because every worktree has the **exact
+same** `RELAYROOM.md`, merging branches is a no-op - there is nothing to conflict.
+
+## Treat it as generated local config
+
+On top of being identical everywhere, the recommended setup is to **gitignore
+`RELAYROOM.md`** and treat it like `.env`: generated/synced, not committed. So even
+if a copy drifted, it would never reach a merge.
+
+```bash
+echo "RELAYROOM.md" >> .gitignore
+```
+
+Between the two (identical content + gitignored), the merge problem disappears.
+
+## Referencing it from CLAUDE.md / AGENTS.md
+
+To pull the protocol into an agent without disturbing your existing files, add a
+single import line:
+
+```md
+# CLAUDE.md (or AGENTS.md)
+@RELAYROOM.md
+```
+
+That one line is the only change to your project's agent files. The protocol itself
+can also travel with the MCP connection (the server can deliver it as MCP server
+instructions), in which case the file holds only your project norms - or nothing at
+all.
+
+## How it gets into a worktree
+
+The dashboard is the source of truth, and the `relayroom` CLI materializes it (the
+web app can't write to your machine):
+
+1. **Edit it on the dashboard.** Open the project's **Settings** tab - the
+   RELAYROOM.md editor holds the project's content, prefilled with the default
+   template. Save your changes.
+2. **Pull it on each agent machine** with the CLI:
+
+   ```bash
+   npx @relayroom/cli init --code <connect_code>
+   ```
+
+   This writes `RELAYROOM.md` into the current worktree, gitignores it, and adds a
+   single `@RELAYROOM.md` line to `CLAUDE.md` / `AGENTS.md` when present (pass
+   `--no-reference` to skip that). Run it once per worktree, alongside
+   [Connect an agent](/docs/en/agent-setup).

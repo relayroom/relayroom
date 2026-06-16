@@ -1,0 +1,35 @@
+{
+  "nav": {
+    "smtp": "Mail"
+  },
+  "smtp": {
+    "cardTitle": "Mail settings (SMTP)",
+    "cardDescription": "Configure the SMTP server used to send invitation emails. Saved here, this takes priority over the SMTP_* environment variables.",
+    "hostLabel": "Host",
+    "hostPlaceholder": "smtp.example.com",
+    "portLabel": "Port",
+    "encryptionLabel": "Encryption",
+    "encryptionHint": "Picking a preset fills the conventional port. You can still override the port for non-standard servers.",
+    "encryption": {
+      "none": "None (port 25)",
+      "starttls": "STARTTLS (port 587)",
+      "ssl": "SSL/TLS (port 465)"
+    },
+    "userLabel": "Username",
+    "userPlaceholder": "Optional",
+    "passwordLabel": "Password",
+    "passwordPlaceholder": "Enter password",
+    "passwordSetPlaceholder": "Saved (leave blank to keep)",
+    "passwordHint": "Leave blank to keep the currently saved password.",
+    "fromLabel": "From address",
+    "fromPlaceholder": "noreply@example.com",
+    "sendTest": "Send test email",
+    "save": "Save",
+    "saving": "Saving mail settings...",
+    "saveSuccess": "Mail settings saved.",
+    "saveError": "Could not save mail settings.",
+    "testing": "Sending test email...",
+    "testSuccess": "Test email sent to {email}.",
+    "testError": "Could not send the test email."
+  }
+}

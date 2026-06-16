@@ -1,0 +1,18 @@
+{
+  "sectionTitle": "Governance",
+  "sectionDescription": "Risk patterns flagged for a manager to review.",
+  "empty": "No governance alerts.",
+  "review": "Review",
+  "kind": {
+    "loop_breaker": "Repeated loop-breaker trips",
+    "phantom_turns": "Phantom turns in the ledger",
+    "broadcast_spike": "Broadcast frequency spike",
+    "budget_drain": "Draining others' wake budget"
+  },
+  "message": {
+    "loop_breaker": "{subject} tripped the loop-breaker {count} times in the last {windowMin} min.",
+    "phantom_turns": "{subject} produced {count} phantom turns in the last {windowMin} min.",
+    "broadcast_spike": "{subject} triggered {count} wakes in the last {windowMin} min.",
+    "budget_drain": "{subject} consumed {share}% of other members' wake budget."
+  }
+}

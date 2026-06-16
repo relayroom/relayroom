@@ -1,0 +1,86 @@
+# RelayRoom self-host (production) - prebuilt public images, no source checkout.
+#
+#   1. cp .env.prod.example .env  &&  edit the required values
+#   2. mkdir -p storage && sudo chown -R 1000:1000 storage
+#   3. docker compose -f docker-compose.prod.yml up -d
+#
+# The server runs DB migrations on boot, so the stack is self-sufficient. Pin a
+# version with RELAYROOM_VERSION in .env (defaults to :latest). Put a TLS proxy
+# (Caddy/Cloudflare) in front for a public domain; set RELAYROOM_PUBLIC_* to that
+# address so remote agents and browsers reach you correctly.
+services:
+  postgres:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-hub}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-hub}
+    volumes:
+      # Named volume (managed by Docker) so data survives recreates. postgres:18
+      # keeps its cluster under /var/lib/postgresql/18/docker; mount the parent.
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hub}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  server:
+    image: ghcr.io/relayroom/relayroom-server:${RELAYROOM_VERSION:-latest}
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-hub}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hub}
+      PORT: "48801"
+    # Remote agents reach the MCP server here, so the port must be published (or
+    # fronted by a TLS proxy that forwards to it). Matches RELAYROOM_PUBLIC_SERVER_BASE.
+    ports:
+      - "${RELAYROOM_SERVER_PORT:-48801}:48801"
+    # The server runs DB migrations on boot and only listens afterwards, so a
+    # passing /health means migrations are done. web gates on this (service_healthy).
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:48801/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    image: ghcr.io/relayroom/relayroom-web:${RELAYROOM_VERSION:-latest}
+    restart: unless-stopped
+    # Runs as the unprivileged node user (uid 1000); the ./storage bind-mount must
+    # be writable by uid 1000:  mkdir -p storage && sudo chown -R 1000:1000 storage
+    user: "1000:1000"
+    environment:
+      HUB_API_URL: http://server:48801
+      DATABASE_URL: postgres://${POSTGRES_USER:-hub}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hub}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET in .env}
+      # Public URL browsers load the dashboard at (your domain behind TLS, or
+      # http://<host-ip>:48800 on a LAN). Must match where users actually connect.
+      BETTER_AUTH_URL: ${RELAYROOM_PUBLIC_WEB_URL:-http://localhost:48800}
+      # Public address agents reach the MCP server (:48801) at - shown in the
+      # connect command. http://<host-ip>:48801 on a LAN, or https://hub.example.com.
+      RELAYROOM_PUBLIC_SERVER_BASE: ${RELAYROOM_PUBLIC_SERVER_BASE:-http://localhost:48801}
+      # SMTP for invitation emails. Empty = dev fallback (link shown in UI + logged).
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_SECURE: ${SMTP_SECURE:-}
+      STORAGE_DIR: /app/storage
+    volumes:
+      - ./storage:/app/storage
+    ports:
+      - "${RELAYROOM_WEB_PORT:-48800}:48800"
+    depends_on:
+      server:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:

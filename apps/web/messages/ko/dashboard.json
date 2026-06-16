@@ -1,0 +1,39 @@
+{
+  "pageTitle": "대시보드",
+  "greeting": "안녕하세요, {name}님.",
+  "noOrg": {
+    "title": "조직이 없습니다",
+    "description": "조직을 만들거나 초대를 수락하면 대시보드가 활성화됩니다.",
+    "createButton": "조직 만들기"
+  },
+  "projects": {
+    "widgetTitle": "내 프로젝트",
+    "newButton": "새 프로젝트",
+    "emptyDescription": "첫 프로젝트를 만들어 에이전트를 연결하세요.",
+    "emptyButton": "첫 프로젝트 만들기",
+    "viewAll": "전체 {count}개 보기 →",
+    "viewAllShort": "전체 보기"
+  },
+  "agents": {
+    "widgetTitle": "연결된 에이전트",
+    "active": "활성",
+    "offline": "오프라인",
+    "emptyHint": "프로젝트에 에이전트를 연결하면 여기에 표시됩니다."
+  },
+  "orgs": {
+    "widgetTitle": "소속 조직",
+    "createLink": "조직 만들기 →"
+  },
+  "usage": {
+    "cardTitle": "토큰 · 비용 사용량",
+    "recentDays": "최근 {days}일",
+    "tokens": "토큰",
+    "tooltipFormat": "{day} · 입력 {input} · 출력 {output}",
+    "outputLabel": "출력",
+    "inputLabel": "입력",
+    "cacheLabel": "캐시",
+    "noData": "아직 기록된 사용량이 없습니다. 에이전트가 usage가 포함된 이벤트를 기록하면 여기에 표시됩니다.",
+    "byModel": "모델별",
+    "more": "자세히"
+  }
+}

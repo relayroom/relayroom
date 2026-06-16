@@ -1,0 +1,18 @@
+{
+  "sectionTitle": "거버넌스",
+  "sectionDescription": "매니저 검토가 필요한 위험 패턴입니다.",
+  "empty": "거버넌스 알림이 없습니다.",
+  "review": "검토",
+  "kind": {
+    "loop_breaker": "루프차단기 반복 트립",
+    "phantom_turns": "원장상 phantom 턴",
+    "broadcast_spike": "브로드캐스트 빈도 급증",
+    "budget_drain": "타인 wake 예산 과소비"
+  },
+  "message": {
+    "loop_breaker": "{subject} 님이 최근 {windowMin}분 동안 루프차단기를 {count}회 트립했습니다.",
+    "phantom_turns": "{subject} 님이 최근 {windowMin}분 동안 phantom 턴을 {count}회 발생시켰습니다.",
+    "broadcast_spike": "{subject} 님이 최근 {windowMin}분 동안 {count}회 wake를 유발했습니다.",
+    "budget_drain": "{subject} 님이 다른 멤버 wake 예산의 {share}%를 소비했습니다."
+  }
+}

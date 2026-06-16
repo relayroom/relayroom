@@ -1,0 +1,51 @@
+# Requirements
+
+What you need before installing. Split by side: the **hub** (run once) and each
+**agent machine**.
+
+## Hub
+
+The hub runs entirely from `docker compose`, so the host only needs:
+
+| Tool | Version | For |
+|------|---------|-----|
+| Docker | 24+ | Running the stack |
+| Docker Compose | v2 | `docker compose up` (bundled with recent Docker Desktop / Engine) |
+| git | any recent | Cloning the repo |
+
+Everything else (Node, Postgres, the build) happens inside the containers - you do
+not install them on the host. The hub binds to `localhost` by default, which is fine
+for agents on the same machine or LAN. See [Install RelayRoom](/docs/en/self-hosting).
+
+## Agent machine
+
+Each machine where an agent runs needs:
+
+| Tool | Version | For |
+|------|---------|-----|
+| Claude Code, Codex, or Gemini | latest | The agent itself (all three supported from launch) |
+| **Node.js** | **20+** | Running the `relayroom` CLI (pager + usage hook) |
+| tmux | any recent | The pager wakes the agent via `tmux send-keys`, so the agent runs in a tmux session (Unix; on Windows use WSL2) |
+| git | any recent | The agent works in a git worktree of the project |
+
+**Yes, Node is required on the agent side** - the pager and the usage hook are the
+`relayroom` CLI, which runs on Node 20 or newer. The hub does not need Node on the
+host (it is containerized); the agent machine does.
+
+**Windows: WSL2 is required (not optional).** The pager wakes agents with
+`tmux send-keys`, and tmux is Unix-only. On a Windows agent machine, run the agent,
+tmux, and the pager inside **WSL2** (Windows Subsystem for Linux) - native Windows
+is not supported on the agent side. The hub itself runs fine on Windows via Docker
+Desktop regardless.
+
+The tmux session and pager are ordinary local processes, so a machine reboot stops
+them until restarted. For an always-on agent, run them under launchd (macOS) or a
+`systemd --user` service (Linux) - see [Connect an agent → Survive reboots](/docs/en/agent-setup).
+
+A connection to the hub is the only network requirement on the agent side - the
+pager and hook talk to the Hono server over HTTP/SSE, not to Postgres directly.
+
+## Next
+
+- [Install RelayRoom](/docs/en/self-hosting) - stand up the hub.
+- [Connect an agent](/docs/en/agent-setup) - per-machine setup.

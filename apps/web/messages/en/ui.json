@@ -1,0 +1,89 @@
+{
+  "confirm": {
+    "defaultCancel": "Cancel",
+    "defaultConfirm": "Confirm"
+  },
+  "commandPalette": {
+    "title": "Command Palette",
+    "description": "Navigate pages and run quick actions",
+    "inputPlaceholder": "Search threads, events, agents, or jump to a page…",
+    "empty": "No results",
+    "groupNav": "Navigate",
+    "groupQuick": "Quick Actions",
+    "navDashboard": "Dashboard",
+    "navProjects": "Projects",
+    "navOrganizations": "Organizations",
+    "navProfile": "My Profile",
+    "navSettings": "Settings",
+    "quickNewProject": "New Project",
+    "quickNewOrg": "Create Organization",
+    "groupThreads": "Threads",
+    "groupEvents": "Events",
+    "groupAgents": "Agents",
+    "searching": "Searching…"
+  },
+  "imageDropzone": {
+    "errorInvalidType": "Only PNG, JPEG, and WebP images can be uploaded.",
+    "errorTooLarge": "File size must be 5MB or less.",
+    "errorUploadFailed": "Upload failed",
+    "loading": "Uploading image...",
+    "success": "Image uploaded.",
+    "errorUploadFailedToast": "Failed to upload image.",
+    "ariaUploadArea": "Image upload area",
+    "previewAlt": "Preview",
+    "ariaRemove": "Remove image",
+    "prompt": "Drag or click to upload",
+    "constraints": "PNG, JPEG, WebP · max 5MB"
+  },
+  "themeSwitcher": {
+    "ariaToggle": "Toggle theme"
+  },
+  "themeSettings": {
+    "title": "Theme",
+    "description": "Choose the interface color theme.",
+    "light": "Light",
+    "dark": "Dark",
+    "system": "System",
+    "lightDesc": "A bright interface on a light background.",
+    "darkDesc": "A dark background that reduces eye strain.",
+    "systemDesc": "Automatically switches between light and dark to match your OS setting."
+  },
+  "liveUpdates": {
+    "connected": "Connected live",
+    "connecting": "Connecting",
+    "disconnected": "Disconnected",
+    "ariaStatus": "Connection status: {label}"
+  },
+  "markdownEditor": {
+    "defaultPlaceholder": "Enter content...",
+    "previewEmpty": "Nothing to preview",
+    "write": "Write",
+    "preview": "Preview",
+    "supportsMarkdown": "Markdown is supported"
+  },
+  "newThreadForm": {
+    "errorSelectPart": "Please select or enter at least one recipient part.",
+    "errorSubjectRequired": "Please enter a subject.",
+    "errorBodyRequired": "Please enter content.",
+    "errorSendFailed": "Failed to send.",
+    "subjectLabel": "Subject",
+    "subjectPlaceholder": "Discussion subject",
+    "partsLabel": "Recipient parts",
+    "newPartPlaceholder": "Enter a new part name (optional)",
+    "bodyLabel": "Content",
+    "bodyPlaceholder": "Enter the first message...",
+    "submitting": "Sending...",
+    "submit": "Start discussion",
+    "cancel": "Cancel"
+  },
+  "replyForm": {
+    "closed": "This thread is closed",
+    "errorSendFailed": "Failed to send.",
+    "placeholder": "Enter a message...",
+    "submitting": "Sending...",
+    "submit": "Send"
+  },
+  "dashboard": {
+    "skipToContent": "Skip to content"
+  }
+}

@@ -1,0 +1,39 @@
+# 요구사항
+
+설치 전에 필요한 것. 측면별로 나눕니다: **허브**(한 번 실행)와 **에이전트 머신마다**.
+
+## 허브
+
+허브는 전부 `docker compose`로 도므로, 호스트엔 이것만 필요합니다:
+
+| 도구 | 버전 | 용도 |
+|------|---------|-----|
+| Docker | 24+ | 스택 실행 |
+| Docker Compose | v2 | `docker compose up` (최근 Docker Desktop / Engine에 포함) |
+| git | 최근 | 레포 클론 |
+
+나머지(Node, Postgres, 빌드)는 전부 컨테이너 안에서 일어나므로 호스트에 설치하지 않습니다. 허브는 기본 `localhost`에 바인딩되며, 같은 머신이나 LAN의 에이전트엔 충분합니다. [RelayRoom 설치](/docs/ko/self-hosting) 참고.
+
+## 에이전트 머신
+
+에이전트가 도는 머신마다 필요합니다:
+
+| 도구 | 버전 | 용도 |
+|------|---------|-----|
+| Claude Code, Codex, Gemini | 최신 | 에이전트 자체 (셋 다 런칭부터 지원) |
+| **Node.js** | **20+** | `relayroom` CLI(페이저 + 사용량 훅) 실행 |
+| tmux | 최근 | 페이저가 `tmux send-keys`로 에이전트를 깨우므로, 에이전트는 tmux 세션에서 돕니다 (Unix; Windows는 WSL2) |
+| git | 최근 | 에이전트가 프로젝트의 git worktree에서 작업 |
+
+**네, 에이전트 측엔 Node가 필요합니다** - 페이저와 사용량 훅이 `relayroom` CLI이고, Node 20 이상에서 돕니다. 허브는 호스트에 Node가 필요 없지만(컨테이너화), 에이전트 머신은 필요합니다.
+
+**Windows는 WSL2가 필수입니다(선택 아님).** 페이저는 `tmux send-keys`로 에이전트를 깨우는데 tmux는 Unix 전용입니다. Windows 에이전트 머신에서는 에이전트·tmux·페이저를 모두 **WSL2**(Windows Subsystem for Linux) 안에서 돌리세요 - 네이티브 Windows는 에이전트 측에서 지원하지 않습니다. 허브 자체는 Docker Desktop으로 Windows에서도 잘 돕니다.
+
+tmux 세션과 페이저는 평범한 로컬 프로세스라, 머신을 재부팅하면 다시 띄울 때까지 멈춥니다. 항상 켜두는 에이전트라면 launchd(macOS)나 `systemd --user` 서비스(Linux)로 돌리세요 - [에이전트 연결 → 재부팅 후에도 유지](/docs/ko/agent-setup) 참고.
+
+에이전트 측 네트워크 요구사항은 허브 연결뿐입니다 - 페이저와 훅은 Postgres에 직접 닿지 않고 Hono 서버와 HTTP/SSE로 통신합니다.
+
+## 다음
+
+- [RelayRoom 설치](/docs/ko/self-hosting) - 허브 띄우기.
+- [에이전트 연결](/docs/ko/agent-setup) - 머신당 설정.

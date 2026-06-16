@@ -1,0 +1,34 @@
+{
+  "owner": {
+    "sectionTitle": "Wake budget",
+    "sectionDescription": "Counted across all parts you own, project-wide.",
+    "wakesLabel": "Max auto-wakes per rolling hour",
+    "urgentLabel": "Max urgent per hour",
+    "urgentZeroHint": "Nobody can wake you as urgent.",
+    "toastSaving": "Saving...",
+    "toastSaved": "Wake budget updated.",
+    "toastError": "Could not save wake budget."
+  },
+  "project": {
+    "sectionTitle": "Broadcast cap",
+    "sectionDescription": "Hard limit on recipients for a single broadcast.",
+    "maxRecipientsLabel": "Max recipients per broadcast",
+    "autoHint": "Auto (effectively unlimited for small projects): {n}",
+    "managerOnly": "Only project managers can change this.",
+    "autoButton": "Reset to auto",
+    "toastSaving": "Saving...",
+    "toastSaved": "Broadcast cap updated.",
+    "toastError": "Could not save broadcast cap."
+  },
+  "audit": {
+    "title": "Who consumed my wake budget",
+    "subtitle": "Wakes charged to your budget in the last {hours}h.",
+    "total": "Total",
+    "urgent": "Urgent",
+    "suppressed": "Suppressed",
+    "wokeBy": "woke",
+    "empty": "No wakes consumed in this window.",
+    "suppressedBadge": "suppressed",
+    "loadMore": "Show more ({count} more)"
+  }
+}

@@ -1,0 +1,99 @@
+{
+  "nav": {
+    "tab": "Telemetry"
+  },
+  "banner": {
+    "title": "Help improve RelayRoom?",
+    "body": "Share anonymous usage statistics so we can improve RelayRoom. We never send the content of your code or messages.",
+    "whatLink": "What gets sent?",
+    "acceptButton": "Agree (community)",
+    "declineButton": "No thanks",
+    "dismiss": "Dismiss",
+    "saving": "Saving your choice...",
+    "optedIn": "Thanks! Anonymous usage statistics are now on.",
+    "optedOut": "Got it. Nothing will be sent.",
+    "error": "We could not save your choice."
+  },
+  "mode": {
+    "community": {
+      "label": "Community",
+      "description": "Send anonymous aggregate usage statistics to help improve RelayRoom."
+    },
+    "off": {
+      "label": "Off",
+      "description": "Send nothing. RelayRoom keeps working exactly the same."
+    }
+  },
+  "settings": {
+    "cardTitle": "Anonymous telemetry",
+    "cardDescription": "Choose whether this instance sends anonymous, content-free usage statistics. Nothing is sent until you choose, and turning it off never affects how RelayRoom works.",
+    "title": "Telemetry mode",
+    "current": "Current",
+    "hint": "We only ever send anonymous aggregate counts and buckets - never the content of your code, messages, prompts, responses, names, or token values.",
+    "saving": "Saving...",
+    "error": "We could not save the telemetry setting."
+  },
+  "data": {
+    "back": "Back to telemetry",
+    "title": "What gets sent",
+    "intro": "When telemetry is set to community, RelayRoom sends a small anonymous beacon about once a day. It contains only the items below - never any content. Here is exactly what is and is not collected.",
+    "collected": {
+      "title": "What we collect",
+      "description": "Anonymous aggregate values, version, and bucketed counts only.",
+      "items": {
+        "version": {
+          "label": "RelayRoom version",
+          "detail": "The version string of this install, so we know which releases are in use."
+        },
+        "edition": {
+          "label": "Edition",
+          "detail": "Which build edition this instance is running (for example, community)."
+        },
+        "os": {
+          "label": "Operating system",
+          "detail": "The host platform family (for example linux, darwin, win32)."
+        },
+        "uptimeBucket": {
+          "label": "Uptime bucket",
+          "detail": "A coarse range such as <1h, 1-24h, 1-7d, or 7d+ - never an exact uptime."
+        },
+        "scaleBucket": {
+          "label": "Scale buckets",
+          "detail": "Coarse ranges for how many projects, agents, and members exist - never exact counts."
+        },
+        "messageCountBucket": {
+          "label": "Message count bucket",
+          "detail": "A coarse range for how many messages flowed - never message contents."
+        },
+        "tokenBucket": {
+          "label": "Token in/out buckets",
+          "detail": "Coarse ranges for input and output token volume - never the tokens or their text."
+        },
+        "providerFamily": {
+          "label": "Model provider family",
+          "detail": "Only the family: claude, codex, gemini, or other. Never the specific model, account, or key."
+        },
+        "wakeLoopCount": {
+          "label": "Wake loop count",
+          "detail": "A bucketed count of wake-loop occurrences, to catch runaway loops."
+        }
+      }
+    },
+    "never": {
+      "title": "What we never collect",
+      "description": "Content is never collected. Not now, not ever.",
+      "items": {
+        "messageBodies": "Message bodies or thread contents",
+        "prompts": "Prompts sent to any model",
+        "responses": "Model responses or outputs",
+        "names": "User, agent, project, or organization names",
+        "tokenValues": "Token values, secrets, or connect codes"
+      }
+    },
+    "optOut": {
+      "title": "How to opt out",
+      "body": "You can turn telemetry off at any time. Once off, nothing is transmitted - RelayRoom keeps working exactly the same.",
+      "link": "Go to telemetry settings"
+    }
+  }
+}

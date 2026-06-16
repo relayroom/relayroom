@@ -1,0 +1,99 @@
+{
+  "nav": {
+    "tab": "텔레메트리"
+  },
+  "banner": {
+    "title": "RelayRoom 개선에 동의하시겠어요?",
+    "body": "익명 사용 통계로 RelayRoom 개선에 동의하시겠어요? (코드/메시지 내용은 전송하지 않습니다)",
+    "whatLink": "무엇을 보내나",
+    "acceptButton": "동의 (community)",
+    "declineButton": "사용 안 함",
+    "dismiss": "닫기",
+    "saving": "선택을 저장하는 중...",
+    "optedIn": "감사합니다! 익명 사용 통계 전송이 켜졌습니다.",
+    "optedOut": "알겠습니다. 아무것도 전송하지 않습니다.",
+    "error": "선택을 저장하지 못했습니다."
+  },
+  "mode": {
+    "community": {
+      "label": "커뮤니티",
+      "description": "익명 집계 사용 통계를 보내 RelayRoom 개선에 기여합니다."
+    },
+    "off": {
+      "label": "끔",
+      "description": "아무것도 보내지 않습니다. RelayRoom은 동일하게 작동합니다."
+    }
+  },
+  "settings": {
+    "cardTitle": "익명 텔레메트리",
+    "cardDescription": "이 인스턴스가 익명의 내용 없는 사용 통계를 보낼지 선택하세요. 선택하기 전에는 아무것도 전송하지 않으며, 꺼도 RelayRoom 작동에는 전혀 영향이 없습니다.",
+    "title": "텔레메트리 모드",
+    "current": "현재",
+    "hint": "익명 집계 카운트와 버킷만 전송하며, 코드/메시지/프롬프트/응답/이름/토큰값 같은 내용은 절대 전송하지 않습니다.",
+    "saving": "저장하는 중...",
+    "error": "텔레메트리 설정을 저장하지 못했습니다."
+  },
+  "data": {
+    "back": "텔레메트리로 돌아가기",
+    "title": "무엇을 보내나",
+    "intro": "텔레메트리가 커뮤니티로 설정되면 RelayRoom은 하루에 한 번 정도 작은 익명 비콘을 보냅니다. 아래 항목만 포함하며 내용은 절대 포함하지 않습니다. 수집하는 것과 수집하지 않는 것을 정확히 명시합니다.",
+    "collected": {
+      "title": "수집하는 항목",
+      "description": "익명 집계 값, 버전, 버킷 카운트만 수집합니다.",
+      "items": {
+        "version": {
+          "label": "RelayRoom 버전",
+          "detail": "이 설치본의 버전 문자열로, 어떤 릴리스가 사용 중인지 파악합니다."
+        },
+        "edition": {
+          "label": "에디션",
+          "detail": "이 인스턴스가 실행 중인 빌드 에디션(예: community)."
+        },
+        "os": {
+          "label": "운영체제",
+          "detail": "호스트 플랫폼 계열(예: linux, darwin, win32)."
+        },
+        "uptimeBucket": {
+          "label": "가동시간 버킷",
+          "detail": "<1h, 1-24h, 1-7d, 7d+ 같은 대략적 구간만 보냅니다. 정확한 가동시간은 아닙니다."
+        },
+        "scaleBucket": {
+          "label": "규모 버킷",
+          "detail": "프로젝트/에이전트/멤버 수의 대략적 구간만 보냅니다. 정확한 수는 아닙니다."
+        },
+        "messageCountBucket": {
+          "label": "메시지 수 버킷",
+          "detail": "오간 메시지 수의 대략적 구간만 보냅니다. 메시지 내용은 아닙니다."
+        },
+        "tokenBucket": {
+          "label": "토큰 in/out 버킷",
+          "detail": "입력/출력 토큰 양의 대략적 구간만 보냅니다. 토큰 자체나 그 텍스트는 아닙니다."
+        },
+        "providerFamily": {
+          "label": "모델 provider 계열",
+          "detail": "계열만: claude, codex, gemini, other. 구체적 모델/계정/키는 절대 아닙니다."
+        },
+        "wakeLoopCount": {
+          "label": "wake loop 카운트",
+          "detail": "폭주 루프를 잡기 위한, 버킷 처리된 wake loop 발생 횟수."
+        }
+      }
+    },
+    "never": {
+      "title": "절대 수집하지 않는 항목",
+      "description": "내용은 절대 수집하지 않습니다. 지금도, 앞으로도.",
+      "items": {
+        "messageBodies": "메시지 본문 또는 스레드 내용",
+        "prompts": "모델에 보낸 프롬프트",
+        "responses": "모델 응답 또는 출력",
+        "names": "사용자/에이전트/프로젝트/조직 이름",
+        "tokenValues": "토큰값, 시크릿, 연결 코드"
+      }
+    },
+    "optOut": {
+      "title": "옵트아웃 방법",
+      "body": "언제든지 텔레메트리를 끌 수 있습니다. 끄면 아무것도 전송하지 않으며 RelayRoom은 동일하게 작동합니다.",
+      "link": "텔레메트리 설정으로 이동"
+    }
+  }
+}

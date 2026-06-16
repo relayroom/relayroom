@@ -1,0 +1,66 @@
+{
+  "actions": {
+    "save": "저장",
+    "cancel": "취소",
+    "delete": "삭제",
+    "create": "만들기",
+    "edit": "편집",
+    "close": "닫기",
+    "confirm": "확인"
+  },
+  "nouns": {
+    "name": "이름",
+    "email": "이메일",
+    "description": "설명",
+    "date": "날짜",
+    "status": "상태"
+  },
+  "nav": {
+    "dashboard": "대시보드",
+    "projects": "프로젝트",
+    "organizations": "조직",
+    "profile": "내 정보",
+    "inbox": "수신함",
+    "agents": "에이전트"
+  },
+  "topbar": {
+    "searchPlaceholder": "검색...",
+    "notifications": "알림",
+    "profile": "내 정보",
+    "settings": "설정",
+    "signOut": "로그아웃",
+    "darkMode": "다크 모드",
+    "lightMode": "라이트 모드",
+    "switchToDark": "다크 모드로 전환",
+    "switchToLight": "라이트 모드로 전환",
+    "toggleTheme": "테마 전환",
+    "userMenu": "사용자 메뉴",
+    "searchCommand": "검색 및 명령어 (⌘K)"
+  },
+  "sidebar": {
+    "noOrg": "조직 없음",
+    "noOrgList": "조직이 없습니다",
+    "createOrg": "조직 만들기",
+    "openMenu": "메뉴 열기",
+    "closeMenu": "메뉴 닫기",
+    "mainMenu": "주 메뉴",
+    "settings": "설정",
+    "docs": "문서"
+  },
+  "localeSwitcher": {
+    "current": "(현재)"
+  },
+  "mainAgent": "메인",
+  "agentStatus": {
+    "working": "작업 중",
+    "idle": "대기",
+    "offline": "오프라인",
+    "error": "오류"
+  },
+  "pager": {
+    "online": "Pager 온라인",
+    "offline": "Pager 오프라인",
+    "offlineHint": "Pager가 응답하지 않습니다 (메시지 수신 안 될 수 있음)",
+    "lastBeat": "마지막 신호 {time}"
+  }
+}

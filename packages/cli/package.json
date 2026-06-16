@@ -1,0 +1,50 @@
+{
+  "name": "@relayroom/cli",
+  "version": "0.3.0",
+  "description": "RelayRoom agent-side CLI - connect Claude Code over MCP, run the pager, install the usage hook.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/relayroom/relayroom#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/relayroom/relayroom.git",
+    "directory": "packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/relayroom/relayroom/issues"
+  },
+  "keywords": [
+    "relayroom",
+    "mcp",
+    "claude-code",
+    "ai-agents",
+    "agent-coordination",
+    "cli"
+  ],
+  "bin": {
+    "relayroom": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "runtime",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup",
+    "prepublishOnly": "tsup",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "commander": "^15.0.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.1",
+    "vitest": "^4.1.8"
+  }
+}

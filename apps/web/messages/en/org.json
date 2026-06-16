@@ -1,0 +1,87 @@
+{
+  "roles": {
+    "owner": "Owner",
+    "admin": "Admin",
+    "member": "Member"
+  },
+  "list": {
+    "pageTitle": "Organizations",
+    "pageDescription": "Manage the organizations you belong to and your roles.",
+    "createButton": "Create organization",
+    "memberCount": "{count} members",
+    "emptyTitle": "No organizations",
+    "emptyDescription": "Create an organization to invite teammates and share projects.",
+    "emptyCreateButton": "Create first organization"
+  },
+  "new": {
+    "pageTitle": "Create organization",
+    "pageDescription": "Create a new organization and invite your team."
+  },
+  "form": {
+    "nameLabel": "Organization name *",
+    "namePlaceholder": "e.g. Acme Inc",
+    "nameRequired": "Enter an organization name",
+    "nameTooLong": "Organization name must be 50 characters or fewer",
+    "slugLabel": "Slug *",
+    "slugPlaceholder": "my-org",
+    "slugHint": "Lowercase letters, numbers, and hyphens only (e.g. acme-inc)",
+    "slugRequired": "Enter a slug",
+    "slugTooLong": "Slug must be 50 characters or fewer",
+    "slugInvalid": "Only lowercase letters, numbers, and hyphens are allowed (e.g. my-org)",
+    "descLabel": "Description (optional)",
+    "descPlaceholder": "Briefly describe the purpose of this organization",
+    "descHint": "Organization description is not saved yet (coming soon).",
+    "cancelButton": "Cancel",
+    "submitButton": "Create organization",
+    "toastLoading": "Creating organization...",
+    "toastSuccess": "Organization \"{name}\" created",
+    "toastError": "Failed to create organization",
+    "createError": "Failed to create organization"
+  },
+  "detail": {
+    "newProjectButton": "New project",
+    "membersTitle": "Members",
+    "membersDescription": "{count} {count, plural, one {member} other {members}} in this organization.",
+    "membersEmpty": "No members.",
+    "tableEmail": "Email",
+    "tableName": "Name",
+    "tableRole": "Role",
+    "tableJoinedAt": "Joined",
+    "inviteTitle": "Invite teammate",
+    "inviteDescription": "Invite a teammate by email. If SMTP is not configured, copy the invitation link and share it directly.",
+    "pendingTitle": "Pending invitations",
+    "projectsTitle": "Projects",
+    "projectsDescription": "Projects in this organization.",
+    "projectsEmpty": "No projects yet.",
+    "projectsCreateFirst": "Create first project"
+  },
+  "invite": {
+    "emailLabel": "Email",
+    "roleLabel": "Role",
+    "submitButton": "Send invitation",
+    "submittingButton": "Sending...",
+    "emailRequired": "Enter an email address",
+    "emailInvalid": "Enter a valid email address",
+    "roleRequired": "Select a role",
+    "toastLoading": "Sending invitation...",
+    "toastSuccess": "Invitation sent to {email}",
+    "toastError": "Failed to send invitation",
+    "sendError": "Failed to send invitation"
+  },
+  "pending": {
+    "tableEmail": "Email",
+    "tableRole": "Role",
+    "tableStatus": "Status",
+    "tableExpires": "Expires",
+    "tableActions": "Actions",
+    "copyButton": "Copy invite link",
+    "copyTitle": "Copy invite link",
+    "cancelButton": "Cancel",
+    "cancelTitle": "Cancel invitation",
+    "copySuccess": "Invite link copied",
+    "copyError": "Failed to copy to clipboard",
+    "cancelSuccess": "Invitation cancelled",
+    "cancelError": "Failed to cancel invitation",
+    "empty": "No pending invitations."
+  }
+}

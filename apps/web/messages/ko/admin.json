@@ -1,0 +1,35 @@
+{
+  "nav": {
+    "smtp": "메일 설정"
+  },
+  "smtp": {
+    "cardTitle": "메일 설정 (SMTP)",
+    "cardDescription": "초대 이메일 발송에 사용할 SMTP 서버를 설정합니다. 여기서 저장한 값은 SMTP_* 환경 변수보다 우선합니다.",
+    "hostLabel": "호스트",
+    "hostPlaceholder": "smtp.example.com",
+    "portLabel": "포트",
+    "encryptionLabel": "암호화",
+    "encryptionHint": "방식을 고르면 포트가 자동으로 채워집니다. 필요하면 포트를 직접 바꿀 수 있습니다.",
+    "encryption": {
+      "none": "없음 (포트 25)",
+      "starttls": "STARTTLS (포트 587)",
+      "ssl": "SSL/TLS (포트 465)"
+    },
+    "userLabel": "사용자명",
+    "userPlaceholder": "선택 사항",
+    "passwordLabel": "비밀번호",
+    "passwordPlaceholder": "비밀번호 입력",
+    "passwordSetPlaceholder": "저장됨 (비워두면 유지)",
+    "passwordHint": "비워두면 현재 저장된 비밀번호를 유지합니다.",
+    "fromLabel": "발신 주소",
+    "fromPlaceholder": "noreply@example.com",
+    "sendTest": "테스트 이메일 보내기",
+    "save": "저장",
+    "saving": "메일 설정을 저장하는 중...",
+    "saveSuccess": "메일 설정을 저장했습니다.",
+    "saveError": "메일 설정을 저장하지 못했습니다.",
+    "testing": "테스트 이메일을 보내는 중...",
+    "testSuccess": "{email} 주소로 테스트 이메일을 보냈습니다.",
+    "testError": "테스트 이메일을 보내지 못했습니다."
+  }
+}

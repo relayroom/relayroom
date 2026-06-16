@@ -1,0 +1,21 @@
+{
+  "pageTitle": "설정",
+  "pageDescription": "테마 및 앱 환경설정을 변경합니다.",
+  "nav": {
+    "profile": "프로필",
+    "themes": "테마",
+    "languages": "언어",
+    "ariaLabel": "설정 탐색"
+  },
+  "theme": {
+    "title": "테마",
+    "description": "앱 표시 테마를 선택합니다."
+  },
+  "language": {
+    "title": "언어",
+    "description": "인터페이스 언어를 선택합니다.",
+    "korean": "한국어",
+    "english": "English",
+    "switchButton": "언어 변경"
+  }
+}

@@ -1,0 +1,105 @@
+name: Release
+
+# Changesets-driven release. On push to main this either:
+#   1. opens/updates a "Version Packages" PR (when unreleased changesets exist), or
+#   2. publishes (when that PR was merged and versions are already bumped):
+#      - @relayroom/cli to npm (with provenance), and
+#      - relayroom-server / relayroom-web images to GHCR,
+#      all under one lockstep version.
+# Runs ONLY on push to main, never on pull_request, so a fork PR can never publish.
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    # Protected environment: configure required reviewers in repo settings so a
+    # publish needs manual approval (F4 supply-chain hardening).
+    environment: release
+    permissions:
+      contents: write # push the version PR / tags
+      pull-requests: write # open the "Version Packages" PR
+      id-token: write # OIDC for npm provenance / trusted publishing
+    outputs:
+      published: ${{ steps.changesets.outputs.published }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile
+      - name: Create release PR or publish to npm
+        id: changesets
+        uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
+        with:
+          version: pnpm version-packages
+          publish: pnpm release
+          commit: "ci: version packages"
+          title: "ci: version packages"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Attach a build-provenance attestation to the npm package.
+          NPM_CONFIG_PROVENANCE: "true"
+          # OIDC trusted publishing: once the npm package's trusted publisher is set
+          # to this repo+workflow, no token is needed. Until then, add an NPM_TOKEN
+          # secret and uncomment the next line:
+          # NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Resolve published version
+        id: version
+        if: steps.changesets.outputs.published == 'true'
+        run: echo "version=$(node -p "require('./packages/cli/package.json').version")" >> "$GITHUB_OUTPUT"
+
+  images:
+    needs: release
+    if: needs.release.outputs.published == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # push to GHCR
+      id-token: write # image provenance/attestation
+    strategy:
+      matrix:
+        app: [server, web]
+    env:
+      VERSION: ${{ needs.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ghcr.io/relayroom/relayroom-${{ matrix.app }}
+          tags: |
+            type=raw,value=${{ env.VERSION }}
+            type=raw,value=latest
+      - name: Build and push
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: apps/${{ matrix.app }}/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            RELAYROOM_VERSION=${{ env.VERSION }}
+          provenance: true
+          sbom: true

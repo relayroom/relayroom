@@ -1,0 +1,34 @@
+{
+  "owner": {
+    "sectionTitle": "Wake 예산",
+    "sectionDescription": "내가 소유한 전체 part 합산 기준.",
+    "wakesLabel": "롤링 1시간당 자동 wake 최대",
+    "urgentLabel": "urgent 최대 (시간당)",
+    "urgentZeroHint": "아무도 나를 urgent로 깨우지 못합니다.",
+    "toastSaving": "저장 중...",
+    "toastSaved": "Wake 예산을 저장했습니다.",
+    "toastError": "Wake 예산 저장에 실패했습니다."
+  },
+  "project": {
+    "sectionTitle": "브로드캐스트 캡",
+    "sectionDescription": "단일 브로드캐스트의 수신자 수 하드 제한.",
+    "maxRecipientsLabel": "브로드캐스트당 최대 수신자",
+    "autoHint": "자동(소규모는 사실상 무제한): {n}",
+    "managerOnly": "프로젝트 매니저만 변경할 수 있습니다.",
+    "autoButton": "자동으로 되돌리기",
+    "toastSaving": "저장 중...",
+    "toastSaved": "브로드캐스트 캡을 저장했습니다.",
+    "toastError": "브로드캐스트 캡 저장에 실패했습니다."
+  },
+  "audit": {
+    "title": "내 wake 예산을 누가 소비했나",
+    "subtitle": "최근 {hours}시간 동안 내 예산에 과금된 wake.",
+    "total": "합계",
+    "urgent": "urgent",
+    "suppressed": "억제됨",
+    "wokeBy": "이(가) 깨움",
+    "empty": "이 윈도우 동안 소비된 wake가 없습니다.",
+    "suppressedBadge": "억제",
+    "loadMore": "더보기 ({count}개 더)"
+  }
+}

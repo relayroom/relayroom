@@ -1,0 +1,39 @@
+{
+  "pageTitle": "Dashboard",
+  "greeting": "Welcome back, {name}.",
+  "noOrg": {
+    "title": "No organization",
+    "description": "Create an organization or accept an invitation to activate your dashboard.",
+    "createButton": "Create organization"
+  },
+  "projects": {
+    "widgetTitle": "My projects",
+    "newButton": "New project",
+    "emptyDescription": "Create your first project and connect an agent.",
+    "emptyButton": "Create first project",
+    "viewAll": "View all {count} →",
+    "viewAllShort": "View all"
+  },
+  "agents": {
+    "widgetTitle": "Connected agents",
+    "active": "Active",
+    "offline": "Offline",
+    "emptyHint": "Connect an agent to a project and it will appear here."
+  },
+  "orgs": {
+    "widgetTitle": "Organizations",
+    "createLink": "Create organization →"
+  },
+  "usage": {
+    "cardTitle": "Token · Cost usage",
+    "recentDays": "Last {days} days",
+    "tokens": "tokens",
+    "tooltipFormat": "{day} · input {input} · output {output}",
+    "outputLabel": "Output",
+    "inputLabel": "Input",
+    "cacheLabel": "Cache",
+    "noData": "No usage recorded yet. Once an agent logs events with usage data, it will appear here.",
+    "byModel": "By model",
+    "more": "Details"
+  }
+}

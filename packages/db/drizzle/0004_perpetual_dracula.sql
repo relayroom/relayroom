@@ -1,0 +1,1 @@
+ALTER TABLE "agent" ADD COLUMN "relayroom_md_synced_at" timestamp with time zone;

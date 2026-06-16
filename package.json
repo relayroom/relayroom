@@ -1,0 +1,24 @@
+{
+  "name": "agent-hub",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.30.3",
+  "scripts": {
+    "test": "pnpm -r --workspace-concurrency=1 run test",
+    "dev:server": "pnpm --filter @relayroom/server dev",
+    "dev:web": "pnpm --filter @relayroom/web dev",
+    "db:up": "docker compose up -d postgres",
+    "db:generate": "pnpm --filter @relayroom/db generate",
+    "db:migrate": "pnpm --filter @relayroom/db migrate",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "changeset publish"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.31.0",
+    "@types/node": "^25.9.3",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8"
+  }
+}

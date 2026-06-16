@@ -1,0 +1,46 @@
+{
+  "name": "@relayroom/install",
+  "version": "0.3.0",
+  "description": "Interactive installer for self-hosting RelayRoom - generates docker-compose.yml + .env from prebuilt images.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/relayroom/relayroom#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/relayroom/relayroom.git",
+    "directory": "packages/install"
+  },
+  "bugs": {
+    "url": "https://github.com/relayroom/relayroom/issues"
+  },
+  "keywords": [
+    "relayroom",
+    "installer",
+    "docker-compose",
+    "self-hosted",
+    "ai-agents"
+  ],
+  "bin": {
+    "create-relayroom": "dist/index.js",
+    "relayroom-install": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup",
+    "prepublishOnly": "tsup",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.1",
+    "vitest": "^4.1.8"
+  }
+}

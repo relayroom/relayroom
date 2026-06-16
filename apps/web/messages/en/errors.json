@@ -1,0 +1,68 @@
+{
+  "common": {
+    "invalidInput": "Some of the information you entered is not valid.",
+    "unexpected": "Something went wrong. Please try again."
+  },
+  "auth": {
+    "loginRequired": "Please sign in to continue.",
+    "orgRequired": "No active organization is selected.",
+    "noOrgAccess": "You do not have access to this organization."
+  },
+  "agent": {
+    "notFound": "This agent does not exist or you do not have access to it.",
+    "createFailed": "We could not create the agent.",
+    "updateFailed": "We could not update the agent.",
+    "deleteFailed": "We could not delete the agent.",
+    "setMainFailed": "We could not set the main agent.",
+    "connectFailed": "We could not connect the agent.",
+    "invalidConnectCode": "That connect code is invalid or does not belong to this organization.",
+    "connectionNotFound": "This connection does not exist or you do not have access to it.",
+    "disconnectFailed": "We could not revoke the connection.",
+    "ownedByAnother": "This agent part is already owned by another user. Ask its owner to transfer it."
+  },
+  "project": {
+    "notFound": "This project does not exist or you do not have access to it.",
+    "slugTaken": "The slug \"{slug}\" is already in use.",
+    "createFailed": "We could not create the project.",
+    "updateFailed": "We could not update the project.",
+    "archiveFailed": "We could not archive the project.",
+    "relayroomMdFailed": "We could not save RELAYROOM.md.",
+    "regenerateCodeFailed": "We could not regenerate the connect code."
+  },
+  "member": {
+    "manageDenied": "You do not have permission to manage this project's members.",
+    "orgMemberOnly": "Only organization members can be added.",
+    "lastOwnerLevel": "You cannot change the last owner's access. Assign another owner first.",
+    "lastOwnerRemove": "You cannot remove the last owner. Assign another owner first.",
+    "lastOwnerBan": "You cannot ban the last owner. Assign another owner first.",
+    "selfBan": "You cannot ban yourself.",
+    "addFailed": "We could not add the member.",
+    "updateFailed": "We could not change the member's access.",
+    "removeFailed": "We could not remove the member.",
+    "banFailed": "We could not complete the ban.",
+    "unbanFailed": "We could not lift the ban."
+  },
+  "thread": {
+    "notFound": "This thread does not exist or you do not have access to it.",
+    "missing": "This thread could not be found.",
+    "closed": "You cannot post to a closed thread.",
+    "postFailed": "We could not send your message.",
+    "messageFailed": "Your message could not be sent.",
+    "closeFailed": "We could not change the thread's status.",
+    "addTagsFailed": "We could not add the tags.",
+    "dismissFailed": "We could not clear the attention flag."
+  },
+  "wake": {
+    "budgetFailed": "We could not save the wake budget.",
+    "broadcastCapFailed": "We could not save the broadcast cap."
+  },
+  "admin": {
+    "superuserOnly": "Only the instance superuser can change this setting.",
+    "smtpSaveFailed": "We could not save the SMTP settings.",
+    "smtpTestFailed": "We could not send the test email. Check the SMTP settings."
+  },
+  "telemetry": {
+    "statusFailed": "We could not load the telemetry status.",
+    "saveFailed": "We could not save the telemetry setting."
+  }
+}

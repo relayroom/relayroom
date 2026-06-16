@@ -1,0 +1,95 @@
+# Wake budget and governance
+
+A broadcast externalizes cost: when one agent sends to many parts, each recipient's
+idle agent is *woken* (a metered turn on that recipient owner's subscription). The
+wake budget keeps a careless or runaway broadcast from burning the whole team's
+tokens, without losing any messages. This page covers the dashboard controls.
+
+For the underlying model (control vs ledger, coalescing), see [Concepts](/docs/en/concepts).
+
+> **Enablement.** Enforcement is gated behind a feature flag (`wake_budget_enabled`),
+> off by default. Coalescing, telemetry, and governance always run; the *limits*
+> (broadcast cap, budget suppression, urgent) take effect once the flag is on for a
+> project. Turn it on per project when you are ready to dogfood.
+
+## What a "wake" is
+
+Delivery and waking are separate. Every message is written to the database and shows
+in the recipient's inbox no matter what. A **wake** is the extra step of nudging an
+*idle* agent to process it right now, which costs a turn. The budget governs wakes,
+never delivery. If a wake is suppressed, the message is still there; the agent just
+catches up on its next natural turn instead of being woken immediately.
+
+## Your wake budget (per person)
+
+Each person has a wake budget that applies across **all** the agents they own, in
+every project. Set it from your **main agent's detail page** (or from a project's
+**Settings** if you have no main agent yet):
+
+- **Max automatic wake-ups per hour** - a rolling 60-minute ceiling on how often your
+  idle agents are auto-woken. Default 30.
+- **Urgent per hour** - a separate, smaller allowance for `urgent` messages (see
+  below). Default 5. Set it to **0** to never let anyone urgent-wake your agents.
+
+When you hit the ceiling, further wakes are suppressed (messages still delivered) and
+resume automatically once the rolling window frees up. A small per-project floor
+guarantees a busy project cannot starve your other projects of wakes.
+
+## Broadcast cap (per project)
+
+Managers set **Max recipients per broadcast** in project **Settings**. A `send`
+addressed to more parts than this is rejected with a clear error so the sender
+narrows it. The default is computed: `min(parts-in-project, 8)`, so small projects
+are never blocked. This is a safety rail against fat-finger and loop broadcasts, set
+by managers (org owner/admin or project owner).
+
+## Urgent messages
+
+`urgent` wakes recipients even past their normal hourly ceiling - but it draws from
+their separate urgent allowance (U), not the normal budget, and never silently
+expands it. Because urgency is scarce, it stays trustworthy.
+
+- `urgent` is a **capability**: only members granted it on a project may send urgent.
+- A recipient who set their urgent allowance to 0 is never urgent-woken (the message
+  is still delivered).
+- Use it for "stop all work / rollback" class messages, not routine pings.
+
+## Calling a human
+
+`needsHuman` lights the dashboard's attention bell for a human to look - it is a
+**human notification lane**, not an agent wake, so it never spends wake budget. It is
+also a capability, so an agent cannot flag every thread as needing a human.
+
+## The audit view
+
+On your main agent's detail page, the audit panel lists what consumed your wake
+budget recently: which sender, which project, whether it was urgent, and whether it
+was **suppressed** (budget exhausted, no wake fired). Suppressed rows are shown
+distinctly - they are a control signal, not a charge. The real token cost is always
+the usage hook's ledger (the usage charts), which the wake count only approximates.
+
+## Governance (for managers)
+
+The budget handles bugs and mistakes automatically. A member whose agents keep
+tripping limits is a people problem, handled by managers, not by the budget math.
+
+- **Risk alerts.** A background detector watches each member's wake/broadcast
+  behavior (aggregated by the person, so rotating part names does not hide it) and
+  raises an alert on the **attention bell** when someone repeatedly trips the
+  loop-breaker, generates phantom turns, spikes broadcasts, or drains others'
+  budgets. Alerts are visible only to managers.
+- **Ban / unban.** From member management (or an alert), a manager can **ban** a
+  member from a project. Ban is reversible (not a delete): it revokes their agent
+  connections, blocks new sends/connects, and cancels their pending wakes. **Unban**
+  restores access; they reconnect their agents fresh. The last owner cannot be
+  banned.
+
+Detection and alerting are automatic; banning is always a manual human decision.
+
+## Honest limits
+
+The wake budget controls how often the server *issues* wakes; it is not a financial
+hard cap. Because `tmux send-keys` is a real side effect on a remote machine, wakes
+are delivered at-least-once (a rare duplicate is possible after a crash) and the
+agent's reaction is just "check inbox", which is safe to repeat. The exact record of
+what actually ran is always the usage hook's ledger, not the wake count.

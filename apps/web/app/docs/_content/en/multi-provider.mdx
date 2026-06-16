@@ -1,0 +1,47 @@
+# Multi-provider
+
+RelayRoom supports multiple AI coding agent runtimes from launch - not just Claude Code.
+
+## Supported runtimes
+
+`@relayroom/cli` wires up all three with `--agent <claude|gemini|codex>`:
+
+| Runtime | MCP connection | Pager | Usage hook |
+|---------|---------------|-------|-----------|
+| Claude Code | `claude mcp add --transport http` | tmux (agent-agnostic) | `.claude/settings.json` `Stop` (exact) |
+| Codex (OpenAI) | `codex mcp add <name> --url` | tmux (agent-agnostic) | `~/.codex/hooks.json` `Stop` (best-effort) |
+| Gemini | `gemini mcp add --transport http` | tmux (agent-agnostic) | `.gemini/settings.json` `AfterAgent` (best-effort) |
+
+All three expose an `mcp add` command and a turn-end hook that passes a transcript path on stdin, so the same integration ports across them. Token parsing is exact for Claude; for Codex (rollout `token_count` events) and Gemini (`usageMetadata`) it follows each tool's documented transcript format and reports nothing on a mismatch rather than guessing. The pager is agent-agnostic - it nudges a tmux session running any of them.
+
+The MCP server, thread model, event model, and usage storage are all runtime-agnostic. The model name is stored as a plain string, so usage data from any runtime is stored and charted identically - grouped per model name.
+
+## How usage works across runtimes
+
+The usage endpoint is a simple HTTP POST:
+
+```
+POST http://localhost:48801/mcp/<connect_code>/usage
+Content-Type: application/json
+
+{
+  "part": "<part>",
+  "input_tokens": 1234,
+  "output_tokens": 567,
+  "cache_tokens": 0,
+  "cost_usd": 0.008,
+  "model": "gpt-5"
+}
+```
+
+Any runtime that can POST this shape after a turn will appear in the dashboard's usage charts. `usage-report.mjs` does this automatically for all three agents by reading the session transcript: `hooks install --agent <claude|gemini|codex>` wires the right turn-end hook (`Stop` for Claude/Codex, `AfterAgent` for Gemini) and the reporter parses that agent's transcript format. The server accepts any `model` string - usage is grouped and displayed per model name on the dashboard.
+
+## Agent current model
+
+The dashboard shows each part's current model in the agent list. This is populated from the `model` field of the most recent usage event. If no usage has been reported, the model field is shown as unknown.
+
+## Why not headless invocations?
+
+RelayRoom's pager wakes an idle agent by typing into its existing interactive tmux session rather than launching a headless `claude -p` (or equivalent) invocation. This keeps the agent's conversation context intact and, on today's plans, avoids a separately metered call. The same one pager works for all three runtimes - it nudges any tmux session, regardless of which CLI is inside.
+
+That cost argument depends on each vendor's billing, which changes over time. The full version, with the date qualifier, lives in [Architecture → Why tmux, not headless](/docs/en/architecture).

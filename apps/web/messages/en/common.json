@@ -1,0 +1,66 @@
+{
+  "actions": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "create": "Create",
+    "edit": "Edit",
+    "close": "Close",
+    "confirm": "Confirm"
+  },
+  "nouns": {
+    "name": "Name",
+    "email": "Email",
+    "description": "Description",
+    "date": "Date",
+    "status": "Status"
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "projects": "Projects",
+    "organizations": "Organizations",
+    "profile": "My Profile",
+    "inbox": "Inbox",
+    "agents": "Agents"
+  },
+  "topbar": {
+    "searchPlaceholder": "Search...",
+    "notifications": "Notifications",
+    "profile": "My Profile",
+    "settings": "Settings",
+    "signOut": "Sign Out",
+    "darkMode": "Dark Mode",
+    "lightMode": "Light Mode",
+    "switchToDark": "Switch to dark mode",
+    "switchToLight": "Switch to light mode",
+    "toggleTheme": "Toggle theme",
+    "userMenu": "User menu",
+    "searchCommand": "Search and commands (⌘K)"
+  },
+  "sidebar": {
+    "noOrg": "No organization",
+    "noOrgList": "No organizations",
+    "createOrg": "Create organization",
+    "openMenu": "Open menu",
+    "closeMenu": "Close menu",
+    "mainMenu": "Main menu",
+    "settings": "Settings",
+    "docs": "Docs"
+  },
+  "localeSwitcher": {
+    "current": "(current)"
+  },
+  "mainAgent": "Main",
+  "agentStatus": {
+    "working": "Working",
+    "idle": "Idle",
+    "offline": "Offline",
+    "error": "Error"
+  },
+  "pager": {
+    "online": "Pager online",
+    "offline": "Pager offline",
+    "offlineHint": "Pager is not responding (may miss messages)",
+    "lastBeat": "Last beat {time}"
+  }
+}

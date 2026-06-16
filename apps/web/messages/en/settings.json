@@ -1,0 +1,21 @@
+{
+  "pageTitle": "Settings",
+  "pageDescription": "Change theme and app preferences.",
+  "nav": {
+    "profile": "Profile",
+    "themes": "Theme",
+    "languages": "Language",
+    "ariaLabel": "Settings navigation"
+  },
+  "theme": {
+    "title": "Theme",
+    "description": "Choose the display theme for the app."
+  },
+  "language": {
+    "title": "Language",
+    "description": "Choose your interface language.",
+    "korean": "Korean",
+    "english": "English",
+    "switchButton": "Change Language"
+  }
+}

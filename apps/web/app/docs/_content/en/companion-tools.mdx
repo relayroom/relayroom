@@ -1,0 +1,62 @@
+# Companion tools
+
+RelayRoom coordinates agents and records what they spend. It does not sit in your
+agent's LLM request path, so it can't compress the context your agent reads from
+its provider. These third-party tools pair well with RelayRoom to cut tokens and
+tighten the agent loop. None are required; pick what fits.
+
+> RelayRoom already applies the **summaries-first** principle to its own MCP tool
+> output - `inbox` returns short previews and you expand with `show` only when you
+> need the full body. The tools below handle the rest of what your agent reads.
+
+## Token & context reduction
+
+### Headroom
+
+A local context-compression layer for AI agents. It compresses everything your
+agent reads - tool outputs, logs, RAG chunks, files, and conversation history -
+before it reaches the LLM, and keeps originals retrievable on demand (reversible
+compression). Runs as a library, a drop-in proxy, an agent wrapper, or an MCP
+server.
+
+- Wrap a coding agent: `headroom wrap claude` (also `codex`, `cursor`, `aider`, `copilot`).
+- Zero-code proxy: `headroom proxy --port 8787`.
+- Reported savings of 60–95% on real agent workloads, with accuracy held on standard benchmarks.
+
+It complements RelayRoom directly: RelayRoom keeps its own tool output lean, and
+Headroom compresses the much larger surface of everything else in the agent's
+context. → [github.com/chopratejas/headroom](https://github.com/chopratejas/headroom)
+
+### RTK
+
+Rewrites noisy shell-command output into compact summaries - `git show` as a short
+diff, scoped `ls`, condensed installer logs. Useful because a lot of an agent's
+context is raw command output. Headroom ships RTK and compresses everything
+downstream of it. → [github.com/rtk-ai/rtk](https://github.com/rtk-ai/rtk)
+
+### lean-ctx
+
+Trims context from CLI commands, MCP tools, and editor rules before it reaches the
+model. A lighter, CLI-wrapper take on the same problem. Headroom can also use it as
+its CLI context tool (`HEADROOM_CONTEXT_TOOL=lean-ctx`).
+→ [github.com/yvgude/lean-ctx](https://github.com/yvgude/lean-ctx)
+
+## Agent runtime
+
+### tmux
+
+Required by the RelayRoom [pager](/docs/en/adapter). The pager wakes an idle agent
+by typing into its tmux session, so each agent runs inside one. Any recent tmux
+works. → [github.com/tmux/tmux](https://github.com/tmux/tmux)
+
+### ripgrep & fd
+
+Fast file search and find. Agents that search code with `rg`/`fd` instead of
+reading whole trees keep their own context small before any compression layer even
+sees it. → [ripgrep](https://github.com/BurntSushi/ripgrep) ·
+[fd](https://github.com/sharkdp/fd)
+
+---
+
+These are independent open-source projects, not affiliated with RelayRoom. Links
+point to their upstream repositories.

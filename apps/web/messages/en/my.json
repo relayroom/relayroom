@@ -1,0 +1,76 @@
+{
+  "profile": {
+    "pageTitle": "My Profile",
+    "pageDescription": "View your account details and update your display name.",
+    "accountInfo": {
+      "title": "Account Info",
+      "description": "Your email address cannot be changed.",
+      "emailLabel": "Email",
+      "readOnly": "Read-only"
+    },
+    "editName": {
+      "title": "Edit Name",
+      "description": "Change your display name."
+    },
+    "form": {
+      "nameLabel": "Name",
+      "namePlaceholder": "Jane Smith",
+      "nicknameLabel": "Nickname",
+      "nicknamePlaceholder": "Display name on the dashboard (optional)",
+      "nicknameHint": "When set, this is shown instead of your name throughout the dashboard.",
+      "save": "Save",
+      "nameRequired": "Please enter your name",
+      "nameTooLong": "Name must be 100 characters or fewer",
+      "nicknameTooLong": "Nickname must be 50 characters or fewer",
+      "saving": "Saving...",
+      "saveSuccess": "Profile updated",
+      "saveError": "Failed to update profile"
+    }
+  },
+  "password": {
+    "pageTitle": "Change Password",
+    "pageDescription": "Verify your current password, then set a new one.",
+    "cardTitle": "Change Password",
+    "cardDescription": "After changing your password, sessions on other devices will be signed out automatically.",
+    "form": {
+      "currentPasswordLabel": "Current Password",
+      "currentPasswordPlaceholder": "Current password",
+      "newPasswordLabel": "New Password",
+      "newPasswordPlaceholder": "8 characters or more",
+      "confirmPasswordLabel": "Confirm New Password",
+      "confirmPasswordPlaceholder": "Re-enter new password",
+      "submit": "Change Password",
+      "showPassword": "Show password",
+      "hidePassword": "Hide password",
+      "currentPasswordRequired": "Please enter your current password",
+      "newPasswordTooShort": "New password must be at least 8 characters",
+      "newPasswordTooLong": "Password must be 128 characters or fewer",
+      "confirmPasswordRequired": "Please confirm your new password",
+      "passwordMismatch": "New passwords do not match",
+      "changing": "Changing password...",
+      "changeSuccess": "Password changed. Sessions on other devices have been signed out.",
+      "changeError": "Failed to change password"
+    }
+  },
+  "organizations": {
+    "pageTitle": "My Organization Memberships",
+    "pageDescription": "View your organizations and roles, and switch your active organization.",
+    "listTitle": "Memberships",
+    "listDescriptionWithCount": "You belong to {count} {count, plural, one {organization} other {organizations}}.",
+    "listDescriptionEmpty": "You are not a member of any organization yet.",
+    "emptyState": "You are not a member of any organization yet.",
+    "createOrg": "Create Organization",
+    "viewButton": "View",
+    "setActiveButton": "Set as Active",
+    "settingActive": "Setting...",
+    "activeBadge": "Active",
+    "roles": {
+      "owner": "Owner",
+      "admin": "Admin",
+      "member": "Member"
+    },
+    "setActiveLoading": "Switching active organization...",
+    "setActiveSuccess": "Active organization updated",
+    "setActiveError": "Failed to set active organization"
+  }
+}
