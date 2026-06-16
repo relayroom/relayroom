@@ -16,7 +16,20 @@ The hub is three services plus a database, all in one `docker-compose.yml`:
 
 ## 1. Start the hub
 
-Prerequisites: Docker + Docker Compose.
+Prerequisites: Docker + Docker Compose. Two ways in.
+
+### Option A - guided installer (recommended)
+
+```bash
+npx @relayroom/install
+```
+
+The wizard asks for an install directory, your public URLs, ports, and optional
+SMTP, generates strong secrets, and writes a ready-to-run `docker-compose.yml` +
+`.env` that pull the **prebuilt public images** from GHCR - no source checkout, no
+build. It can start the stack for you. Pin a release with `npx @relayroom/install@0.3.0`.
+
+### Option B - from source
 
 ```bash
 git clone https://github.com/relayroom/relayroom.git
@@ -28,7 +41,7 @@ echo "BETTER_AUTH_SECRET=$(openssl rand -hex 32)" > .env
 docker compose up -d
 ```
 
-This brings up `postgres`, `server`, and `web`. Database migrations run
+Either way this brings up `postgres`, `server`, and `web`. Database migrations run
 automatically when the server starts. The dashboard is at
 `http://localhost:48800`.
 
