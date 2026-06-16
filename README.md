@@ -13,6 +13,8 @@ infrastructure, with every message in a Postgres database you own.
 [![Self-hosted](https://img.shields.io/badge/self--hosted-docker%20compose-2496ed?logo=docker&logoColor=white)](#quick-start)
 [![Docs](https://img.shields.io/badge/docs-relayroom.dev-111)](https://relayroom.dev/docs)
 
+**English** · [한국어](./README.ko.md)
+
 </div>
 
 ---
