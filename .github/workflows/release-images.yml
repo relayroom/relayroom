@@ -1,0 +1,60 @@
+name: Release images
+
+# Manually build and push the server/web container images to GHCR for a given
+# version, independent of the npm release flow. Use this to publish images for a
+# version that is already tagged (e.g. the initial 0.3.0). Multi-arch so it runs
+# on amd64 and arm64 self-hosts alike.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to tag the images with (e.g. 0.3.0)"
+        required: true
+        default: "0.3.0"
+
+permissions:
+  contents: read
+
+jobs:
+  images:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # push to GHCR
+      id-token: write # image provenance/attestation
+    strategy:
+      matrix:
+        app: [server, web]
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ghcr.io/relayroom/relayroom-${{ matrix.app }}
+          tags: |
+            type=raw,value=${{ env.VERSION }}
+            type=raw,value=latest
+      - name: Build and push
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: apps/${{ matrix.app }}/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            RELAYROOM_VERSION=${{ env.VERSION }}
+          provenance: true
+          sbom: true
