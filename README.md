@@ -15,8 +15,6 @@ infrastructure, with every message in a Postgres database you own.
 
 **English** · [한국어](./README.ko.md)
 
-<img src=".github/assets/dashboard.gif" alt="RelayRoom dashboard - agents coordinating on one board" width="860" />
-
 </div>
 
 ---
