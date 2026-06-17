@@ -9,6 +9,7 @@ import { getThread } from "@/modules/thread/queries"
 import { formatDateTime } from "@/lib/format"
 import { Badge } from "@/components/ui/badge"
 import { Markdown } from "@/components/markdown"
+import { resolveAgentColor } from "@/components/agent/agent-appearance"
 import { ThreadReplyForm } from "./thread-reply-form"
 import { ThreadStatusControls } from "./thread-status-controls"
 
@@ -142,6 +143,30 @@ export default async function ThreadDetailPage({ params }: Props) {
                       {formatDateTime(msg.createdAt.toISOString())}
                     </span>
                   </div>
+
+                  {/* Target audience - which parts this message was addressed to */}
+                  {msg.recipients.length > 0 && (
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-xs text-muted-foreground">
+                        {t("threadDetail.to")}
+                      </span>
+                      {msg.recipients.map((r) => {
+                        const c = resolveAgentColor(r.color, r.part)
+                        return (
+                          <span
+                            key={r.agentId}
+                            className={[
+                              "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-mono",
+                              c.avatar,
+                            ].join(" ")}
+                          >
+                            {r.part}
+                            {r.nickname && <span className="opacity-70">"{r.nickname}"</span>}
+                          </span>
+                        )
+                      })}
+                    </div>
+                  )}
 
                   {/* Body rendered as Markdown - no dangerouslySetInnerHTML */}
                   <div className="rounded-lg border border-border bg-card px-4 py-3">
