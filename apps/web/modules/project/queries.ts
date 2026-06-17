@@ -68,7 +68,7 @@ export async function listProjects(
         agentCount: count().as("agent_count"),
       })
       .from(agents)
-      .where(ne(agents.part, HUMAN_PART))
+      .where(and(isNull(agents.deletedAt), ne(agents.part, HUMAN_PART)))
       .groupBy(agents.projectId)
       .as("agent_counts")
 
@@ -197,7 +197,7 @@ export async function getProjectBySlug(
     const [agentRow] = await db
       .select({ agentCount: count() })
       .from(agents)
-      .where(and(eq(agents.projectId, row.id), ne(agents.part, HUMAN_PART)))
+      .where(and(eq(agents.projectId, row.id), isNull(agents.deletedAt), ne(agents.part, HUMAN_PART)))
 
     const [memberRow] = await db
       .select({ memberCount: count() })
