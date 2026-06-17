@@ -28,4 +28,19 @@ database migrations on boot, so there is nothing else to set up.
 
 Run non-interactively (accept all defaults) with `-y`.
 
+## Upgrading
+
+`docker compose pull` only updates the images, never the `docker-compose.yml` you
+already have - so compose-level changes in a new release would be missed. From your
+install directory:
+
+```bash
+npx @relayroom/install@latest upgrade
+docker compose pull
+docker compose up -d
+```
+
+`upgrade` regenerates `docker-compose.yml` and pins `RELAYROOM_VERSION` in `.env` to
+the installer's version, keeping all your other `.env` values (secrets, URLs, SMTP).
+
 Docs: https://relayroom.dev/docs
