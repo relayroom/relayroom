@@ -495,18 +495,9 @@ async function heartbeat() {
           lastColor = json.color
         }
         if (TARGET) {
-          // The bar color is a 24-bit hex; tmux only renders it true if it knows the
-          // terminal does RGB. Without this, terminals whose TERM resolves to a low
-          // terminfo color count (e.g. plain `xterm` = 8 colors, common on Linux) get
-          // the hex crushed to the nearest ANSI color - the bar shows a wrong/dull
-          // shade instead of the agent's color. `-ga` appends so we never clobber the
-          // user's own terminal-overrides; once per pager process is enough.
-          if (!truecolorEnsured) {
-            truecolorEnsured = true
-            execFile("tmux", ["set-option", "-ga", "terminal-overrides", ",*:Tc"], { timeout: TMUX_TIMEOUT_MS }, () => {})
-          }
           // Timeout like every other tmux call - a hung set-option on each heartbeat
-          // would otherwise pile up zombie children forever.
+          // would otherwise pile up zombie children forever. (truecolor + status-right
+          // content are wired once in setupStatusBar; here we only repaint the color.)
           execFile("tmux", ["set-option", "-t", TARGET, "status-style", `bg=${json.color},fg=${contrastOn(json.color)}`], { timeout: TMUX_TIMEOUT_MS }, () => {})
         }
       }
@@ -514,7 +505,26 @@ async function heartbeat() {
   } catch { /* best-effort */ }
 }
 let lastColor = ""
-let truecolorEnsured = false
+
+// One-time tmux status-bar wiring for this session. The agent ships an `rr.sh
+// statusline` subcommand that prints "<part> | inbox: N | ● MCP | ● Pager", but
+// nothing else points tmux at it - so without this the bar shows tmux's default
+// content (or nothing useful). We set it session-local (-t TARGET) so we never
+// touch the user's global tmux config. We also enable truecolor: the heartbeat
+// paints the bar with the agent's 24-bit hex color, which tmux only renders true
+// when it knows the terminal does RGB - on terminals whose TERM resolves to a low
+// color count (e.g. plain `xterm` = 8 colors, common on Linux) the hex would
+// otherwise be crushed to the nearest ANSI shade. `-ga` appends so we never
+// clobber the user's own terminal-overrides.
+function setupStatusBar() {
+  if (!TARGET) return
+  const set = (...a) => execFile("tmux", a, { timeout: TMUX_TIMEOUT_MS }, () => {})
+  set("set-option", "-ga", "terminal-overrides", ",*:Tc")
+  set("set-option", "-t", TARGET, "status-right",
+    "#(cd '#{pane_current_path}' 2>/dev/null && [ -x ./rr.sh ] && ./rr.sh statusline 2>/dev/null) #[fg=colour240]│#[fg=colour244] %H:%M ")
+  set("set-option", "-t", TARGET, "status-right-length", "80")
+  set("set-option", "-t", TARGET, "status-interval", "5")
+}
 
 // ── Reconnect catch-up ───────────────────────────────────────────────────────
 // On every successful (re)connect, ask the server for a SINGLE coalesced wake
@@ -560,6 +570,7 @@ async function catchUp() {
 }
 
 async function main() {
+  setupStatusBar()
   heartbeat()
   setInterval(heartbeat, HEARTBEAT_MS)
   // Channel delivery: a Claude Channels server owns wakes. Keep heartbeat/statusline
