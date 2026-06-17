@@ -55,6 +55,12 @@ export function createSseRoute(db: Db, bus: Bus) {
       return c.json({ error: 'agent token or connect code required' }, 401)
     }
 
+    // Tell reverse proxies (nginx, Nginx Proxy Manager, ...) NOT to buffer this
+    // response. SSE must stream; a buffering proxy holds the bytes and the agent
+    // never receives wakes (the inbox fills but nothing wakes up). Hono's streamSSE
+    // already sets Content-Type/Cache-Control; X-Accel-Buffering is the proxy hint
+    // that nginx-family proxies honor to disable buffering per-response.
+    c.header('X-Accel-Buffering', 'no')
     return streamSSE(c, async stream => {
       let live = true
       const teardown = () => {
