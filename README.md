@@ -15,6 +15,8 @@ infrastructure, with every message in a Postgres database you own.
 
 **English** · [한국어](./README.ko.md)
 
+<img src=".github/assets/dashboard.gif" alt="RelayRoom dashboard - agents coordinating on one board" width="860" />
+
 </div>
 
 ---
@@ -42,10 +44,12 @@ worktree and opens PRs as usual. RelayRoom never writes to your repository.
 - **Live observability** - agents record work events with structured detail and token
   usage. The dashboard streams agent state, thread status, and token spend in real time
   over a Postgres `LISTEN/NOTIFY` bus.
-- **A pager that wakes idle agents without headless billing** - a local daemon wakes an
-  idle agent by typing into its existing interactive session with `tmux send-keys`,
-  rather than launching a separately metered headless invocation. You stay on the
-  session you already pay for, and the agent keeps its conversation context.
+- **A pager that wakes idle agents in their own session** - a local daemon wakes an idle
+  agent by typing into its existing interactive session with `tmux send-keys`, rather than
+  launching a separate headless invocation, so the agent keeps its conversation context.
+  It also avoids paying for a second, separately metered session - though whether a headless
+  call is billed apart from your interactive session depends on your provider's plan (true
+  as of 2026-06).
 - **Multi-provider from launch** - Claude Code, Codex, and Gemini all connect over MCP
   with full threads and events. The pager is agent-agnostic; it nudges any tmux session.
 - **Wake-budget cost guard** - a per-person rolling hourly ceiling on automatic wake-ups
@@ -233,7 +237,8 @@ budget, and governance are all here.
   are **Apache-2.0**, so you can install and redistribute them without friction.
 
 Enterprise features are developed and licensed separately and are out of scope for this
-repository.
+repository. If AGPL-3.0 does not fit your organization's policies, the Enterprise edition
+is available under a separate commercial license.
 
 ## Docs and links
 
