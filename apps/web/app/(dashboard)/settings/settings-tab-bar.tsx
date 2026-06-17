@@ -22,6 +22,7 @@ export function SettingsTabBar({
   const tTelemetry = useTranslations("telemetry")
   const tEnv = useTranslations("environments")
   const tUpdates = useTranslations("updates")
+  const tFeedback = useTranslations("feedback")
 
   const tabs: TabItem[] = [
     // "/settings" (index) redirects to profile, so it counts as the profile tab.
@@ -40,6 +41,7 @@ export function SettingsTabBar({
         ]
       : []),
     { label: tUpdates("nav.tab"), href: "/settings/updates" },
+    { label: tFeedback("nav.tab"), href: "/settings/feedback" },
   ]
 
   return <TabBar tabs={tabs} ariaLabel={t("nav.ariaLabel")} />

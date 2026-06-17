@@ -64,6 +64,7 @@
   },
   "telemetry": {
     "statusFailed": "텔레메트리 상태를 불러오지 못했습니다.",
-    "saveFailed": "텔레메트리 설정을 저장하지 못했습니다."
+    "saveFailed": "텔레메트리 설정을 저장하지 못했습니다.",
+    "feedbackFailed": "피드백을 전송하지 못했습니다. 다시 시도해 주세요."
   }
 }

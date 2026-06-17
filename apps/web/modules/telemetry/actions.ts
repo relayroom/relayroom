@@ -2,7 +2,7 @@
 
 import type { ApiResult, ApiResultWithItem } from "@relayroom/shared"
 import type { Db } from "@relayroom/db/client"
-import { getMode, setMode, isModeChosen } from "@relayroom/telemetry"
+import { getMode, setMode, isModeChosen, sendFeedback } from "@relayroom/telemetry"
 import { db as rawDb } from "@/modules/drizzle/db"
 
 // The telemetry package types its db against @relayroom/db's postgres-js `Db`,
@@ -13,7 +13,13 @@ const db = rawDb as unknown as Db
 import { getServerSession } from "@/lib/auth-session"
 import { isInstanceSuperuser } from "@/modules/admin/queries"
 import { getErrorTranslations } from "@/lib/action-i18n"
-import { setTelemetryModeSchema, type SetTelemetryModeInput, type TelemetryMode } from "./schema"
+import {
+  setTelemetryModeSchema,
+  feedbackSchema,
+  type SetTelemetryModeInput,
+  type TelemetryMode,
+  type FeedbackInput,
+} from "./schema"
 
 /**
  * Authorize the caller as the instance superuser (earliest-created user, the
@@ -79,5 +85,37 @@ export async function setTelemetryMode(input: SetTelemetryModeInput): Promise<Ap
     return { result: true }
   } catch {
     return { result: false, message: t("telemetry.saveFailed") }
+  }
+}
+
+// ── submitFeedback ────────────────────────────────────────────────────────────
+
+/**
+ * Send dashboard feedback to the project's collector. Available to any signed-in
+ * dashboard user (not superuser-gated) - it is the user's own message, not an
+ * instance config change. Sends regardless of telemetry mode because it is an
+ * explicit action the form discloses; see `sendFeedback` in @relayroom/telemetry.
+ */
+export async function submitFeedback(input: FeedbackInput): Promise<ApiResult> {
+  const t = await getErrorTranslations()
+  try {
+    const session = await getServerSession()
+    if (!session) return { result: false, message: t("auth.loginRequired") }
+
+    const parsed = feedbackSchema.safeParse(input)
+    if (!parsed.success) {
+      return { result: false, message: parsed.error.issues[0]?.message ?? t("common.invalidInput") }
+    }
+
+    const { rating, message, contact } = parsed.data
+    const ok = await sendFeedback(db, {
+      rating,
+      message,
+      contact: contact && contact.length > 0 ? contact : undefined,
+    })
+    if (!ok) return { result: false, message: t("telemetry.feedbackFailed") }
+    return { result: true }
+  } catch {
+    return { result: false, message: t("telemetry.feedbackFailed") }
   }
 }
