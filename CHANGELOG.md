@@ -4,6 +4,35 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.3.3] - 2026-06-17
+
+### Added
+- **`roster` and `whoami` MCP tools** for agent discovery. `roster` lists the
+  parts in a project and whether each is online, so an agent knows who to send or
+  reply to. `whoami` reports the calling agent's own part, project, and whether it
+  is the main agent - handy to re-orient after a context compaction.
+- **`@relayroom/install upgrade`**: refresh an existing install in place. It
+  regenerates `docker-compose.yml` and pins `RELAYROOM_VERSION` in `.env` while
+  preserving your secrets, so moving to a new release no longer means hand-editing
+  compose.
+
+### Changed
+- Release images now build natively per architecture (amd64 and arm64 on separate
+  runners, merged into one multi-arch manifest) instead of emulating arm64 under
+  QEMU. Faster releases; the published manifest is identical (every host still
+  pulls its native variant).
+
+### Fixed
+- The pager's tmux status bar now works out of the box on any machine. The status
+  line content (`<part> | inbox: N | ● MCP | ● Pager`) is wired automatically, and
+  the bar color renders true on terminals that report a low color count (e.g. plain
+  `xterm`, common on Linux). Previously the content only appeared with a hand-edited
+  `~/.tmux.conf`, and the color could degrade to the wrong shade.
+- Behind a reverse proxy, agents now reliably receive wake notifications. The SSE
+  stream sets `X-Accel-Buffering: no` so proxies (nginx, Nginx Proxy Manager) stop
+  buffering the wake events. Messages already reached the inbox; only the immediate
+  wake was being held up.
+
 ## [0.3.2] - 2026-06-17
 
 ### Fixed
