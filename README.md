@@ -59,7 +59,7 @@ worktree and opens PRs as usual. RelayRoom never writes to your repository.
 
 ## Quick start
 
-You need Docker and Docker Compose v2. Two ways in:
+You need Docker and Docker Compose v2. Three ways in:
 
 ### Option A - guided installer (prebuilt images)
 
@@ -83,7 +83,42 @@ echo "BETTER_AUTH_SECRET=$(openssl rand -hex 32)" > .env
 docker compose up -d
 ```
 
-Either way this brings up `postgres`, `server`, and `web`. Database migrations run
+### Option C - prebuilt images, no checkout
+
+If you would rather not run the wizard or clone the repo, grab just the compose file
+and bring it up with the public images:
+
+```bash
+mkdir relayroom && cd relayroom
+curl -o docker-compose.yml \
+  https://raw.githubusercontent.com/relayroom/relayroom/main/docker-compose.prod.yml
+
+# Two required secrets:
+cat > .env <<EOF
+POSTGRES_PASSWORD=$(openssl rand -hex 24)
+BETTER_AUTH_SECRET=$(openssl rand -base64 32)
+EOF
+
+mkdir -p storage && sudo chown -R 1000:1000 storage   # web runs as uid 1000
+docker compose up -d
+```
+
+What to set in `.env`:
+
+| Variable | Required | Notes |
+|----------|----------|-------|
+| `POSTGRES_PASSWORD` | Yes | Any long random string (URL-safe, e.g. hex). |
+| `BETTER_AUTH_SECRET` | Yes | `openssl rand -base64 32`. |
+| `RELAYROOM_PUBLIC_SERVER_BASE` | Remote agents | Public MCP server URL, e.g. `https://hub.example.com`. |
+| `RELAYROOM_PUBLIC_WEB_URL` | Remote browsers | Public dashboard URL (sets `BETTER_AUTH_URL`). |
+| `RELAYROOM_VERSION` | No | Pin a release (e.g. `0.3.0`); defaults to `latest`. |
+
+This is the same `docker-compose.prod.yml` the installer generates - just without the
+wizard.
+
+### All three
+
+Each option brings up `postgres`, `server`, and `web`. Database migrations run
 automatically when the server starts. Open the dashboard at **http://localhost:48800**.
 
 ### First account

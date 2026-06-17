@@ -52,7 +52,7 @@ RelayRoom은 협업 레이어만 담당합니다 - 당신의 코드, 브랜치, 
 
 ## 빠른 시작
 
-Docker와 Docker Compose v2가 필요합니다. 두 가지 방법이 있습니다.
+Docker와 Docker Compose v2가 필요합니다. 세 가지 방법이 있습니다.
 
 ### 방법 A - 가이드 인스톨러 (사전 빌드 이미지)
 
@@ -76,7 +76,40 @@ echo "BETTER_AUTH_SECRET=$(openssl rand -hex 32)" > .env
 docker compose up -d
 ```
 
-어느 쪽이든 `postgres`, `server`, `web`이 뜹니다. 서버 시작 시 DB 마이그레이션이 자동 실행됩니다.
+### 방법 C - 사전 빌드 이미지, 체크아웃 없이
+
+마법사도 clone도 원치 않으면, compose 파일만 받아서 공개 이미지로 띄웁니다:
+
+```bash
+mkdir relayroom && cd relayroom
+curl -o docker-compose.yml \
+  https://raw.githubusercontent.com/relayroom/relayroom/main/docker-compose.prod.yml
+
+# 필수 시크릿 2개:
+cat > .env <<EOF
+POSTGRES_PASSWORD=$(openssl rand -hex 24)
+BETTER_AUTH_SECRET=$(openssl rand -base64 32)
+EOF
+
+mkdir -p storage && sudo chown -R 1000:1000 storage   # web은 uid 1000으로 실행됨
+docker compose up -d
+```
+
+`.env`에 설정할 것:
+
+| 변수 | 필수 | 비고 |
+|------|------|------|
+| `POSTGRES_PASSWORD` | 예 | 충분히 긴 랜덤 문자열(URL-safe, 예: hex). |
+| `BETTER_AUTH_SECRET` | 예 | `openssl rand -base64 32`. |
+| `RELAYROOM_PUBLIC_SERVER_BASE` | 원격 에이전트 시 | 공개 MCP 서버 URL, 예: `https://hub.example.com`. |
+| `RELAYROOM_PUBLIC_WEB_URL` | 원격 브라우저 시 | 공개 대시보드 URL(`BETTER_AUTH_URL` 설정됨). |
+| `RELAYROOM_VERSION` | 아니오 | 버전 고정(예: `0.3.0`), 기본 `latest`. |
+
+이건 인스톨러가 생성하는 `docker-compose.prod.yml` 그대로 - 마법사만 뺀 것입니다.
+
+### 세 방법 공통
+
+어느 방법이든 `postgres`, `server`, `web`이 뜹니다. 서버 시작 시 DB 마이그레이션이 자동 실행됩니다.
 대시보드는 **http://localhost:48800** 에서 엽니다.
 
 ### 첫 계정
