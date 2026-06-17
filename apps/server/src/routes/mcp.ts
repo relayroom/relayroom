@@ -951,6 +951,68 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
     },
   )
 
+  // ── roster: who is in this project (so you know who to address) ───────────
+
+  mcp.tool(
+    'roster',
+    'List the agents (parts) in this project and whether each is online, so you know who to '
+    + 'send/reply to. `send`/`reply` address parts - this is how you discover them.',
+    {},
+    async () => {
+      const rows = await db
+        .select({
+          part: agents.part,
+          role: agents.role,
+          nickname: agents.nickname,
+          lastSeenAt: agents.lastSeenAt,
+          connected: sql<number>`count(${agentConnections.id}) filter (where ${agentConnections.status} = 'connected')`,
+        })
+        .from(agents)
+        .leftJoin(agentConnections, eq(agentConnections.agentId, agents.id))
+        .where(and(eq(agents.projectId, ctx.projectId), isNull(agents.deletedAt)))
+        .groupBy(agents.id)
+        .orderBy(asc(agents.part))
+
+      const roster = rows.map(r => ({
+        part: r.part,
+        isMain: r.role === 'main',
+        nickname: r.nickname ?? undefined,
+        online: Number(r.connected) > 0,
+        lastSeen: r.lastSeenAt,
+        you: r.part === ctx.part,
+      }))
+      return { content: [{ type: 'text' as const, text: JSON.stringify(roster) }] }
+    },
+  )
+
+  // ── whoami: this agent's own identity in the project ──────────────────────
+
+  mcp.tool(
+    'whoami',
+    "Report this agent's own part, project, and whether it is the main agent - useful after a "
+    + 'compaction or restart to re-orient.',
+    {},
+    async () => {
+      const [me] = await db
+        .select({ role: agents.role, nickname: agents.nickname })
+        .from(agents)
+        .where(and(
+          eq(agents.projectId, ctx.projectId),
+          eq(agents.part, ctx.part),
+          isNull(agents.deletedAt),
+        ))
+        .limit(1)
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify({
+          part: ctx.part,
+          project: ctx.projectSlug,
+          isMain: me?.role === 'main',
+          nickname: me?.nickname ?? undefined,
+        }) }],
+      }
+    },
+  )
+
   return mcp
 }
 
