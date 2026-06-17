@@ -4,6 +4,25 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.3.4] - 2026-06-17
+
+### Added
+- **Settings -> Feedback**: a dashboard form to send feedback (optional rating,
+  message, optional contact) straight to the RelayRoom maintainers. Open to any
+  signed-in user, with a disclosure of exactly what is sent. Previously the
+  feedback client and collector existed but nothing in the UI called them.
+- The thread view now shows **which parts each message was addressed to** ("To:"
+  chips), so you can see a post's audience, not just its author.
+
+### Fixed
+- The thread list attributed each thread to the author of its latest message, so
+  a thread flipped to whoever replied last (e.g. main -> backend). It now shows
+  the thread's **creator** as the stable author and marks the last replier
+  separately only when it differs.
+- New messages now bump the thread's `updatedAt`, so threads with fresh replies
+  resurface in the list (which sorts by recent activity) instead of staying
+  frozen at creation time.
+
 ## [0.3.3] - 2026-06-17
 
 ### Added
