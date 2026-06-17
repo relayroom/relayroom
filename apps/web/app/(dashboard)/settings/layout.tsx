@@ -12,8 +12,9 @@ interface Props {
 
 export default async function SettingsLayout({ children }: Props) {
   const session = await requireDashboardAccess()
-  // Both Mail and Telemetry are instance-wide settings, gated to the superuser.
+  // Environments, Mail, and Telemetry are instance-wide settings, gated to the superuser.
   const isSuper = await isInstanceSuperuser(session.user.id)
+  const showEnvironments = isSuper
   const showSmtp = isSuper
   const showTelemetry = isSuper
 
@@ -22,7 +23,11 @@ export default async function SettingsLayout({ children }: Props) {
   return (
     <div className="flex flex-col">
       <StickyTabHeader>
-        <SettingsTabBar showSmtp={showSmtp} showTelemetry={showTelemetry} />
+        <SettingsTabBar
+          showEnvironments={showEnvironments}
+          showSmtp={showSmtp}
+          showTelemetry={showTelemetry}
+        />
       </StickyTabHeader>
       {children}
     </div>

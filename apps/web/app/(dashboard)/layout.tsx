@@ -6,6 +6,7 @@ import { resolveActiveOrgId } from "@/lib/active-org"
 import { SETUP_PATH } from "@/constants/service"
 import { AppSidebar } from "@/components/layouts/app/sidebar"
 import { AppShellClient } from "@/components/layouts/app/app-shell"
+import { getVersionInfo } from "@/lib/version"
 import {
   getOpenThreadCount,
   getAttentionCount,
@@ -32,6 +33,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   // "No organization" while the page is actually scoped to one.
   const orgs = await getOrganizations()
   const activeOrgId = await resolveActiveOrgId()
+  const versionInfo = await getVersionInfo()
 
   // Two distinct signals: the bell shows only items needing a human (attention);
   // the sidebar shows the ambient, agent-driven open-thread count. Governance
@@ -66,6 +68,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
         orgs={(orgs as Array<{ id: string; name: string; slug: string | null }>) ?? []}
         activeOrgId={activeOrgId}
         openThreadCount={openThreadCount}
+        versionInfo={versionInfo}
       />
 
       {/* Client shell: owns ⌘K state, renders topbar + main */}

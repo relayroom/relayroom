@@ -59,7 +59,8 @@
   "admin": {
     "superuserOnly": "Only the instance superuser can change this setting.",
     "smtpSaveFailed": "We could not save the SMTP settings.",
-    "smtpTestFailed": "We could not send the test email. Check the SMTP settings."
+    "smtpTestFailed": "We could not send the test email. Check the SMTP settings.",
+    "serverBaseSaveFailed": "We could not save the server URL."
   },
   "telemetry": {
     "statusFailed": "We could not load the telemetry status.",

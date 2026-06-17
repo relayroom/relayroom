@@ -1,0 +1,17 @@
+{
+  "nav": {
+    "tab": "환경"
+  },
+  "cardTitle": "환경",
+  "cardDescription": "이 인스턴스의 배포 주소. 런타임에 읽으므로 재배포 없이 즉시 반영됩니다.",
+  "serverBaseLabel": "공개 MCP 서버 URL",
+  "serverBaseHelp": "에이전트가 접속하는 주소로, 연결 안내에 표시됩니다. 비워두면 환경변수 값을 사용합니다. 예: https://hub.example.com 또는 http://192.168.0.18:48801",
+  "saveButton": "저장",
+  "savingButton": "저장 중...",
+  "saveError": "서버 URL을 저장하지 못했습니다.",
+  "toastLoading": "저장 중...",
+  "toastSuccess": "서버 URL을 저장했습니다.",
+  "envServerBaseLabel": "환경변수 값 (폴백)",
+  "publicWebUrlLabel": "공개 대시보드 URL",
+  "publicWebUrlHelp": "환경변수(BETTER_AUTH_URL)로 설정합니다. 인증이 시작 시 읽으므로 여기가 아니라 .env에서 바꾸고 재시작하세요."
+}

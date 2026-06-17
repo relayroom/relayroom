@@ -1,0 +1,15 @@
+{
+  "nav": {
+    "tab": "Updates"
+  },
+  "cardTitle": "Updates",
+  "cardDescription": "The version this instance is running and whether a newer release is available.",
+  "currentVersion": "Current version",
+  "updateAvailable": "Update available: v{version}",
+  "superuserGuidance": "A newer release is out. Pull the new images and restart the stack to update.",
+  "memberGuidance": "A newer release is out. Ask your administrator (the person who installed RelayRoom) to update.",
+  "howToUpdate": "How to update",
+  "releaseNotes": "Release notes",
+  "upToDate": "You are on the latest release.",
+  "checkUnavailable": "Could not check for updates right now."
+}

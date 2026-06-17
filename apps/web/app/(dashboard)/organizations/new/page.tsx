@@ -1,14 +1,20 @@
+import { redirect } from "next/navigation"
 import { getTranslations } from "next-intl/server"
-import { requireDashboardAccess } from "@/lib/auth-session"
+import { requireDashboardAccess, getOrganizations } from "@/lib/auth-session"
 import { CreateOrganizationForm } from "./create-organization-form"
 
 export const dynamic = "force-dynamic"
 
 export default async function NewOrganizationPage() {
-  const [, t] = await Promise.all([
+  const [, orgs, t] = await Promise.all([
     requireDashboardAccess(),
+    getOrganizations(),
     getTranslations("org"),
   ])
+
+  // Community Edition is single-workspace: once an organization exists, there is
+  // no creating a second one. Send people back instead of a form that would fail.
+  if (orgs.length > 0) redirect("/dashboard")
 
   return (
     <div className="py-6 px-4 xs:px-6 max-w-2xl mx-auto">

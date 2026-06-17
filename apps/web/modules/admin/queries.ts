@@ -119,3 +119,23 @@ export async function getSmtpConfig(): Promise<SmtpConfigView | null> {
     hasPassword: raw.pass.length > 0,
   }
 }
+
+/**
+ * The instance-wide public server base URL the superuser saved (scope='global',
+ * key='server_base'), or null if unset. Callers fall back to env/default.
+ */
+export async function getServerBaseConfig(): Promise<string | null> {
+  const [row] = await db
+    .select({ value: configurations.value })
+    .from(configurations)
+    .where(
+      and(
+        eq(configurations.scope, "global"),
+        isNull(configurations.scopeId),
+        eq(configurations.key, "server_base"),
+      ),
+    )
+    .limit(1)
+  const v = row?.value
+  return typeof v === "string" && v.length > 0 ? v : null
+}

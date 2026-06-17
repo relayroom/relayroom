@@ -45,7 +45,8 @@
     "closeMenu": "Close menu",
     "mainMenu": "Main menu",
     "settings": "Settings",
-    "docs": "Docs"
+    "docs": "Docs",
+    "updateAvailable": "Update available: v{version}"
   },
   "localeSwitcher": {
     "current": "(current)"

@@ -1,8 +1,14 @@
+import { redirect } from "next/navigation"
 import { getTranslations } from "next-intl/server"
 import { SignInForm } from "./sign-in-form"
 import { LoginLocaleSwitcher } from "@/components/login-locale-switcher"
 import { RelayRoomMark } from "@/components/brand/relayroom-mark"
 import { safeRedirect } from "@/lib/redirect"
+import { adminExists } from "@/lib/auth-session"
+import { SETUP_PATH } from "@/constants/service"
+
+// Reads the DB (adminExists) for the fresh-install guard; render per-request.
+export const dynamic = "force-dynamic"
 
 export async function generateMetadata() {
   const t = await getTranslations("auth.signIn")
@@ -26,6 +32,10 @@ const OAUTH_PARAMS = [
 export default async function SignInPage(props: {
   searchParams: Promise<Record<string, string | undefined>>
 }) {
+  // Fresh install (no admin yet): there is no account to sign in with, so send the
+  // visitor to first-run setup instead of a dead-end login form.
+  if (!(await adminExists())) redirect(SETUP_PATH)
+
   const sp = await props.searchParams
 
   // Detect an in-progress MCP OAuth authorization (client + redirect + response_type).

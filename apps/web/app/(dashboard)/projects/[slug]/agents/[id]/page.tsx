@@ -103,6 +103,7 @@ export default async function AgentDetailPage({ params, searchParams }: Props) {
   // this agent, the toggle asks for confirmation before switching mains. We use
   // nickname when present, else the part, as the human-readable label.
   const myMain = await getMyMainAgent(project.id, session.user.id)
+  const serverBase = await getPublicServerBase()
   const existingMainPart =
     myMain && myMain.id !== agent.id ? (myMain.nickname || myMain.part) : null
 
@@ -254,7 +255,7 @@ export default async function AgentDetailPage({ params, searchParams }: Props) {
               connectCode={project.connectCode ?? ""}
               part={agent.part}
               projectSlug={slug}
-              serverBase={getPublicServerBase()}
+              serverBase={serverBase}
               defaultOpen={autoConnect}
               triggerLabel={t("agentDetail.reconnect")}
             />

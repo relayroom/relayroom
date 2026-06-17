@@ -1,0 +1,17 @@
+{
+  "nav": {
+    "tab": "Environment"
+  },
+  "cardTitle": "Environment",
+  "cardDescription": "Deployment addresses for this instance. These are read at runtime, so changes apply without a redeploy.",
+  "serverBaseLabel": "Public MCP server URL",
+  "serverBaseHelp": "The address agents connect to, shown in the connect guide. Leave blank to use the value from the environment. Example: https://hub.example.com or http://192.168.0.18:48801",
+  "saveButton": "Save",
+  "savingButton": "Saving...",
+  "saveError": "Could not save the server URL.",
+  "toastLoading": "Saving...",
+  "toastSuccess": "Server URL saved.",
+  "envServerBaseLabel": "From environment (fallback)",
+  "publicWebUrlLabel": "Public dashboard URL",
+  "publicWebUrlHelp": "Set in the environment (BETTER_AUTH_URL). Auth reads it at startup, so change it in your .env and restart, not here."
+}

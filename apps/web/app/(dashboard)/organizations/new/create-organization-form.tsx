@@ -87,6 +87,10 @@ export function CreateOrganizationForm() {
       }
       const slug = result.data?.slug ?? values.slug
       router.push(`/organizations/${slug}`)
+      // The (dashboard) layout (sidebar org switcher) does not re-render on a client
+      // navigation within the same layout, so refresh server components to pick up the
+      // new org - otherwise the sidebar stays on "No organization".
+      router.refresh()
     })()
 
     toast.promise(work, {

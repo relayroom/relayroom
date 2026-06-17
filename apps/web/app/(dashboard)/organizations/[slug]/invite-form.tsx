@@ -108,7 +108,7 @@ export function InviteForm({ organizationId }: InviteFormProps) {
             onValueChange={(v) => setValue("role", v as "member" | "admin")}
             disabled={isPending}
           >
-            <SelectTrigger>
+            <SelectTrigger className="mb-0 w-full">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

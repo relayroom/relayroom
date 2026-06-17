@@ -47,3 +47,23 @@ export type SaveSmtpConfigValues = z.output<typeof saveSmtpConfigSchema>
 export const sendTestEmailSchema = saveSmtpConfigSchema
 
 export type SendTestEmailInput = z.input<typeof sendTestEmailSchema>
+
+/**
+ * Instance-wide public server base URL, edited by the superuser. This is the
+ * address agents reach the MCP server at, shown in the connect guide. Blank
+ * clears the stored value so it falls back to the env/default.
+ */
+export const saveServerBaseSchema = z.object({
+  serverBase: z
+    .string()
+    .trim()
+    .max(2048)
+    .optional()
+    .default("")
+    .refine(
+      (v) => v === "" || /^https?:\/\/.+/.test(v),
+      "Must be a full http(s) URL, for example https://hub.example.com or http://192.168.0.18:48801.",
+    ),
+})
+
+export type SaveServerBaseInput = z.input<typeof saveServerBaseSchema>

@@ -45,7 +45,8 @@
     "closeMenu": "메뉴 닫기",
     "mainMenu": "주 메뉴",
     "settings": "설정",
-    "docs": "문서"
+    "docs": "문서",
+    "updateAvailable": "업데이트 가능: v{version}"
   },
   "localeSwitcher": {
     "current": "(현재)"

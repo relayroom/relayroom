@@ -251,7 +251,10 @@ export function AgentConnectGuideDialog({ connectCode, part, projectSlug, server
               for (const cli of clis) insideLines.push(mcpAddCommand(cli, "relayroom", url, token))
               insideLines.push(
                 // One init wires RELAYROOM.md + each CLI's instruction file (CSV).
-                `${CLI_CMD} init --code ${connectCode} --part ${part} --target ${session} --agent ${clis.join(",")} --token ${token}`,
+                // Pass --server so init fetches RELAYROOM.md from THIS hub (matching the
+                // mcp add URL); without it, init falls back to localhost and 404s on a
+                // remote/LAN deployment.
+                `${CLI_CMD} init --code ${connectCode} --part ${part} --target ${session} --agent ${clis.join(",")} --token ${token} --server ${base}`,
               )
               for (const cli of clis) insideLines.push(`${CLI_CMD} hooks install --agent ${cli}`)
               // One channel-aware launcher: ./rr.sh launch decides wake delivery

@@ -10,7 +10,7 @@ export default async function SettingsLanguagesPage() {
   const t = await getTranslations("settings")
 
   return (
-    <div className="py-6 px-4 xs:px-6 max-w-6xl mx-auto">
+    <div className="w-full py-6 px-4 xs:px-6 max-w-6xl mx-auto">
       <Card>
         <CardHeader>
           <CardTitle className="text-base">{t("language.title")}</CardTitle>

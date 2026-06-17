@@ -3,7 +3,7 @@
 import { useState } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
-import { useTranslations } from "next-intl"
+import { useTranslations, useLocale } from "next-intl"
 import {
   LayoutDashboard,
   FolderOpen,
@@ -17,10 +17,12 @@ import {
   X,
   Inbox,
   Bot,
+  ArrowUpCircle,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { RelayRoomMark } from "@/components/brand/relayroom-mark"
 import { authClient } from "@/lib/auth-client"
+import type { VersionInfo } from "@/lib/version"
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -35,6 +37,8 @@ interface AppSidebarProps {
   activeOrgId: string | null
   /** Ambient open-thread count, shown as a muted badge on the Inbox item. */
   openThreadCount?: number
+  /** Instance version + update availability, shown in the sidebar footer. */
+  versionInfo: VersionInfo
 }
 
 // ── Nav item definitions (key = translation key in common.nav) ───────────────
@@ -127,16 +131,20 @@ function OrgSwitcher({
                 <p className="px-2 py-1.5 text-xs text-muted-foreground">{t("noOrgList")}</p>
               )}
             </div>
-            <div className="border-t border-border p-1">
-              <Link
-                href="/organizations/new"
-                onClick={() => setOpen(false)}
-                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
-              >
-                <Plus className="h-3.5 w-3.5 shrink-0" />
-                <span>{t("createOrg")}</span>
-              </Link>
-            </div>
+            {/* Community Edition is single-workspace: only offer to create an org
+                when none exists yet. */}
+            {orgs.length === 0 && (
+              <div className="border-t border-border p-1">
+                <Link
+                  href="/organizations/new"
+                  onClick={() => setOpen(false)}
+                  className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+                >
+                  <Plus className="h-3.5 w-3.5 shrink-0" />
+                  <span>{t("createOrg")}</span>
+                </Link>
+              </div>
+            )}
           </div>
         </>
       )}
@@ -150,10 +158,12 @@ function SidebarContent({
   orgs,
   activeOrgId,
   openThreadCount = 0,
+  versionInfo,
   onNavigate,
 }: AppSidebarProps & { onNavigate?: () => void }) {
   const pathname = usePathname()
   const t = useTranslations("common")
+  const locale = useLocale()
 
   return (
     <>
@@ -211,14 +221,16 @@ function SidebarContent({
 
       {/* Docs + Settings footer */}
       <div className="border-t border-border px-3 py-2 space-y-0.5">
-        <Link
-          href="/docs"
+        <a
+          href={`https://relayroom.dev/docs/${locale}`}
+          target="_blank"
+          rel="noopener noreferrer"
           onClick={onNavigate}
           className="flex items-center gap-3 rounded-sm px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
         >
           <BookOpen className="h-4 w-4 shrink-0" />
           {t("sidebar.docs")}
-        </Link>
+        </a>
         <Link
           href="/settings"
           onClick={onNavigate}
@@ -234,13 +246,30 @@ function SidebarContent({
           {t("sidebar.settings")}
         </Link>
       </div>
+
+      {/* Instance version + update nudge */}
+      <div className="border-t border-border px-4 py-2 text-[11px] leading-tight text-muted-foreground/70">
+        <span>v{versionInfo.current}</span>
+        {versionInfo.updateAvailable && versionInfo.latest && (
+          <a
+            href="https://github.com/relayroom/relayroom/releases/latest"
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={onNavigate}
+            className="mt-1 flex items-center gap-1.5 rounded-sm font-medium text-amber-600 hover:underline dark:text-amber-500"
+          >
+            <ArrowUpCircle className="h-3.5 w-3.5 shrink-0" />
+            {t("sidebar.updateAvailable", { version: versionInfo.latest })}
+          </a>
+        )}
+      </div>
     </>
   )
 }
 
 // ── Main export ───────────────────────────────────────────────────────────────
 
-export function AppSidebar({ orgs, activeOrgId, openThreadCount }: AppSidebarProps) {
+export function AppSidebar({ orgs, activeOrgId, openThreadCount, versionInfo }: AppSidebarProps) {
   const t = useTranslations("common.sidebar")
   const [mobileOpen, setMobileOpen] = useState(false)
 
@@ -285,13 +314,19 @@ export function AppSidebar({ orgs, activeOrgId, openThreadCount }: AppSidebarPro
           orgs={orgs}
           activeOrgId={activeOrgId}
           openThreadCount={openThreadCount}
+          versionInfo={versionInfo}
           onNavigate={() => setMobileOpen(false)}
         />
       </aside>
 
       {/* Desktop sidebar (sticky so the page body scrolls, not a nested container) */}
       <aside className="hidden w-60 shrink-0 flex-col border-r border-border bg-card lg:sticky lg:top-0 lg:flex lg:h-screen">
-        <SidebarContent orgs={orgs} activeOrgId={activeOrgId} openThreadCount={openThreadCount} />
+        <SidebarContent
+          orgs={orgs}
+          activeOrgId={activeOrgId}
+          openThreadCount={openThreadCount}
+          versionInfo={versionInfo}
+        />
       </aside>
     </>
   )

@@ -64,9 +64,17 @@ export const auth = betterAuth({
       },
       // The dashboard guard only protects the UI; the create endpoint
       // (/api/auth/organization/create) is reachable by any session, including
-      // self-registered pending users. Gate it on the admin role at the API level.
-      allowUserToCreateOrganization: async (user) =>
-        (user as { role?: string }).role === "admin",
+      // self-registered pending users. Gate it at the API level: must be admin AND
+      // no organization may exist yet. The Community Edition is single-workspace;
+      // multiple organizations are an Enterprise feature.
+      allowUserToCreateOrganization: async (user) => {
+        if ((user as { role?: string }).role !== "admin") return false
+        const existing = await db
+          .select({ id: authSchema.better_auth_organization.id })
+          .from(authSchema.better_auth_organization)
+          .limit(1)
+        return existing.length === 0
+      },
 
       async sendInvitationEmail(data) {
         // data.id is a generated invitation id (no special chars) and baseUrl is

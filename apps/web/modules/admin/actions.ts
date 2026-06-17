@@ -4,9 +4,11 @@ import type { ApiResult } from "@relayroom/shared"
 import {
   saveSmtpConfigSchema,
   sendTestEmailSchema,
+  saveServerBaseSchema,
   encryptionToSecure,
   type SaveSmtpConfigInput,
   type SendTestEmailInput,
+  type SaveServerBaseInput,
 } from "./schema"
 import { isInstanceSuperuser, getSmtpConfigRaw } from "./queries"
 import { and, eq, isNull } from "drizzle-orm"
@@ -98,6 +100,60 @@ export async function saveSmtpConfig(input: SaveSmtpConfigInput): Promise<ApiRes
     return { result: true }
   } catch {
     return { result: false, message: t("admin.smtpSaveFailed") }
+  }
+}
+
+// ── saveServerBaseConfig ────────────────────────────────────────────────────
+
+/**
+ * Save the instance-wide public server base URL (the address agents reach the MCP
+ * server at, shown in the connect guide). Superuser-only. A blank value clears the
+ * stored config so getPublicServerBase falls back to the env/default.
+ */
+export async function saveServerBaseConfig(input: SaveServerBaseInput): Promise<ApiResult> {
+  const t = await getErrorTranslations()
+  try {
+    const auth = await requireSuperuser()
+    if (!auth.ok) return { result: false, message: auth.message }
+
+    const parsed = saveServerBaseSchema.safeParse(input)
+    if (!parsed.success) {
+      return { result: false, message: parsed.error.issues[0]?.message ?? t("common.invalidInput") }
+    }
+    const serverBase = parsed.data.serverBase.replace(/\/$/, "")
+
+    // Single global row; NULL scope_id is not deduped by the unique index, so
+    // select-then-update/insert (same as SMTP).
+    const [existing] = await db
+      .select({ id: configurations.id })
+      .from(configurations)
+      .where(
+        and(
+          eq(configurations.scope, "global"),
+          isNull(configurations.scopeId),
+          eq(configurations.key, "server_base"),
+        ),
+      )
+      .limit(1)
+
+    if (existing) {
+      await db
+        .update(configurations)
+        .set({ value: serverBase, updatedByUserId: auth.userId, updatedAt: new Date() })
+        .where(eq(configurations.id, existing.id))
+    } else {
+      await db.insert(configurations).values({
+        scope: "global",
+        scopeId: null,
+        key: "server_base",
+        value: serverBase,
+        updatedByUserId: auth.userId,
+      })
+    }
+
+    return { result: true }
+  } catch {
+    return { result: false, message: t("admin.serverBaseSaveFailed") }
   }
 }
 
