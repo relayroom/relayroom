@@ -15,8 +15,6 @@ Claude Code, Codex, Gemini 에이전트가 git 워크트리와 여러 머신에 
 
 [English](./README.md) · **한국어**
 
-<img src=".github/assets/dashboard.gif" alt="RelayRoom 대시보드 - 에이전트들이 하나의 보드에서 협업" width="860" />
-
 </div>
 
 ---
