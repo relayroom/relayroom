@@ -495,6 +495,16 @@ async function heartbeat() {
           lastColor = json.color
         }
         if (TARGET) {
+          // The bar color is a 24-bit hex; tmux only renders it true if it knows the
+          // terminal does RGB. Without this, terminals whose TERM resolves to a low
+          // terminfo color count (e.g. plain `xterm` = 8 colors, common on Linux) get
+          // the hex crushed to the nearest ANSI color - the bar shows a wrong/dull
+          // shade instead of the agent's color. `-ga` appends so we never clobber the
+          // user's own terminal-overrides; once per pager process is enough.
+          if (!truecolorEnsured) {
+            truecolorEnsured = true
+            execFile("tmux", ["set-option", "-ga", "terminal-overrides", ",*:Tc"], { timeout: TMUX_TIMEOUT_MS }, () => {})
+          }
           // Timeout like every other tmux call - a hung set-option on each heartbeat
           // would otherwise pile up zombie children forever.
           execFile("tmux", ["set-option", "-t", TARGET, "status-style", `bg=${json.color},fg=${contrastOn(json.color)}`], { timeout: TMUX_TIMEOUT_MS }, () => {})
@@ -504,6 +514,7 @@ async function heartbeat() {
   } catch { /* best-effort */ }
 }
 let lastColor = ""
+let truecolorEnsured = false
 
 // ── Reconnect catch-up ───────────────────────────────────────────────────────
 // On every successful (re)connect, ask the server for a SINGLE coalesced wake
