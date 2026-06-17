@@ -4,6 +4,20 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.3.5] - 2026-06-17
+
+### Fixed
+- Agents that were actively working showed as **offline** in the dashboard. The
+  status used the connection row's last-seen, which can lag minutes behind the
+  agent's own activity; it now uses the most recent of the two, so a working
+  agent stays online.
+- The virtual **`human`** participant (materialized when an agent addresses
+  `to: ['human']` / `needsHuman`) no longer appears as a permanently-offline row
+  in the agent list, nor inflates the agent counts. It still shows where it is
+  meaningful (thread recipients / "To:" badges).
+- **Soft-deleted agents** are no longer included in the project agent counts, so
+  removing an agent drops the count immediately (matching the list).
+
 ## [0.3.4] - 2026-06-17
 
 ### Added
