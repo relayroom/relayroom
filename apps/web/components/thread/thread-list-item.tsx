@@ -1,5 +1,5 @@
 import Link from "next/link"
-import { MessageSquareIcon } from "lucide-react"
+import { MessageSquareIcon, CornerDownRightIcon } from "lucide-react"
 import type { ThreadRow } from "@/modules/thread/queries"
 import { AgentAuthor } from "@/components/agent/agent-author"
 import { timeAgo } from "@/lib/format"
@@ -30,7 +30,7 @@ interface Props {
  */
 export function ThreadListItem({ thread, projectSlug, statusLabel, variant = "full" }: Props) {
   const compact = variant === "compact"
-  const showMeta = !!thread.authorAgentPart || (!compact && thread.messageCount > 0)
+  const showMeta = !!thread.creatorAgentPart || !!thread.authorAgentPart || (!compact && thread.messageCount > 0)
 
   return (
     <div
@@ -65,14 +65,22 @@ export function ThreadListItem({ thread, projectSlug, statusLabel, variant = "fu
             <AgentAuthor
               className="relative z-10"
               projectSlug={projectSlug}
-              agentId={thread.authorAgentId}
-              agentPart={thread.authorAgentPart}
-              agentRole={thread.authorAgentRole}
-              ownerName={thread.authorOwnerName}
+              agentId={thread.creatorAgentId}
+              agentPart={thread.creatorAgentPart}
+              agentRole={thread.creatorAgentRole}
+              ownerName={thread.creatorOwnerName}
             />
+            {/* Last reply by a different agent than the creator: the row's identity
+                stays the creator, but recent activity is still visible (↳ part). */}
+            {thread.authorAgentPart && thread.authorAgentPart !== thread.creatorAgentPart && (
+              <span className="inline-flex items-center gap-1 font-mono">
+                <CornerDownRightIcon className="h-3 w-3 shrink-0" />
+                {thread.authorAgentPart}
+              </span>
+            )}
             {!compact && thread.messageCount > 0 && (
               <>
-                {thread.authorAgentPart && <span aria-hidden>·</span>}
+                {(thread.creatorAgentPart || thread.authorAgentPart) && <span aria-hidden>·</span>}
                 <span className="inline-flex items-center gap-1 font-mono tabular-nums">
                   <MessageSquareIcon className="h-3 w-3" />
                   {thread.messageCount}

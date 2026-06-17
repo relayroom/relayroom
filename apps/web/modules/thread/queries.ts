@@ -18,11 +18,16 @@ export interface ThreadRow {
   messageCount: number
   lastMessageAt: Date | null
   lastMessagePreview: string | null
-  /** Author of the latest message: which agent + its owner + main-ness, for list rows. */
+  /** Author of the latest message (the last replier), for the "last reply by" marker. */
   authorAgentId: string | null
   authorAgentPart: string | null
   authorAgentRole: string | null
   authorOwnerName: string | null
+  /** Thread creator (who opened it): the stable author shown as the row's identity. */
+  creatorAgentId: string | null
+  creatorAgentPart: string | null
+  creatorAgentRole: string | null
+  creatorOwnerName: string | null
 }
 
 export interface ThreadFilter {
@@ -113,8 +118,15 @@ export async function listThreads(
         tags: threads.tags,
         createdAt: threads.createdAt,
         updatedAt: threads.updatedAt,
+        // Creator agent (who opened the thread) - the stable row identity.
+        creatorAgentId: agents.id,
+        creatorAgentPart: agents.part,
+        creatorAgentRole: agents.role,
+        creatorOwnerName: sql<string | null>`coalesce(nullif(${better_auth_user.nickname}, ''), ${better_auth_user.name})`,
       })
       .from(threads)
+      .leftJoin(agents, eq(threads.createdByAgentId, agents.id))
+      .leftJoin(better_auth_user, eq(agents.ownerUserId, better_auth_user.id))
       .where(where)
       .orderBy(desc(threads.updatedAt))
       .limit(limit)

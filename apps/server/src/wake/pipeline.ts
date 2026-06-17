@@ -18,6 +18,7 @@ import {
   getOrCreateAgent,
   messageRecipients,
   messages,
+  threads,
   wakeEvents,
 } from '@relayroom/db'
 import { checkAndBumpDirectCooldown } from '../priority/direct-cooldown'
@@ -316,6 +317,12 @@ export async function dispatch(db: Db, input: DispatchInput): Promise<DispatchRe
       recipientCount,
     })
     .returning()
+
+  // Bump the thread so lists sorted by recent activity surface it. Without this
+  // updatedAt stays at thread-creation time and replies never resurface the thread.
+  await db.update(threads)
+    .set({ updatedAt: message.createdAt })
+    .where(eq(threads.id, input.threadId))
 
   for (const r of recipients) {
     await db.insert(messageRecipients)
