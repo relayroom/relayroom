@@ -1,0 +1,22 @@
+{
+  "nav": {
+    "tab": "피드백"
+  },
+  "settings": {
+    "cardTitle": "피드백 보내기",
+    "cardDescription": "잘 되는 점, 안 되는 점, 원하는 기능을 알려주세요. RelayRoom 메인테이너에게 바로 전달됩니다."
+  },
+  "form": {
+    "ratingLabel": "사용 경험은 어떠세요? (선택)",
+    "messageLabel": "피드백 내용",
+    "messagePlaceholder": "버그 제보, 아이디어 등 무엇이든 좋습니다.",
+    "contactLabel": "연락처 (선택)",
+    "contactPlaceholder": "회신받을 이메일",
+    "submit": "피드백 보내기",
+    "sending": "전송 중...",
+    "sent": "감사합니다! 피드백이 전송되었습니다.",
+    "error": "피드백을 전송하지 못했습니다.",
+    "messageRequired": "내용을 먼저 입력해 주세요.",
+    "disclosure": "전송 시 메시지와 이 인스턴스의 ID, 버전이 relayroom.dev로 전송됩니다."
+  }
+}

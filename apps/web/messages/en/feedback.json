@@ -1,0 +1,22 @@
+{
+  "nav": {
+    "tab": "Feedback"
+  },
+  "settings": {
+    "cardTitle": "Send feedback",
+    "cardDescription": "Tell us what's working, what's broken, or what you'd like to see. It goes straight to the RelayRoom maintainers."
+  },
+  "form": {
+    "ratingLabel": "How's your experience? (optional)",
+    "messageLabel": "Your feedback",
+    "messagePlaceholder": "Bug reports, ideas, anything on your mind.",
+    "contactLabel": "Contact (optional)",
+    "contactPlaceholder": "Email, so we can follow up",
+    "submit": "Send feedback",
+    "sending": "Sending...",
+    "sent": "Thanks! Your feedback was sent.",
+    "error": "Could not send feedback.",
+    "messageRequired": "Please write a message first.",
+    "disclosure": "Submitting sends your message, this instance's ID, and version to relayroom.dev."
+  }
+}

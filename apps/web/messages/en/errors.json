@@ -64,6 +64,7 @@
   },
   "telemetry": {
     "statusFailed": "We could not load the telemetry status.",
-    "saveFailed": "We could not save the telemetry setting."
+    "saveFailed": "We could not save the telemetry setting.",
+    "feedbackFailed": "We could not send your feedback. Please try again."
   }
 }

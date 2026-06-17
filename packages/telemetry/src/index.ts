@@ -134,9 +134,12 @@ export interface FeedbackPayload {
   contact?: string;
 }
 
-/** Dashboard feedback button. Honors mode (off = no-op). */
+/** Dashboard feedback. Unlike the passive beacon, this is an explicit user
+ *  action with a per-submission disclosure in the UI, so it sends regardless of
+ *  telemetry mode (a user who opted telemetry off can still choose to report a
+ *  bug). The instance id is included so the collector can group reports from the
+ *  same install and the maintainer can follow up; the UI discloses this. */
 export async function sendFeedback(db: Db, payload: FeedbackPayload): Promise<boolean> {
-  if ((await getMode(db)) === "off") return false;
   const instanceId = await getInstanceId(db);
   return post("/feedback", { instanceId, version: CE_VERSION, ...payload });
 }
