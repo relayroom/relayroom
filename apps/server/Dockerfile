@@ -21,7 +21,7 @@ USER node
 
 # Baked release version: the single source the running app reports via telemetry
 # (RELAYROOM_VERSION). CI passes the release tag; defaults to the lockstep baseline.
-ARG RELAYROOM_VERSION=0.3.1
+ARG RELAYROOM_VERSION=0.3.2
 ENV RELAYROOM_VERSION=${RELAYROOM_VERSION}
 
 EXPOSE 48801

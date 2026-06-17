@@ -4,6 +4,17 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.3.2] - 2026-06-17
+
+### Fixed
+- Remote/LAN deployments behind a custom domain no longer get a 403 ("host not
+  allowed") when an agent connects. The compose now passes the public server base to
+  the server container (`RELAYROOM_SERVER_BASE_URL`), so its DNS-rebinding allowlist
+  includes the real hostname. `RELAYROOM_ALLOWED_HOSTS` can add more hostnames.
+- The DNS-rebinding allowlist now also honors the server base set from the dashboard
+  (Settings -> Environment), so a domain configured only in the UI is not shown in the
+  connect guide yet rejected by the server.
+
 ## [0.3.1] - 2026-06-17
 
 ### Added
@@ -41,5 +52,6 @@ Server, web, and the client packages release in lockstep under one version.
   (Claude Code, Codex, Gemini), the wake budget, governance, and content-free
   opt-in telemetry. Self-hosted via Docker Compose.
 
+[0.3.2]: https://github.com/relayroom/relayroom/releases/tag/v0.3.2
 [0.3.1]: https://github.com/relayroom/relayroom/releases/tag/v0.3.1
 [0.3.0]: https://github.com/relayroom/relayroom/releases/tag/v0.3.0

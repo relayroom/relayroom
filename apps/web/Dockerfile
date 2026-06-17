@@ -33,7 +33,7 @@ ENV PORT=48800
 ENV HOSTNAME=0.0.0.0
 
 # Baked release version (single source, matches the server image tag). Set by CI.
-ARG RELAYROOM_VERSION=0.3.1
+ARG RELAYROOM_VERSION=0.3.2
 ENV RELAYROOM_VERSION=${RELAYROOM_VERSION}
 
 # Copy standalone output (monorepo: lands at .next/standalone/apps/web/), owned by
