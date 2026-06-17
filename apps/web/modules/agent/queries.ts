@@ -1,4 +1,9 @@
-import { and, count, desc, eq, isNull, sql } from "drizzle-orm"
+import { and, count, desc, eq, isNull, ne, sql } from "drizzle-orm"
+
+// The virtual 'human' participant (server HUMAN_PART) is materialized on demand
+// when an agent addresses `to: ['human']` / needsHuman. It is not a connectable
+// coding agent, so it is hidden from the agent management list and its counts.
+const HUMAN_PART = "human"
 import type { ApiResultWithItem, ApiResultWithItems } from "@relayroom/shared"
 import { db } from "@/modules/drizzle/db"
 import { agents, agentConnections, agentSnapshots, events, messages, threads, projects } from "@relayroom/db/schema"
@@ -139,7 +144,7 @@ export async function listAgents(
       })
       .from(agents)
       .leftJoin(better_auth_user, eq(agents.ownerUserId, better_auth_user.id))
-      .where(and(eq(agents.projectId, projectId), isNull(agents.deletedAt)))
+      .where(and(eq(agents.projectId, projectId), isNull(agents.deletedAt), ne(agents.part, HUMAN_PART)))
       .orderBy(desc(agents.createdAt))
 
     const agentIds = rows.map((r) => r.id)
@@ -193,6 +198,16 @@ export async function listAgents(
       const usage = usageMap.get(r.id)
       const ev = eventMap.get(r.id)
       const connLastSeen = conn?.lastSeenAt ?? null
+      // Liveness uses the MOST RECENT of the connection's and the agent's own
+      // last-seen. MCP tool calls refresh agent.lastSeenAt continuously, while the
+      // connection row's lastSeenAt can lag far behind (only some events touch it).
+      // Preferring the connection (`connLastSeen ?? ...`) showed agents that were
+      // actively calling tools seconds ago as "offline" whenever their connection
+      // timestamp was stale. Take the later of the two so activity from either counts.
+      const liveLastSeen =
+        connLastSeen && r.lastSeenAt
+          ? (connLastSeen > r.lastSeenAt ? connLastSeen : r.lastSeenAt)
+          : (connLastSeen ?? r.lastSeenAt)
       return {
         ...r,
         model: conn?.model ?? usage?.model ?? null,
@@ -205,7 +220,7 @@ export async function listAgents(
         pagerOnline: isPagerOnline(r.pagerLastSeenAt),
         activity: deriveAgentStatus({
           connStatus: conn?.status ?? null,
-          lastSeenAt: connLastSeen ?? r.lastSeenAt,
+          lastSeenAt: liveLastSeen,
           latestEventType: ev?.type ?? null,
           latestEventAt: ev?.createdAt ?? null,
         }),
@@ -304,6 +319,13 @@ export async function listMyAgents(userId: string): Promise<ApiResultWithItems<M
       const conn = connectionMap.get(r.id)
       const usage = usageMap.get(r.id)
       const ev = eventMap.get(r.id)
+      // Most recent of connection vs agent last-seen (agent.lastSeenAt updates on
+      // every MCP call; the connection row's can lag), so an actively-working agent
+      // is not shown offline because its connection timestamp went stale.
+      const liveLastSeen =
+        conn?.lastSeenAt && r.lastSeenAt
+          ? (conn.lastSeenAt > r.lastSeenAt ? conn.lastSeenAt : r.lastSeenAt)
+          : (conn?.lastSeenAt ?? r.lastSeenAt)
       return {
         id: r.id,
         part: r.part,
@@ -313,7 +335,7 @@ export async function listMyAgents(userId: string): Promise<ApiResultWithItems<M
         icon: r.icon,
         projectSlug: r.projectSlug,
         projectName: r.projectName,
-        lastSeenAt: conn?.lastSeenAt ?? r.lastSeenAt,
+        lastSeenAt: liveLastSeen,
         model: conn?.model ?? usage?.model ?? null,
         status: conn?.status ?? null,
         usageInput: usage?.input ?? 0,
@@ -321,7 +343,7 @@ export async function listMyAgents(userId: string): Promise<ApiResultWithItems<M
         usageCache: usage?.cache ?? 0,
         activity: deriveAgentStatus({
           connStatus: conn?.status ?? null,
-          lastSeenAt: conn?.lastSeenAt ?? r.lastSeenAt,
+          lastSeenAt: liveLastSeen,
           latestEventType: ev?.type ?? null,
           latestEventAt: ev?.createdAt ?? null,
         }),

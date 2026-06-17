@@ -1,4 +1,8 @@
-import { and, count, desc, eq, isNull, sql } from "drizzle-orm"
+import { and, count, desc, eq, isNull, ne, sql } from "drizzle-orm"
+
+// The virtual 'human' participant (server HUMAN_PART) is not a connectable agent,
+// so it is excluded from dashboard agent counts and the status summary.
+const HUMAN_PART = "human"
 import type { ApiResultWithItem } from "@relayroom/shared"
 import { db } from "@/modules/drizzle/db"
 import { projects, agents } from "@relayroom/db/schema"
@@ -51,7 +55,7 @@ export async function getDashboardSummary(
         agentCount: count().as("agent_count"),
       })
       .from(agents)
-      .where(isNull(agents.deletedAt))
+      .where(and(isNull(agents.deletedAt), ne(agents.part, HUMAN_PART)))
       .groupBy(agents.projectId)
       .as("agent_counts")
 
@@ -92,6 +96,7 @@ export async function getDashboardSummary(
               ? eq(agents.projectId, projectIds[0]!)
               : sql`${agents.projectId} = ANY(ARRAY[${sql.join(projectIds.map((id) => sql`${id}`), sql`, `)}]::text[])`,
             isNull(agents.deletedAt),
+            ne(agents.part, HUMAN_PART),
           ),
         )
 
