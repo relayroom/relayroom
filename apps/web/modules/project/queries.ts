@@ -1,7 +1,11 @@
-import { and, count, desc, eq, isNull, sql } from "drizzle-orm"
+import { and, count, desc, eq, isNull, ne, sql } from "drizzle-orm"
 import type { ApiResultWithItem, ApiResultWithItems } from "@relayroom/shared"
 import { db } from "@/modules/drizzle/db"
 import { projects, agents, projectAccess, threads, events } from "@relayroom/db/schema"
+
+// The virtual 'human' participant (server HUMAN_PART) is not a connectable agent,
+// so it is excluded from the project agent counts (matching the agent list).
+const HUMAN_PART = "human"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -64,6 +68,7 @@ export async function listProjects(
         agentCount: count().as("agent_count"),
       })
       .from(agents)
+      .where(ne(agents.part, HUMAN_PART))
       .groupBy(agents.projectId)
       .as("agent_counts")
 
@@ -192,7 +197,7 @@ export async function getProjectBySlug(
     const [agentRow] = await db
       .select({ agentCount: count() })
       .from(agents)
-      .where(eq(agents.projectId, row.id))
+      .where(and(eq(agents.projectId, row.id), ne(agents.part, HUMAN_PART)))
 
     const [memberRow] = await db
       .select({ memberCount: count() })

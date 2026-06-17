@@ -1,4 +1,9 @@
-import { and, count, desc, eq, isNull, sql } from "drizzle-orm"
+import { and, count, desc, eq, isNull, ne, sql } from "drizzle-orm"
+
+// The virtual 'human' participant (server HUMAN_PART) is materialized on demand
+// when an agent addresses `to: ['human']` / needsHuman. It is not a connectable
+// coding agent, so it is hidden from the agent management list and its counts.
+const HUMAN_PART = "human"
 import type { ApiResultWithItem, ApiResultWithItems } from "@relayroom/shared"
 import { db } from "@/modules/drizzle/db"
 import { agents, agentConnections, agentSnapshots, events, messages, threads, projects } from "@relayroom/db/schema"
@@ -139,7 +144,7 @@ export async function listAgents(
       })
       .from(agents)
       .leftJoin(better_auth_user, eq(agents.ownerUserId, better_auth_user.id))
-      .where(and(eq(agents.projectId, projectId), isNull(agents.deletedAt)))
+      .where(and(eq(agents.projectId, projectId), isNull(agents.deletedAt), ne(agents.part, HUMAN_PART)))
       .orderBy(desc(agents.createdAt))
 
     const agentIds = rows.map((r) => r.id)
