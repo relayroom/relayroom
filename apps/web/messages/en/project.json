@@ -105,6 +105,7 @@
     "replyTitle": "Reply",
     "closedMessage": "This thread is closed with status: {status}.",
     "readBy": "Read by: {readers}",
+    "to": "To:",
     "status": {
       "open": "Open",
       "answered": "Answered",

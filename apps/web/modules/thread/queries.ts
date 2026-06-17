@@ -56,6 +56,13 @@ export interface MessageDetail {
   fromUserName: string | null
   createdAt: Date
   readReceipts: ReadReceipt[]
+  // The parts this message was addressed to (its target audience).
+  recipients: Array<{
+    agentId: string
+    part: string
+    nickname: string | null
+    color: string | null
+  }>
 }
 
 export interface ThreadDetail {
@@ -305,33 +312,39 @@ export async function getThread(
       receiptMap.set(r.messageId, list)
     }
 
-    // Fetch target agents for this thread (agents that have any message_recipient entry)
-    // We use the distinct agents from all recipients in this thread
-    const targetAgentIds = [
-      ...new Set(
-        (
-          await db
-            .select({ agentId: messageRecipients.agentId })
-            .from(messageRecipients)
-            .innerJoin(messages, eq(messageRecipients.messageId, messages.id))
-            .where(eq(messages.threadId, threadId))
-        ).map((r) => r.agentId),
-      ),
-    ]
+    // Fetch the target audience (recipients) of every message, with display info.
+    // One pass builds both the per-message list (for the "To" badges) and the
+    // thread-wide distinct set (targetAgents) - no extra round-trip.
+    const recipientRows = await db
+      .select({
+        messageId: messageRecipients.messageId,
+        agentId: messageRecipients.agentId,
+        part: agents.part,
+        nickname: agents.nickname,
+        color: agents.color,
+        badge: agents.badge,
+      })
+      .from(messageRecipients)
+      .innerJoin(agents, eq(messageRecipients.agentId, agents.id))
+      .where(inArray(messageRecipients.messageId, messageIds))
+      .orderBy(asc(agents.part))
 
-    const targetAgents: ThreadDetail["targetAgents"] = []
-    if (targetAgentIds.length > 0) {
-      const agentRows = await db
-        .select({
-          id: agents.id,
-          part: agents.part,
-          nickname: agents.nickname,
-          badge: agents.badge,
+    const recipientsByMessage = new Map<string, MessageDetail["recipients"]>()
+    const targetAgentMap = new Map<string, ThreadDetail["targetAgents"][number]>()
+    for (const r of recipientRows) {
+      const list = recipientsByMessage.get(r.messageId) ?? []
+      list.push({ agentId: r.agentId, part: r.part, nickname: r.nickname, color: r.color })
+      recipientsByMessage.set(r.messageId, list)
+      if (!targetAgentMap.has(r.agentId)) {
+        targetAgentMap.set(r.agentId, {
+          id: r.agentId,
+          part: r.part,
+          nickname: r.nickname,
+          badge: r.badge,
         })
-        .from(agents)
-        .where(inArray(agents.id, targetAgentIds))
-      targetAgents.push(...agentRows)
+      }
     }
+    const targetAgents: ThreadDetail["targetAgents"] = [...targetAgentMap.values()]
 
     const messageDetails: MessageDetail[] = msgs.map((m) => {
       const agent = m.fromAgentId ? agentMap.get(m.fromAgentId) : undefined
@@ -346,6 +359,7 @@ export async function getThread(
         fromUserName: userName ?? null,
         createdAt: m.createdAt,
         readReceipts: receiptMap.get(m.id) ?? [],
+        recipients: recipientsByMessage.get(m.id) ?? [],
       }
     })
 
