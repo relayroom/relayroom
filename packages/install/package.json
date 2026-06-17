@@ -1,6 +1,6 @@
 {
   "name": "@relayroom/install",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "Interactive installer for self-hosting RelayRoom - generates docker-compose.yml + .env from prebuilt images.",
   "type": "module",
   "license": "Apache-2.0",
