@@ -28,6 +28,7 @@ import type { Db } from '@relayroom/db'
 import {
   agentConnections,
   agents,
+  configurations,
   events,
   getOrCreateAgent,
   messages,
@@ -107,6 +108,35 @@ export function getAllowedMcpHosts(): Set<string> {
   const raw = process.env.RELAYROOM_ALLOWED_HOSTS
   if (raw) for (const h of raw.split(',')) addHost(h)
   return hosts
+}
+
+// The superuser can set the public server base from the dashboard (Settings ->
+// Environment), stored in `configuration` (scope=global, key=server_base). Its host
+// must also pass the DNS-rebinding check, so the /mcp middleware reads it here.
+// Cached with a short TTL to keep the hot path off the DB on every request.
+let cachedDbHost: { value: string | null; at: number } = { value: null, at: 0 }
+const DB_HOST_TTL_MS = 30_000
+async function getConfiguredServerHost(db: Db): Promise<string | null> {
+  const now = Date.now()
+  if (cachedDbHost.at !== 0 && now - cachedDbHost.at < DB_HOST_TTL_MS) return cachedDbHost.value
+  let host: string | null = null
+  try {
+    const [row] = await db
+      .select({ value: configurations.value })
+      .from(configurations)
+      .where(and(
+        eq(configurations.scope, 'global'),
+        isNull(configurations.scopeId),
+        eq(configurations.key, 'server_base'),
+      ))
+      .limit(1)
+    const v = row?.value
+    if (typeof v === 'string' && v.length > 0) {
+      try { host = new URL(v).host.split(':')[0] ?? null } catch { host = null }
+    }
+  } catch { host = null }
+  cachedDbHost = { value: host, at: now }
+  return host
 }
 
 // ── Token validation ──────────────────────────────────────────────────────────
@@ -1076,12 +1106,18 @@ export function createMcpRoute(db: Db, bus: Bus) {
   // host for this server. Applies to every /mcp/* endpoint (transport, heartbeat,
   // wake, usage). Skipped only when the Host header is absent (non-browser tooling
   // that omits it) — the bearer/connect-code checks still gate those.
-  const allowedHosts = getAllowedMcpHosts()
+  const envHosts = getAllowedMcpHosts()
   route.use('*', async (c, next) => {
     const host = c.req.header('Host')
-    if (host && allowedHosts.size > 0) {
+    if (host) {
       const hostname = host.split(':')[0] ?? host
-      if (!allowedHosts.has(hostname)) {
+      // Allow env-configured hosts plus the dashboard-set public server base
+      // (Settings -> Environment), so a domain configured only in the UI is not
+      // shown in the connect guide yet rejected here. DB host is cached (TTL).
+      const allowed = new Set(envHosts)
+      const dbHost = await getConfiguredServerHost(db)
+      if (dbHost) allowed.add(dbHost)
+      if (allowed.size > 0 && !allowed.has(hostname)) {
         return c.json({ error: 'host not allowed' }, 403)
       }
     }

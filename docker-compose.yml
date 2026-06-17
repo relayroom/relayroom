@@ -28,6 +28,10 @@ services:
     environment:
       DATABASE_URL: postgres://hub:hub@postgres:5432/hub
       PORT: "48801"
+      # DNS-rebinding Host allowlist; must match the address agents reach the server
+      # at, or requests 403. (Reuses the public server base.)
+      RELAYROOM_SERVER_BASE_URL: ${RELAYROOM_PUBLIC_SERVER_BASE:-http://localhost:48801}
+      RELAYROOM_ALLOWED_HOSTS: ${RELAYROOM_ALLOWED_HOSTS:-}
     ports:
       - "48801:48801"
     # Migrations run on boot before the server listens, so /health passing means the

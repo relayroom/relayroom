@@ -26,7 +26,7 @@ import { computeRollups, type Rollup } from "./aggregate";
 
 const ENDPOINT =
   process.env.RELAYROOM_TELEMETRY_URL ?? "https://relayroom.dev/api/telemetry";
-const CE_VERSION = process.env.RELAYROOM_VERSION ?? "0.3.1";
+const CE_VERSION = process.env.RELAYROOM_VERSION ?? "0.3.2";
 const EDITION = (process.env.RELAYROOM_EDITION ?? "ce") as "ce" | "ee";
 const SEND_TIMEOUT_MS = 8_000;
 const TICK_MS = 24 * 60 * 60 * 1000; // 24h

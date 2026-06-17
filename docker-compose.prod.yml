@@ -32,6 +32,13 @@ services:
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-hub}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hub}
       PORT: "48801"
+      # The server's own public base, used as the DNS-rebinding Host allowlist. Must
+      # match the public address agents reach it at, or requests 403. Reuses the same
+      # value the web shows in the connect guide.
+      RELAYROOM_SERVER_BASE_URL: ${RELAYROOM_PUBLIC_SERVER_BASE:-http://localhost:48801}
+      # Extra allowed Host names (comma-separated), if more than one hostname fronts
+      # the server. The base host above is always allowed.
+      RELAYROOM_ALLOWED_HOSTS: ${RELAYROOM_ALLOWED_HOSTS:-}
     # Remote agents reach the MCP server here, so the port must be published (or
     # fronted by a TLS proxy that forwards to it). Matches RELAYROOM_PUBLIC_SERVER_BASE.
     ports:

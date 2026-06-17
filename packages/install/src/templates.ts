@@ -49,6 +49,10 @@ services:
     environment:
       DATABASE_URL: postgres://\${POSTGRES_USER:-hub}:\${POSTGRES_PASSWORD}@postgres:5432/\${POSTGRES_DB:-hub}
       PORT: "48801"
+      # DNS-rebinding Host allowlist; must match the public server address or requests
+      # 403. Reuses the public server base shown in the connect guide.
+      RELAYROOM_SERVER_BASE_URL: \${RELAYROOM_PUBLIC_SERVER_BASE:-http://localhost:48801}
+      RELAYROOM_ALLOWED_HOSTS: \${RELAYROOM_ALLOWED_HOSTS:-}
     ports:
       - "\${RELAYROOM_SERVER_PORT:-48801}:48801"
     # The server runs DB migrations on boot and only listens afterwards, so a
