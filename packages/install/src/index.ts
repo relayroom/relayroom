@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
-import { chmodSync, mkdirSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve, join } from 'node:path'
 import { createInterface } from 'node:readline/promises'
 import { stdin, stdout } from 'node:process'
@@ -141,7 +141,52 @@ async function run() {
   }
 }
 
-run().catch((err) => {
-  info(`\n  Installer failed: ${err instanceof Error ? err.message : String(err)}`)
-  process.exitCode = 1
-})
+/**
+ * Upgrade an existing install: regenerate docker-compose.yml (which carries no
+ * secrets) so compose-level changes from a new version land, and pin
+ * RELAYROOM_VERSION in .env to this installer's version - everything else in .env
+ * (secrets, URLs, SMTP) is preserved. `docker compose pull` alone only updates
+ * images, never the compose file, so this fills that gap.
+ */
+function upgrade() {
+  const dirArg = process.argv[3] && !process.argv[3].startsWith('-') ? process.argv[3] : '.'
+  const dir = resolve(process.cwd(), dirArg)
+  const composePath = join(dir, 'docker-compose.yml')
+  const envPath = join(dir, '.env')
+
+  info(`\n  RelayRoom installer v${VERSION} - upgrade`)
+  if (!existsSync(composePath) || !existsSync(envPath)) {
+    info(`\n  No RelayRoom install found in ${dir} (expected docker-compose.yml + .env).`)
+    info('  Run this from the install directory, or pass it: npx @relayroom/install upgrade <dir>')
+    process.exitCode = 1
+    return
+  }
+
+  // Regenerate the compose (no secrets in it) to pick up compose-level changes.
+  writeFileSync(composePath, renderCompose())
+  // Pin RELAYROOM_VERSION to this installer's version, preserving the rest of .env.
+  const env = readFileSync(envPath, 'utf8')
+  const line = `RELAYROOM_VERSION=${VERSION}`
+  const updated = /^RELAYROOM_VERSION=.*$/m.test(env)
+    ? env.replace(/^RELAYROOM_VERSION=.*$/m, line)
+    : env.replace(/\n*$/, `\n${line}\n`)
+  writeFileSync(envPath, updated)
+
+  info('\n  Updated:')
+  info(`    ${composePath}  (regenerated for v${VERSION})`)
+  info(`    ${envPath}  (RELAYROOM_VERSION=${VERSION}, other values kept)`)
+  info('\n  Now pull the new images and restart:')
+  info(`    cd ${dirArg}`)
+  info('    docker compose pull')
+  info('    docker compose up -d')
+  info('')
+}
+
+if (process.argv[2] === 'upgrade') {
+  upgrade()
+} else {
+  run().catch((err) => {
+    info(`\n  Installer failed: ${err instanceof Error ? err.message : String(err)}`)
+    process.exitCode = 1
+  })
+}
