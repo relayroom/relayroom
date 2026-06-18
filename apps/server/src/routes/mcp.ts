@@ -1166,15 +1166,21 @@ async function renderCurrentMainSection(db: Db, projectId: string): Promise<stri
 // release, and nudging to a version that is not yet installable would be wrong.
 // Cached in-memory (one registry call serves every agent) and refreshed in the
 // background so the heartbeat response never blocks on the network.
-let cliLatestCache: { version: string | null; at: number } = { version: null, at: 0 }
+// `at` = last SUCCESSFUL fetch (gates the 1h TTL); `lastAttempt` = last try (gates
+// the retry backoff). Splitting them means a failed/cold-start fetch keeps `version`
+// stale and retries after a short backoff instead of going silent for the full TTL.
+let cliLatestCache: { version: string | null; at: number; lastAttempt: number } = { version: null, at: 0, lastAttempt: 0 }
 let cliLatestRefreshing = false
-const CLI_LATEST_TTL_MS = 60 * 60 * 1000 // 1h
+const CLI_LATEST_TTL_MS = 60 * 60 * 1000 // 1h between successful refreshes
+const CLI_LATEST_RETRY_MS = 2 * 60 * 1000 // min spacing between attempts (failure backoff)
 
 function latestCliVersion(): string | null {
   const now = Date.now()
-  if (now - cliLatestCache.at >= CLI_LATEST_TTL_MS && !cliLatestRefreshing) {
+  const stale = now - cliLatestCache.at >= CLI_LATEST_TTL_MS
+  const mayRetry = now - cliLatestCache.lastAttempt >= CLI_LATEST_RETRY_MS
+  if (stale && mayRetry && !cliLatestRefreshing) {
     cliLatestRefreshing = true
-    cliLatestCache = { ...cliLatestCache, at: now } // claim the slot to avoid a stampede
+    cliLatestCache = { ...cliLatestCache, lastAttempt: now } // claim the slot to avoid a stampede
     void (async () => {
       try {
         const res = await fetch('https://registry.npmjs.org/@relayroom/cli/latest', {
@@ -1182,10 +1188,12 @@ function latestCliVersion(): string | null {
         })
         if (res.ok) {
           const json = (await res.json()) as { version?: unknown }
-          if (typeof json.version === 'string') cliLatestCache = { version: json.version, at: Date.now() }
+          // Only a valid version advances `at` (the success TTL); a failure leaves
+          // it stale so the next beat past the backoff retries.
+          if (typeof json.version === 'string') cliLatestCache = { ...cliLatestCache, version: json.version, at: Date.now() }
         }
       } catch {
-        /* keep the last known good value */
+        /* keep the last known good value; lastAttempt spaces the retry */
       } finally {
         cliLatestRefreshing = false
       }
@@ -1194,14 +1202,26 @@ function latestCliVersion(): string | null {
   return cliLatestCache.version
 }
 
-/** True when `latest` is a higher semver than `current` (numeric x.y.z only). */
+/** True when `latest` is a higher version than `current`. Numeric x.y.z, with a
+ *  minimal prerelease rule: same x.y.z, a release (no `-tag`) beats a prerelease. */
 function isCliOutdated(current: string, latest: string): boolean {
-  const parse = (v: string) => v.replace(/^v/, '').split('.').map((n) => Number.parseInt(n, 10) || 0)
-  const [c0 = 0, c1 = 0, c2 = 0] = parse(current)
-  const [l0 = 0, l1 = 0, l2 = 0] = parse(latest)
-  if (l0 !== c0) return l0 > c0
-  if (l1 !== c1) return l1 > c1
-  return l2 > c2
+  const split = (v: string) => {
+    const clean = v.replace(/^v/, '')
+    const dash = clean.indexOf('-')
+    const base = dash === -1 ? clean : clean.slice(0, dash)
+    const pre = dash === -1 ? '' : clean.slice(dash + 1)
+    const [a = 0, b = 0, c = 0] = base.split('.').map((n) => Number.parseInt(n, 10) || 0)
+    return { a, b, c, pre }
+  }
+  const cur = split(current)
+  const lat = split(latest)
+  if (lat.a !== cur.a) return lat.a > cur.a
+  if (lat.b !== cur.b) return lat.b > cur.b
+  if (lat.c !== cur.c) return lat.c > cur.c
+  // Same x.y.z: a prerelease is older than its final release.
+  if (cur.pre && !lat.pre) return true
+  if (!cur.pre && lat.pre) return false
+  return lat.pre > cur.pre // both prereleases (or both none) -> lexical
 }
 
 // ── Hono route factory ────────────────────────────────────────────────────────
