@@ -68,8 +68,8 @@ program
 program
   .command("init")
   .description("Set up this worktree: write RELAYROOM.md + save connection identity to .relayroom/config.json")
-  .requiredOption("--code <connect_code>", "project connect code")
-  .option("--part <part>", "this agent's part (saved to .relayroom/config.json)")
+  .option("--code <connect_code>", "project connect code (first time only; then reused from .relayroom/config.json)")
+  .option("--part <part>", "this agent's part (saved to .relayroom/config.json; reused on re-init)")
   .option("--target <tmux>", "tmux target for the pager (saved to .relayroom/config.json)")
   .option("--agent <agent>", "coding CLI(s) to target, comma-separated (claude|codex|gemini)")
   .option("--token <token>", "bearer token, saved to .relayroom/config.json so rr.sh can re-run mcp add")
