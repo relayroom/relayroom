@@ -1159,6 +1159,51 @@ async function renderCurrentMainSection(db: Db, projectId: string): Promise<stri
   }
 }
 
+// ── CLI update check (npm registry, cached) ─────────────────────────────────
+// The pager reports its CLI version on each heartbeat; we hand back the latest
+// version published to npm so the tmux status line can nudge for an update. npm
+// (not the GitHub release) is the source of truth: an npm publish can lag the
+// release, and nudging to a version that is not yet installable would be wrong.
+// Cached in-memory (one registry call serves every agent) and refreshed in the
+// background so the heartbeat response never blocks on the network.
+let cliLatestCache: { version: string | null; at: number } = { version: null, at: 0 }
+let cliLatestRefreshing = false
+const CLI_LATEST_TTL_MS = 60 * 60 * 1000 // 1h
+
+function latestCliVersion(): string | null {
+  const now = Date.now()
+  if (now - cliLatestCache.at >= CLI_LATEST_TTL_MS && !cliLatestRefreshing) {
+    cliLatestRefreshing = true
+    cliLatestCache = { ...cliLatestCache, at: now } // claim the slot to avoid a stampede
+    void (async () => {
+      try {
+        const res = await fetch('https://registry.npmjs.org/@relayroom/cli/latest', {
+          signal: AbortSignal.timeout(4000),
+        })
+        if (res.ok) {
+          const json = (await res.json()) as { version?: unknown }
+          if (typeof json.version === 'string') cliLatestCache = { version: json.version, at: Date.now() }
+        }
+      } catch {
+        /* keep the last known good value */
+      } finally {
+        cliLatestRefreshing = false
+      }
+    })()
+  }
+  return cliLatestCache.version
+}
+
+/** True when `latest` is a higher semver than `current` (numeric x.y.z only). */
+function isCliOutdated(current: string, latest: string): boolean {
+  const parse = (v: string) => v.replace(/^v/, '').split('.').map((n) => Number.parseInt(n, 10) || 0)
+  const [c0 = 0, c1 = 0, c2 = 0] = parse(current)
+  const [l0 = 0, l1 = 0, l2 = 0] = parse(latest)
+  if (l0 !== c0) return l0 > c0
+  if (l1 !== c1) return l1 > c1
+  return l2 > c2
+}
+
 // ── Hono route factory ────────────────────────────────────────────────────────
 
 export function createMcpRoute(db: Db, bus: Bus) {
@@ -1275,7 +1320,7 @@ export function createMcpRoute(db: Db, bus: Bus) {
   route.post('/:connectCode/heartbeat', async (c) => {
     const connectCode = c.req.param('connectCode')
     const body = await c.req.json().catch(() => null) as
-      { part?: unknown; relayroomMd?: unknown; holder?: unknown; release?: unknown; host?: unknown } | null
+      { part?: unknown; relayroomMd?: unknown; holder?: unknown; release?: unknown; host?: unknown; version?: unknown } | null
     const part = typeof body?.part === 'string' ? body.part : ''
     if (!isValidPart(part)) return c.json({ error: 'invalid part' }, 400)
     const holder = typeof body?.holder === 'string' ? body.holder : null
@@ -1349,9 +1394,16 @@ export function createMcpRoute(db: Db, bus: Bus) {
     void runEligibilitySweep(db, bus, { agentId: agent.id }).catch(e =>
       console.error('[wake] heartbeat sweep failed', e),
     )
+    // Tell the pager the latest CLI on npm (vs the version it reported) so the
+    // tmux status line can nudge for an update. Best-effort + cached; absent when
+    // the pager did not send its version or the registry is unreachable.
+    const reportedVersion = typeof body?.version === 'string' ? body.version : null
+    const latestCli = reportedVersion ? latestCliVersion() : null
+    const updateAvailable = !!reportedVersion && !!latestCli && isCliOutdated(reportedVersion, latestCli)
+
     // Hand the agent's color (hex) back so the pager can cache it for the tmux
     // status line - matches the color shown for this agent in the dashboard.
-    return c.json({ ok: true, leaseHeld, color: resolveAgentColorHex(agent.color, part) })
+    return c.json({ ok: true, leaseHeld, color: resolveAgentColorHex(agent.color, part), latestCli, updateAvailable })
   })
 
   // ── Pager lease + fencing + catch-up (07) ──────────────────────────────────

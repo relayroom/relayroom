@@ -26,7 +26,7 @@
  *   node relayroom-pager.mjs --code demo-7c3b59048dfc --part backend --target relayroom-backend
  */
 import { execFile } from "node:child_process"
-import { existsSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
 import { hostname } from "node:os"
 import { join } from "node:path"
 
@@ -49,6 +49,12 @@ const PROJECT = arg("project") // legacy slug fallback
 const PART = arg("part", CFG.part)
 const TARGET = arg("target", CFG.target) // tmux target: session, session:window.pane, etc.
 const SERVER = arg("server", CFG.server ?? "http://localhost:48801")
+// Our own CLI version (from the package we ship inside), reported on each
+// heartbeat so the hub can tell us whether a newer CLI is on npm.
+const VERSION = (() => {
+  try { return JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version || null }
+  catch { return null }
+})()
 const DEBOUNCE_MS = Number(arg("debounce", "1200"))
 const TOKEN = arg("token") // optional agent bearer; needed only if /api/sse enforces auth
 const DIR = arg("dir", process.cwd()) // worktree dir; used to detect RELAYROOM.md
@@ -478,13 +484,21 @@ async function heartbeat() {
     const res = await fetch(`${SERVER}/mcp/${encodeURIComponent(CODE)}/heartbeat`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ part: PART, holder: HOLDER, host: hostname(), relayroomMd: existsSync(join(DIR, "RELAYROOM.md")) }),
+      body: JSON.stringify({ part: PART, holder: HOLDER, host: hostname(), relayroomMd: existsSync(join(DIR, "RELAYROOM.md")), version: VERSION }),
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     })
     if (res.ok) {
       const json = await res.json().catch(() => ({}))
       // leaseHeld:false => another pager took over; stop nudging until next claim.
       if (typeof json.leaseHeld === "boolean") leaseHeld = json.leaseHeld
+      // CLI update nudge: persist the latest npm version (or clear it) so rr.sh's
+      // status line can show a `↑<ver>` marker. The hub decides updateAvailable by
+      // comparing our reported version against npm.
+      try {
+        const f = join(DIR, ".relayroom", ".update")
+        if (json.updateAvailable === true && typeof json.latestCli === "string") writeFileSync(f, json.latestCli)
+        else if (existsSync(f)) unlinkSync(f)
+      } catch { /* ignore */ }
       // The agent's dashboard color (hex): cache it (on change) and paint this
       // session's tmux status bar with it, picking a readable black/white text
       // color from luminance (tmux does not auto-invert). Re-applied each beat so a
