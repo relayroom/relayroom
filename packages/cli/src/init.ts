@@ -186,13 +186,16 @@ unread_count() {
 # inbox: N is the open-unread count - highlighted when >0 so a user holding the chat
 # window sees there is something to handle; dim when 0.
 sl() {
-  local sep mcp pgr inbox n
+  local sep mcp pgr inbox n upd
   sep="#[fg=colour240]│#[default]"
   n="$(unread_count)"
   if [ "\${n:-0}" -gt 0 ] 2>/dev/null; then inbox="#[fg=yellow,bold]inbox: \${n}#[default]"; else inbox="#[fg=colour244]inbox: 0#[default]"; fi
   if mcp_online; then mcp="#[fg=green]●#[default] MCP"; else mcp="#[fg=red,bold]○ !MCP#[default]"; fi
   if pg_running;  then pgr="#[fg=green]●#[default] Pager"; else pgr="#[fg=red,bold]○ !Pager#[default]"; fi
-  printf '%s %s %s %s %s %s %s' "$PART" "$sep" "$inbox" "$sep" "$mcp" "$sep" "$pgr"
+  # CLI update available: the pager writes the latest npm version into this file.
+  # Shows '↑<ver>'; run './rr.sh update' to refresh RELAYROOM.md (npm for the CLI).
+  if [ -f "$ROOT/.relayroom/.update" ]; then upd=" $sep #[fg=cyan,bold]↑$(cat "$ROOT/.relayroom/.update" 2>/dev/null)#[default]"; fi
+  printf '%s %s %s %s %s %s %s%s' "$PART" "$sep" "$inbox" "$sep" "$mcp" "$sep" "$pgr" "$upd"
 }
 
 # ── tmux ─────────────────────────────────────────────────────────────────────
@@ -232,6 +235,7 @@ RelayRoom console (part=$PART, session=$SESSION, agent=$AGENT)
   rr.sh pager start|stop|restart|status
   rr.sh claude|gemini|codex mcp-add|hooks|run [--bypass]
   rr.sh setup                    mcp-add + hooks for every configured agent
+  rr.sh update [--self]          re-pull RELAYROOM.md from the hub (--self also regenerates rr.sh)
   --bypass                       launch the CLI with its skip-all-approvals flag
 EOF
 }
@@ -271,6 +275,20 @@ case "\${1:-help}" in
         else exec "$1"; fi ;;
       *) usage; exit 1 ;; esac ;;
   setup) setup ;;
+  # Refresh the agent-side files in place (run from INSIDE the agent, e.g. \`! ./rr.sh update\`).
+  update) case "\${2:-}" in
+      --self)
+        # Also regenerate rr.sh itself via the installed CLI. To get a newer rr.sh,
+        # update the CLI on npm first (the \`↑<ver>\` status marker shows when one is out).
+        $CLI init --code "$CODE" --part "$PART" --server "$SERVER" ;;
+      *)
+        # Re-pull just RELAYROOM.md from the hub - no npm needed (the CLI updates via
+        # npm). The running agent caches the old copy, so re-read it afterwards.
+        if curl -fsS "$SERVER/mcp/$CODE/relayroom-md" -o "$ROOT/RELAYROOM.md"; then
+          rm -f "$ROOT/.relayroom/.update" 2>/dev/null || true
+          echo "RELAYROOM.md updated from the hub. Re-read it now - the running agent still has the old copy."
+        else echo "rr.sh: failed to fetch RELAYROOM.md from $SERVER" >&2; exit 1; fi ;;
+    esac ;;
   statusline) sl ;;
   help|-h|--help) usage ;;
   *) usage; exit 1 ;;

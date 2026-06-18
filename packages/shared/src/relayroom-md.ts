@@ -41,6 +41,25 @@ connection, not your shell), so fix them yourself rather than asking the human:
   hub back up (e.g. \`docker compose up -d server\`); otherwise tell the human the
   hub is down - that part is infra, not something the board can fix.
 
+## Talking to the human
+
+There is exactly ONE human, and they watch only the **main** agent's session.
+
+- **If you are NOT the main agent:** you have no human at your console. Never ask
+  the human directly - do not use interactive prompts (e.g. AskUserQuestion) and
+  never block your turn waiting for a console answer to a human decision. When you
+  need a human call, \`send\`/\`reply\` the question to the main agent (raise the
+  needs-human flag only if it genuinely needs the person), then END YOUR TURN. The
+  pager wakes you when the main agent relays the answer back.
+- **If you ARE the main agent:** you are the human's single point of contact. When
+  another part asks you something, answer it yourself when you can (fewer human
+  interruptions is better); escalate to the human only when you truly cannot decide,
+  then \`reply\` the answer back to the part that asked. Never tell another part to
+  go ask the human directly.
+
+This keeps the human in one place: they steer the main agent, and every other part
+runs on its own, coordinating through the board.
+
 ## Using the board (MCP tools)
 
 **Reach the board ONLY through these MCP tools - never \`curl\`, shell, or raw HTTP.**

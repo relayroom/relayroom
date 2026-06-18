@@ -1159,6 +1159,71 @@ async function renderCurrentMainSection(db: Db, projectId: string): Promise<stri
   }
 }
 
+// ── CLI update check (npm registry, cached) ─────────────────────────────────
+// The pager reports its CLI version on each heartbeat; we hand back the latest
+// version published to npm so the tmux status line can nudge for an update. npm
+// (not the GitHub release) is the source of truth: an npm publish can lag the
+// release, and nudging to a version that is not yet installable would be wrong.
+// Cached in-memory (one registry call serves every agent) and refreshed in the
+// background so the heartbeat response never blocks on the network.
+// `at` = last SUCCESSFUL fetch (gates the 1h TTL); `lastAttempt` = last try (gates
+// the retry backoff). Splitting them means a failed/cold-start fetch keeps `version`
+// stale and retries after a short backoff instead of going silent for the full TTL.
+let cliLatestCache: { version: string | null; at: number; lastAttempt: number } = { version: null, at: 0, lastAttempt: 0 }
+let cliLatestRefreshing = false
+const CLI_LATEST_TTL_MS = 60 * 60 * 1000 // 1h between successful refreshes
+const CLI_LATEST_RETRY_MS = 2 * 60 * 1000 // min spacing between attempts (failure backoff)
+
+function latestCliVersion(): string | null {
+  const now = Date.now()
+  const stale = now - cliLatestCache.at >= CLI_LATEST_TTL_MS
+  const mayRetry = now - cliLatestCache.lastAttempt >= CLI_LATEST_RETRY_MS
+  if (stale && mayRetry && !cliLatestRefreshing) {
+    cliLatestRefreshing = true
+    cliLatestCache = { ...cliLatestCache, lastAttempt: now } // claim the slot to avoid a stampede
+    void (async () => {
+      try {
+        const res = await fetch('https://registry.npmjs.org/@relayroom/cli/latest', {
+          signal: AbortSignal.timeout(4000),
+        })
+        if (res.ok) {
+          const json = (await res.json()) as { version?: unknown }
+          // Only a valid version advances `at` (the success TTL); a failure leaves
+          // it stale so the next beat past the backoff retries.
+          if (typeof json.version === 'string') cliLatestCache = { ...cliLatestCache, version: json.version, at: Date.now() }
+        }
+      } catch {
+        /* keep the last known good value; lastAttempt spaces the retry */
+      } finally {
+        cliLatestRefreshing = false
+      }
+    })()
+  }
+  return cliLatestCache.version
+}
+
+/** True when `latest` is a higher version than `current`. Numeric x.y.z, with a
+ *  minimal prerelease rule: same x.y.z, a release (no `-tag`) beats a prerelease. */
+function isCliOutdated(current: string, latest: string): boolean {
+  const split = (v: string) => {
+    const clean = v.replace(/^v/, '')
+    const dash = clean.indexOf('-')
+    const base = dash === -1 ? clean : clean.slice(0, dash)
+    const pre = dash === -1 ? '' : clean.slice(dash + 1)
+    const [a = 0, b = 0, c = 0] = base.split('.').map((n) => Number.parseInt(n, 10) || 0)
+    return { a, b, c, pre }
+  }
+  const cur = split(current)
+  const lat = split(latest)
+  if (lat.a !== cur.a) return lat.a > cur.a
+  if (lat.b !== cur.b) return lat.b > cur.b
+  if (lat.c !== cur.c) return lat.c > cur.c
+  // Same x.y.z: a prerelease is older than its final release.
+  if (cur.pre && !lat.pre) return true
+  if (!cur.pre && lat.pre) return false
+  return lat.pre > cur.pre // both prereleases (or both none) -> lexical
+}
+
 // ── Hono route factory ────────────────────────────────────────────────────────
 
 export function createMcpRoute(db: Db, bus: Bus) {
@@ -1275,7 +1340,7 @@ export function createMcpRoute(db: Db, bus: Bus) {
   route.post('/:connectCode/heartbeat', async (c) => {
     const connectCode = c.req.param('connectCode')
     const body = await c.req.json().catch(() => null) as
-      { part?: unknown; relayroomMd?: unknown; holder?: unknown; release?: unknown; host?: unknown } | null
+      { part?: unknown; relayroomMd?: unknown; holder?: unknown; release?: unknown; host?: unknown; version?: unknown } | null
     const part = typeof body?.part === 'string' ? body.part : ''
     if (!isValidPart(part)) return c.json({ error: 'invalid part' }, 400)
     const holder = typeof body?.holder === 'string' ? body.holder : null
@@ -1349,9 +1414,16 @@ export function createMcpRoute(db: Db, bus: Bus) {
     void runEligibilitySweep(db, bus, { agentId: agent.id }).catch(e =>
       console.error('[wake] heartbeat sweep failed', e),
     )
+    // Tell the pager the latest CLI on npm (vs the version it reported) so the
+    // tmux status line can nudge for an update. Best-effort + cached; absent when
+    // the pager did not send its version or the registry is unreachable.
+    const reportedVersion = typeof body?.version === 'string' ? body.version : null
+    const latestCli = reportedVersion ? latestCliVersion() : null
+    const updateAvailable = !!reportedVersion && !!latestCli && isCliOutdated(reportedVersion, latestCli)
+
     // Hand the agent's color (hex) back so the pager can cache it for the tmux
     // status line - matches the color shown for this agent in the dashboard.
-    return c.json({ ok: true, leaseHeld, color: resolveAgentColorHex(agent.color, part) })
+    return c.json({ ok: true, leaseHeld, color: resolveAgentColorHex(agent.color, part), latestCli, updateAvailable })
   })
 
   // ── Pager lease + fencing + catch-up (07) ──────────────────────────────────
