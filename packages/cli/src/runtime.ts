@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url"
  * (packages/cli/dist → ../runtime) and from an installed package.
  */
 export function runtimePath(
-  name: "relayroom-pager.mjs" | "usage-report.mjs" | "relayroom-channel.mjs",
+  name: "relayroom-pager.mjs" | "usage-report.mjs" | "relayroom-channel.mjs" | "relayroom-ask-guard.mjs",
 ): string {
   return fileURLToPath(new URL(`../runtime/${name}`, import.meta.url))
 }

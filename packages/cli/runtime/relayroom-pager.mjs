@@ -26,7 +26,7 @@
  *   node relayroom-pager.mjs --code demo-7c3b59048dfc --part backend --target relayroom-backend
  */
 import { execFile } from "node:child_process"
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
+import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs"
 import { hostname } from "node:os"
 import { join } from "node:path"
 
@@ -498,6 +498,16 @@ async function heartbeat() {
         const f = join(DIR, ".relayroom", ".update")
         if (json.updateAvailable === true && typeof json.latestCli === "string") writeFileSync(f, json.latestCli)
         else if (existsSync(f)) unlinkSync(f)
+      } catch { /* ignore */ }
+      // Cache this agent's role (main|default) so the Claude AskUserQuestion guard
+      // can tell whether it may ask the human (main) or must route to main (default).
+      try {
+        if (typeof json.role === "string") {
+          // Atomic write (temp + rename) so the guard never reads a half-written file.
+          const rf = join(DIR, ".relayroom", ".role")
+          writeFileSync(rf + ".tmp", json.role)
+          renameSync(rf + ".tmp", rf)
+        }
       } catch { /* ignore */ }
       // The agent's dashboard color (hex): cache it (on change) and paint this
       // session's tmux status bar with it, picking a readable black/white text
