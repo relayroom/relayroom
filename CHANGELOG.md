@@ -4,6 +4,24 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.3.6] - 2026-06-18
+
+### Added
+- **`./rr.sh update`**: refresh a worktree's RELAYROOM.md from the hub in place,
+  runnable from inside the agent (`! ./rr.sh update`). No reinstall needed since
+  RELAYROOM.md is hub-served. `--self` also regenerates `rr.sh` itself.
+- **CLI update nudge**: the pager reports its version, the hub checks the latest
+  `@relayroom/cli` on npm, and the tmux status line shows `↑<version>` when a newer
+  CLI is available. Sourced from npm (the actual install channel), not the GitHub
+  release.
+
+### Changed
+- **RELAYROOM.md now routes all human interaction through the main agent.** A
+  non-main agent must not prompt the human directly; it sends the question to the
+  main agent and yields, and the pager wakes it with the relayed answer. The main
+  agent is the human's single point of contact. This removes the duplicate-question
+  loop where a sub-agent asked its own console while the main agent also asked.
+
 ## [0.3.5] - 2026-06-17
 
 ### Fixed
