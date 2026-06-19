@@ -4,6 +4,19 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.3.7] - 2026-06-19
+
+### Added
+- **AskUserQuestion guard**: a Claude PreToolUse hook hard-stops AskUserQuestion
+  for non-main agents, so sub-agents no longer hang waiting on a human who is not
+  watching their session (the hard enforcement of 0.3.6's "talk to the human only
+  through the main agent" rule). (#18)
+
+### Changed
+- **`relayroom init` reuses saved identity**: when `--code` / `--part` are omitted,
+  init reads them from `.relayroom/config.json`. Re-pulling RELAYROOM.md in an
+  existing worktree no longer needs the `jq` bootstrap - just `relayroom init`. (#17)
+
 ## [0.3.6] - 2026-06-18
 
 ### Added
