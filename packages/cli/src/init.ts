@@ -303,7 +303,7 @@ const INSTRUCTION_FILES: Record<string, string> = {
 }
 
 export interface InitOpts {
-  code: string
+  code?: string
   part?: string
   target?: string
   server?: string
@@ -390,10 +390,22 @@ export async function init(opts: InitOpts): Promise<void> {
   }
 
   const dir = resolve(opts.dir ?? ".")
-  // Resolve the server: explicit --server -> previously-saved config -> built-in
-  // default. (No Commander default, so a re-init without --server keeps the saved one.)
-  const server = (opts.server ?? readConfig(dir).server ?? DEFAULT_SERVER).replace(/\/$/, "")
-  const url = `${server}/mcp/${encodeURIComponent(opts.code)}/relayroom-md`
+  // Identity resolves explicit flag -> previously-saved config, so a re-init in an
+  // existing worktree needs NO flags (e.g. `! relayroom init` from inside the agent
+  // to re-pull RELAYROOM.md). writeConfig merges, so omitted fields keep their value.
+  const saved = readConfig(dir)
+  const code = opts.code ?? saved.code
+  if (!code) {
+    console.error(
+      "error: --code is required the first time. After that, run `relayroom init` in a\n" +
+      "worktree that already has .relayroom/config.json and it reuses the saved code/part/server.",
+    )
+    process.exit(1)
+  }
+  const part = opts.part ?? saved.part
+  // Resolve the server: explicit --server -> previously-saved config -> built-in default.
+  const server = (opts.server ?? saved.server ?? DEFAULT_SERVER).replace(/\/$/, "")
+  const url = `${server}/mcp/${encodeURIComponent(code)}/relayroom-md`
 
   let content: string
   try {
@@ -419,8 +431,8 @@ export async function init(opts: InitOpts): Promise<void> {
   // Write the machine-local connection identity so the pager, usage hook, and a
   // compacted agent can recover it without re-passing flags. gitignore it.
   const configFile = writeConfig(dir, {
-    code: opts.code,
-    part: opts.part,
+    code,
+    part,
     target,
     server,
     agent: opts.agent,
