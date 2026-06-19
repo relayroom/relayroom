@@ -4,6 +4,15 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.3.9] - 2026-06-19
+
+### Changed
+- **Anonymous, content-free telemetry is now on by default.** Three modes:
+  `anonymous` (default) sends version + coarse usage buckets with **no install id**;
+  `community` adds a stable install id for de-dupe and follow-up; `off` sends
+  nothing. No mode ever sends content (code, messages, names). You can keep it
+  anonymous, share more, or turn it off in Settings -> Telemetry. (#24)
+
 ## [0.3.8] - 2026-06-19
 
 ### Changed
