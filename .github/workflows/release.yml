@@ -32,14 +32,15 @@ jobs:
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
-          registry-url: https://registry.npmjs.org
-      # npm OIDC trusted publishing needs npm >= 11.5.1. Node 22 ships npm 10.x,
-      # which ignores OIDC and publishes UNAUTHENTICATED -> the registry returns
-      # `E404 ... is not in this registry` (the unauthenticated-PUT symptom) even
-      # with the trusted publisher configured. Upgrade so changeset publish's
-      # underlying `npm publish` actually performs the OIDC token exchange.
+          # NO `registry-url`: setup-node would then write a temp .npmrc carrying an
+          # empty `_authToken` (+ always-auth), which makes npm attempt TOKEN auth and
+          # 404 instead of using OIDC trusted publishing. OIDC requires NO authToken in
+          # .npmrc; the registry defaults to npmjs.org anyway. (This, not the npm
+          # version, was the real blocker across 0.3.3-0.3.8.)
+      # OIDC trusted publishing needs npm >= 11.5.1. Node 24 ships npm 11.x already;
+      # this just guarantees a recent enough npm for `changeset publish`'s npm publish.
       - run: npm install -g npm@latest && npm --version
       - run: pnpm install --frozen-lockfile
       - name: Publish to npm
