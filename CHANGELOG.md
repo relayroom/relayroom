@@ -4,6 +4,15 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.3.8] - 2026-06-19
+
+### Changed
+- **RELAYROOM.md routes human questions through the main agent more strictly.** The
+  rule now covers free-form asks, not just AskUserQuestion: a non-main agent has no
+  human watching its session, so it must never pause to ask the human in any form
+  (open question, "let me know which you prefer", presenting options and waiting) -
+  it sends the question to the main agent and yields instead. (#20)
+
 ## [0.3.7] - 2026-06-19
 
 ### Added
