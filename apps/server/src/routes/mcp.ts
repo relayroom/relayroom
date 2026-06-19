@@ -1335,6 +1335,28 @@ export function createMcpRoute(db: Db, bus: Bus) {
     })
   })
 
+  // Authoritative role lookup (read-only). The Claude AskUserQuestion guard calls
+  // this before ever blocking, so it never relies on a possibly-stale local cache:
+  // a non-main agent is only blocked on a live `default` answer here.
+  route.get('/:connectCode/role', async (c) => {
+    const connectCode = c.req.param('connectCode')
+    const part = c.req.query('part') ?? ''
+    if (!isValidPart(part)) return c.json({ error: 'invalid part' }, 400)
+    const [project] = await db
+      .select({ id: projects.id })
+      .from(projects)
+      .where(eq(projects.connectCode, connectCode))
+      .limit(1)
+    if (!project) return c.json({ error: 'unknown connect code' }, 404)
+    const [agent] = await db
+      .select({ role: agents.role })
+      .from(agents)
+      .where(and(eq(agents.projectId, project.id), eq(agents.part, part), isNull(agents.deletedAt)))
+      .limit(1)
+    if (!agent) return c.json({ error: 'agent not registered' }, 404)
+    return c.json({ role: agent.role })
+  })
+
   // Pager heartbeat: keeps the agent's last-seen fresh and reports whether
   // RELAYROOM.md is present in its worktree (for the dashboard sync indicator).
   route.post('/:connectCode/heartbeat', async (c) => {
@@ -1423,7 +1445,7 @@ export function createMcpRoute(db: Db, bus: Bus) {
 
     // Hand the agent's color (hex) back so the pager can cache it for the tmux
     // status line - matches the color shown for this agent in the dashboard.
-    return c.json({ ok: true, leaseHeld, color: resolveAgentColorHex(agent.color, part), latestCli, updateAvailable })
+    return c.json({ ok: true, leaseHeld, color: resolveAgentColorHex(agent.color, part), latestCli, updateAvailable, role: agent.role })
   })
 
   // ── Pager lease + fencing + catch-up (07) ──────────────────────────────────

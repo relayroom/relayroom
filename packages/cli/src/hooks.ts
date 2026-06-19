@@ -34,6 +34,19 @@ function ensureUsageScript(): string {
   return dest
 }
 
+/** Machine-global home for the AskUserQuestion guard (Claude PreToolUse hook). */
+function guardScriptPath(): string {
+  return join(homedir(), ".relayroom", "relayroom-ask-guard.mjs")
+}
+
+/** Copy the bundled AskUserQuestion guard into ~/.relayroom (idempotent). */
+function ensureGuardScript(): string {
+  const dest = guardScriptPath()
+  mkdirSync(dirname(dest), { recursive: true })
+  copyFileSync(runtimePath("relayroom-ask-guard.mjs"), dest)
+  return dest
+}
+
 /** Turn-end hook event each agent fires; Gemini calls it AfterAgent. */
 function hookEvent(agent: AgentId): "Stop" | "AfterAgent" {
   return agent === "gemini" ? "AfterAgent" : "Stop"
@@ -142,9 +155,23 @@ export function installHook(opts: HookOpts): void {
   groups.push(hookGroup(opts))
   settings.hooks[event] = groups
 
+  // Claude-only: a PreToolUse guard that blocks AskUserQuestion for non-main agents
+  // (they have no human at their console). The guard fails OPEN, so the main agent is
+  // never blocked. Other CLIs have no equivalent tool intercept and rely on
+  // RELAYROOM.md's "Talking to the human" rule. Idempotent: replace, don't duplicate.
+  if (agent === "claude") {
+    const guard = ensureGuardScript()
+    const pre = (settings.hooks["PreToolUse"] ?? []).filter(
+      (group) => !JSON.stringify(group).includes("relayroom-ask-guard.mjs"),
+    )
+    pre.push({ matcher: "AskUserQuestion", hooks: [{ type: "command", command: `node "${guard}"` }] })
+    settings.hooks["PreToolUse"] = pre
+  }
+
   mkdirSync(dirname(path), { recursive: true })
   writeFileSync(path, `${JSON.stringify(settings, null, 2)}\n`)
   console.log(`Installed RelayRoom usage hook (${event}) -> ${path}`)
+  if (agent === "claude") console.log("Installed AskUserQuestion guard (PreToolUse, non-main only)")
 
   if (agent === "codex") console.log(codexFeatureNote())
 }
