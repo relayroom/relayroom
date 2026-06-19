@@ -31,7 +31,9 @@ const EDITION = (process.env.RELAYROOM_EDITION ?? "ce") as "ce" | "ee";
 const SEND_TIMEOUT_MS = 8_000;
 const TICK_MS = 24 * 60 * 60 * 1000; // 24h
 
-export type TelemetryMode = "community" | "off";
+// Three states. `anonymous` is the DEFAULT (on, content-free, no install id);
+// `community` adds a stable install id (dedup + longitudinal); `off` sends nothing.
+export type TelemetryMode = "anonymous" | "community" | "off";
 
 // ── config (configurations table, global scope) ────────────────────────────
 const KEY_INSTANCE = "telemetry_instance_id";
@@ -87,15 +89,18 @@ export async function getInstanceId(db: Db): Promise<string> {
 
 export async function getMode(db: Db): Promise<TelemetryMode> {
   const v = await getGlobal(db, KEY_MODE);
-  return v === "community" ? "community" : "off";
+  // Default ON in `anonymous` when no explicit choice has been made: content-free
+  // and with no install id. An admin can opt into `community` or turn it `off`.
+  return v === "community" ? "community" : v === "off" ? "off" : "anonymous";
 }
 
 export async function setMode(db: Db, mode: TelemetryMode): Promise<void> {
   await setGlobal(db, KEY_MODE, mode);
 }
 
-/** True once an admin has explicitly chosen (community or off). Until then the
- *  consent banner should prompt and nothing is sent. */
+/** True once an admin has explicitly chosen a mode. Until then the consent banner
+ *  should prompt; the default in the meantime is `anonymous` (content-free, no id),
+ *  so the prompt is an upgrade/opt-out, not a precondition for any data. */
 export async function isModeChosen(db: Db): Promise<boolean> {
   return (await getGlobal(db, KEY_MODE)) !== undefined;
 }
@@ -134,14 +139,14 @@ export interface FeedbackPayload {
   contact?: string;
 }
 
-/** Dashboard feedback. Unlike the passive beacon, this is an explicit user
- *  action with a per-submission disclosure in the UI, so it sends regardless of
- *  telemetry mode (a user who opted telemetry off can still choose to report a
- *  bug). The instance id is included so the collector can group reports from the
- *  same install and the maintainer can follow up; the UI discloses this. */
+/** Dashboard feedback. Unlike the passive beacon, this is an explicit user action
+ *  with a per-submission disclosure in the UI, so it sends regardless of telemetry
+ *  mode (even when `off`, a user can still choose to report a bug). The install id is
+ *  attached only in `community` mode so the maintainer can follow up; in
+ *  anonymous/off the feedback stays unlinkable. The UI discloses what is sent. */
 export async function sendFeedback(db: Db, payload: FeedbackPayload): Promise<boolean> {
-  const instanceId = await getInstanceId(db);
-  return post("/feedback", { instanceId, version: CE_VERSION, ...payload });
+  const instanceId = (await getMode(db)) === "community" ? await getInstanceId(db) : undefined;
+  return post("/feedback", { ...(instanceId ? { instanceId } : {}), version: CE_VERSION, ...payload });
 }
 
 // ── tick + scheduler ────────────────────────────────────────────────────────
@@ -150,8 +155,11 @@ export async function sendFeedback(db: Db, payload: FeedbackPayload): Promise<bo
  *  missed since the watermark) and advance the watermark only on success. */
 export async function runTelemetryTick(db: Db): Promise<void> {
   try {
-    if ((await getMode(db)) === "off") return;
-    const instanceId = await getInstanceId(db);
+    const mode = await getMode(db);
+    if (mode === "off") return;
+    // `community` attaches a stable install id (dedup + longitudinal); `anonymous`
+    // omits it so beacons cannot be linked across time. Both are content-free.
+    const instanceId = mode === "community" ? await getInstanceId(db) : undefined;
     const watermark = await getWatermark(db);
     let rollups: Rollup[] = [];
     let upTo: string | null = null;
@@ -163,7 +171,8 @@ export async function runTelemetryTick(db: Db): Promise<void> {
       rollups = []; // a rollup failure must not block the instance beacon
     }
     const ok = await post("/beacon", {
-      instanceId,
+      ...(instanceId ? { instanceId } : {}),
+      anonymous: mode === "anonymous",
       version: CE_VERSION,
       edition: EDITION,
       os: process.platform,

@@ -35,9 +35,11 @@ export function TelemetryForm({ initialMode }: Props) {
       router.refresh()
     })()
 
+    const successKey =
+      next === "community" ? "banner.optedIn" : next === "anonymous" ? "banner.optedAnonymous" : "banner.optedOut"
     toast.promise(work, {
       loading: t("settings.saving"),
-      success: next === "community" ? t("banner.optedIn") : t("banner.optedOut"),
+      success: t(successKey),
       error: (err: Error) => err.message ?? t("settings.error"),
     })
 
@@ -51,14 +53,14 @@ export function TelemetryForm({ initialMode }: Props) {
   }
 
   const busy = pending !== null
-  const options: TelemetryMode[] = ["community", "off"]
+  const options: TelemetryMode[] = ["community", "anonymous", "off"]
 
   return (
     <div className="space-y-3">
       <div
         role="radiogroup"
         aria-label={t("settings.title")}
-        className="grid grid-cols-1 gap-3 sm:grid-cols-2"
+        className="grid grid-cols-1 gap-3 sm:grid-cols-3"
       >
         {options.map((opt) => {
           const selected = mode === opt

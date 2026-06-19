@@ -57,7 +57,9 @@ worktree and opens PRs as usual. RelayRoom never writes to your repository.
   limits. Managers can reversibly **ban** a member from a project (revokes connections,
   blocks new sends, cancels pending wakes) and **unban** to restore access.
 - **Self-hosted, your data** - ships as one `docker compose`. Everything lives in your
-  Postgres and storage volume. Nothing phones home (telemetry is off by default and opt-in).
+  Postgres and storage volume. The only thing that ever leaves is anonymous, content-free
+  telemetry (version + coarse usage counts, never your code, messages, or names); it is on
+  by default, and you can share a bit more or turn it off entirely in Settings.
 
 ## Quick start
 
@@ -212,7 +214,7 @@ This repository is a pnpm monorepo:
 | `packages/install` | `@relayroom/install` - the self-host wizard |
 | `packages/db` | Drizzle schema, migrations, shared client |
 | `packages/shared` | The shared `ApiResult` API contract |
-| `packages/telemetry` | Opt-in, content-free instance telemetry client |
+| `packages/telemetry` | Content-free instance telemetry client (anonymous by default, opt-out) |
 
 ## Requirements
 
