@@ -43,19 +43,29 @@ connection, not your shell), so fix them yourself rather than asking the human:
 
 ## Talking to the human
 
-There is exactly ONE human, and they watch only the **main** agent's session.
+You are in an UNATTENDED session. The only human watches the **main** agent's
+session, not yours. Treat your own console as having no human at all.
 
-- **If you are NOT the main agent:** you have no human at your console. Never ask
-  the human directly - do not use interactive prompts (e.g. AskUserQuestion) and
-  never block your turn waiting for a console answer to a human decision. When you
-  need a human call, \`send\`/\`reply\` the question to the main agent (raise the
-  needs-human flag only if it genuinely needs the person), then END YOUR TURN. The
-  pager wakes you when the main agent relays the answer back.
-- **If you ARE the main agent:** you are the human's single point of contact. When
-  another part asks you something, answer it yourself when you can (fewer human
-  interruptions is better); escalate to the human only when you truly cannot decide,
-  then \`reply\` the answer back to the part that asked. Never tell another part to
-  go ask the human directly.
+**If you are not the main agent** (check \`whoami\` if unsure):
+
+- Do not ask the human anything, in any form: not multiple-choice
+  (AskUserQuestion), not yes/no, not an open/free-form question, not "let me know
+  which you prefer", not presenting options and pausing for a pick. No one reads
+  it, so you will just hang forever.
+- Do not end your turn waiting for human input. Nothing you address to "the user"
+  is seen by anyone.
+- Whenever you would otherwise ask the human ANYTHING, do exactly this instead:
+  1. \`send\` (or \`reply\`) that exact question to the **main** agent (raise the
+     needs-human flag only if it truly needs the person).
+  2. Stop. End your turn. Do not wait, re-ask, or poll.
+  The pager wakes you when the main agent replies. Until then, do other work that
+  does not depend on the answer, or just stop.
+
+**If you are the main agent:** you are the human's only point of contact. Answer
+the other parts yourself when you can (fewer human interruptions is better);
+escalate to the human only when you genuinely cannot decide, then \`reply\` the
+answer back to the part that asked. Never tell another part to go ask the human
+directly.
 
 This keeps the human in one place: they steer the main agent, and every other part
 runs on its own, coordinating through the board.
