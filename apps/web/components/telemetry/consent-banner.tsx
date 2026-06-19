@@ -11,10 +11,10 @@ import type { TelemetryMode } from "@/modules/telemetry/schema"
 import { Button } from "@/components/ui/button"
 
 /**
- * Anonymous-telemetry consent banner. Rendered only for the instance superuser
- * when no choice has been made yet (active consent gate). Choosing either option
- * dismisses the banner. Nothing is ever transmitted until a choice is made, and
- * "off" keeps the product fully functional.
+ * Telemetry banner. Rendered only for the instance superuser until they make an
+ * explicit choice. The default before then is `anonymous` (content-free, no install
+ * id) - so this is an informed upgrade/opt-out, not a precondition for any data:
+ * share more (community), keep anonymous, or turn it off. Any choice dismisses it.
  */
 export function TelemetryConsentBanner() {
   const t = useTranslations("telemetry")
@@ -80,6 +80,16 @@ export function TelemetryConsentBanner() {
         >
           {pending === "off" && <Loader2Icon className="mr-2 h-3.5 w-3.5 animate-spin" />}
           {t("banner.declineButton")}
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={busy}
+          onClick={() => choose("anonymous")}
+        >
+          {pending === "anonymous" && <Loader2Icon className="mr-2 h-3.5 w-3.5 animate-spin" />}
+          {t("banner.keepButton")}
         </Button>
         <Button type="button" size="sm" disabled={busy} onClick={() => choose("community")}>
           {pending === "community" && <Loader2Icon className="mr-2 h-3.5 w-3.5 animate-spin" />}

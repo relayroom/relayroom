@@ -3,21 +3,27 @@
     "tab": "Telemetry"
   },
   "banner": {
-    "title": "Help improve RelayRoom?",
-    "body": "Share anonymous usage statistics so we can improve RelayRoom. We never send the content of your code or messages.",
+    "title": "Anonymous telemetry is on",
+    "body": "RelayRoom sends anonymous, content-free usage statistics by default so we can improve it. We never send the content of your code, messages, or names. You can share a bit more, keep it anonymous, or turn it off.",
     "whatLink": "What gets sent?",
-    "acceptButton": "Agree (community)",
-    "declineButton": "No thanks",
+    "acceptButton": "Share more (community)",
+    "keepButton": "Keep anonymous",
+    "declineButton": "Turn off",
     "dismiss": "Dismiss",
     "saving": "Saving your choice...",
-    "optedIn": "Thanks! Anonymous usage statistics are now on.",
+    "optedIn": "Thanks! Community telemetry is on (anonymous stats + an install id).",
+    "optedAnonymous": "Got it. Anonymous, content-free telemetry stays on.",
     "optedOut": "Got it. Nothing will be sent.",
     "error": "We could not save your choice."
   },
   "mode": {
     "community": {
       "label": "Community",
-      "description": "Send anonymous aggregate usage statistics to help improve RelayRoom."
+      "description": "Anonymous aggregate stats plus a stable install id, so we can de-dupe and follow up. Still content-free."
+    },
+    "anonymous": {
+      "label": "Anonymous (default)",
+      "description": "Content-free aggregate with no install id. On by default."
     },
     "off": {
       "label": "Off",
@@ -26,7 +32,7 @@
   },
   "settings": {
     "cardTitle": "Anonymous telemetry",
-    "cardDescription": "Choose whether this instance sends anonymous, content-free usage statistics. Nothing is sent until you choose, and turning it off never affects how RelayRoom works.",
+    "cardDescription": "This instance sends anonymous, content-free usage statistics by default. Share a bit more (community, adds an install id), keep it anonymous, or turn it off. The choice never affects how RelayRoom works.",
     "title": "Telemetry mode",
     "current": "Current",
     "hint": "We only ever send anonymous aggregate counts and buckets - never the content of your code, messages, prompts, responses, names, or token values.",
@@ -36,7 +42,7 @@
   "data": {
     "back": "Back to telemetry",
     "title": "What gets sent",
-    "intro": "When telemetry is set to community, RelayRoom sends a small anonymous beacon about once a day. It contains only the items below - never any content. Here is exactly what is and is not collected.",
+    "intro": "By default RelayRoom sends a small anonymous beacon about once a day - content-free and with no install id. Community mode adds a stable install id (for de-dupe and follow-up); off sends nothing. It contains only the items below - never any content.",
     "collected": {
       "title": "What we collect",
       "description": "Anonymous aggregate values, version, and bucketed counts only.",
