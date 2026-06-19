@@ -35,6 +35,12 @@ jobs:
           node-version: 22
           cache: pnpm
           registry-url: https://registry.npmjs.org
+      # npm OIDC trusted publishing needs npm >= 11.5.1. Node 22 ships npm 10.x,
+      # which ignores OIDC and publishes UNAUTHENTICATED -> the registry returns
+      # `E404 ... is not in this registry` (the unauthenticated-PUT symptom) even
+      # with the trusted publisher configured. Upgrade so changeset publish's
+      # underlying `npm publish` actually performs the OIDC token exchange.
+      - run: npm install -g npm@latest && npm --version
       - run: pnpm install --frozen-lockfile
       - name: Publish to npm
         uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
