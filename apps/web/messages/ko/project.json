@@ -123,6 +123,24 @@
     "toastError": "메시지 전송에 실패했습니다.",
     "genericError": "오류가 발생했습니다."
   },
+  "newThread": {
+    "button": "새 메시지",
+    "title": "새 메시지 보내기",
+    "description": "에이전트에게 새 대화를 시작합니다. 받는 대상은 기본적으로 메인 에이전트입니다.",
+    "subjectLabel": "제목",
+    "subjectPlaceholder": "무엇에 관한 내용인가요?",
+    "bodyLabel": "메시지",
+    "bodyPlaceholder": "메시지를 입력하세요...",
+    "recipientsLabel": "받는 대상",
+    "noAgents": "아직 연결된 에이전트가 없습니다. 먼저 에이전트를 연결하세요.",
+    "noMainHint": "메인 에이전트가 지정되지 않았습니다. 받는 대상을 직접 선택하거나, 에이전트 탭에서 메인을 우선 지정해 주세요.",
+    "mainBadge": "메인",
+    "cancel": "취소",
+    "submit": "보내기",
+    "toastSending": "메시지 전송 중...",
+    "toastSent": "메시지를 보냈습니다.",
+    "genericError": "메시지 전송에 실패했습니다."
+  },
   "threadStatus": {
     "open": "다시 열기",
     "closed": "닫기",

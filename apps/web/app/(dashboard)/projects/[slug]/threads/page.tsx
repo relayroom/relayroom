@@ -6,8 +6,10 @@ import { requireDashboardAccess } from "@/lib/auth-session"
 import { resolveActiveOrgId } from "@/lib/active-org"
 import { getProjectBySlug } from "@/modules/project/queries"
 import { listThreads } from "@/modules/thread/queries"
+import { listAgentTargets } from "@/modules/agent/queries"
 import { ThreadListItem } from "@/components/thread/thread-list-item"
 import { Pagination } from "@/components/ui/pagination"
+import { NewThreadButton } from "./new-thread-button"
 
 export const dynamic = "force-dynamic"
 
@@ -55,6 +57,9 @@ export default async function ThreadsPage({ params, searchParams }: Props) {
   const totalCount = result.result ? result.totalCount : 0
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE))
 
+  // Addressable parts for the "new message" composer (cheap; no usage joins).
+  const agentTargets = await listAgentTargets(project.id)
+
   function tabHref(status: string) {
     const p = new URLSearchParams()
     if (status !== "all") p.set("status", status)
@@ -80,8 +85,10 @@ export default async function ThreadsPage({ params, searchParams }: Props) {
     <div className="py-6 px-4 xs:px-6 space-y-4 max-w-6xl mx-auto">
       <div className="flex items-center justify-between gap-4">
         <h2 className="text-base font-semibold">{t("threads.pageTitle")}</h2>
-        {/* Search - client side would be ideal, but server works with form submit */}
-        <form method="GET" action={`/projects/${slug}/threads`} className="flex gap-2">
+        <div className="flex items-center gap-2">
+          <NewThreadButton slug={slug} projectId={project.id} agents={agentTargets} />
+          {/* Search - client side would be ideal, but server works with form submit */}
+          <form method="GET" action={`/projects/${slug}/threads`} className="flex gap-2">
           {statusFilter && <input type="hidden" name="status" value={statusFilter} />}
           {agentId && <input type="hidden" name="agent" value={agentId} />}
           <input
@@ -91,7 +98,8 @@ export default async function ThreadsPage({ params, searchParams }: Props) {
             placeholder={t("threads.searchPlaceholder")}
             className="h-8 w-56 rounded-md border border-border bg-background px-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-foreground/20"
           />
-        </form>
+          </form>
+        </div>
       </div>
 
       {agentId && (
