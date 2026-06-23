@@ -33,14 +33,22 @@ export interface McpAddSpec {
 
 /**
  * The `<bin> mcp add ...` argv that registers a streamable-HTTP MCP server.
- * Claude and Gemini share `mcp add --transport http <name> <url>`; Codex uses
- * `mcp add <name> --url <url>`.
+ *
+ * Claude and Gemini use `mcp add --scope project --transport http <name> <url>`.
+ * `--scope project` is the fix for git worktrees: Claude's DEFAULT `local` scope is
+ * keyed to the git repo root, so every worktree (android/web/...) shares ONE entry
+ * and they all post as the same part. Project scope writes the server to the
+ * worktree's `.mcp.json` instead, giving each worktree its own identity (the URL
+ * carries `?part=`). Gemini already defaults to project; we pass it explicitly.
+ *
+ * Codex has no project scope - `mcp add` writes the global `~/.codex/config.toml` -
+ * so per-worktree identity is not achievable through Codex's own MCP config.
  */
 export function mcpAddSpec(agent: AgentId, name: string, url: string): McpAddSpec {
   switch (agent) {
     case "claude":
     case "gemini":
-      return { bin: AGENTS[agent].bin, args: ["mcp", "add", "--transport", "http", name, url] }
+      return { bin: AGENTS[agent].bin, args: ["mcp", "add", "--scope", "project", "--transport", "http", name, url] }
     case "codex":
       return { bin: AGENTS.codex.bin, args: ["mcp", "add", name, "--url", url] }
   }

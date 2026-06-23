@@ -21,11 +21,14 @@ describe("connect", () => {
 describe("mcpAddSpec", () => {
   const url = "http://h:1/mcp/abc?part=web"
 
-  it("uses `mcp add --transport http` for Claude and Gemini", () => {
+  it("uses `mcp add --scope project --transport http` for Claude and Gemini", () => {
+    // Project scope => the server lands in the worktree's .mcp.json, so each git
+    // worktree gets its own part identity (Claude's default `local` scope is keyed
+    // to the repo root and shared across worktrees).
     expect(mcpAddSpec("claude", "rr", url))
-      .toEqual({ bin: "claude", args: ["mcp", "add", "--transport", "http", "rr", url] })
+      .toEqual({ bin: "claude", args: ["mcp", "add", "--scope", "project", "--transport", "http", "rr", url] })
     expect(mcpAddSpec("gemini", "rr", url))
-      .toEqual({ bin: "gemini", args: ["mcp", "add", "--transport", "http", "rr", url] })
+      .toEqual({ bin: "gemini", args: ["mcp", "add", "--scope", "project", "--transport", "http", "rr", url] })
   })
 
   it("uses `mcp add <name> --url` for Codex", () => {
