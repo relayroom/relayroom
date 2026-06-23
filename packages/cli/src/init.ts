@@ -213,10 +213,21 @@ mcp_add() {
   if [ "$a" = "codex" ]; then
     export RELAYROOM_TOKEN="$TOKEN"
     codex mcp remove relayroom 2>/dev/null || true
+    # Codex config is global (~/.codex/config.toml) - no project scope, so all codex
+    # worktrees share this entry. Per-worktree part identity is not possible here.
     codex mcp add relayroom --url "$URL" --bearer-token-env-var RELAYROOM_TOKEN
+  elif [ "$a" = "gemini" ]; then
+    # Gemini already defaults to PROJECT scope (.gemini/settings.json, per-worktree).
+    gemini mcp remove relayroom 2>/dev/null || true
+    gemini mcp add --scope project --transport http relayroom "$URL" --header "Authorization: Bearer $TOKEN"
   else
-    "$a" mcp remove relayroom 2>/dev/null || true
-    "$a" mcp add --transport http relayroom "$URL" --header "Authorization: Bearer $TOKEN"
+    # Claude defaults to LOCAL scope, which it keys to the git REPO ROOT - so every
+    # worktree shares one entry and they all post as the same part. Register in
+    # PROJECT scope (.mcp.json, per-worktree) for per-worktree identity, and drop any
+    # old shared local entry so the migration takes effect.
+    claude mcp remove relayroom -s local 2>/dev/null || true
+    claude mcp remove relayroom -s project 2>/dev/null || true
+    claude mcp add -s project --transport http relayroom "$URL" --header "Authorization: Bearer $TOKEN"
   fi
   echo "registered relayroom MCP for $a"
 }
