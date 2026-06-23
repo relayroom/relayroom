@@ -102,6 +102,11 @@ CLI="relayroom"; command -v relayroom >/dev/null 2>&1 || CLI="npx -y @relayroom/
 # Opt-in bypass: \`./rr.sh up --bypass\` (or \`./rr.sh claude run --bypass\`) appends the
 # primary CLI's "skip approval prompts" launch flag. Detected anywhere in the args.
 BYPASS=0; for _a in "$@"; do [ "$_a" = "--bypass" ] && BYPASS=1; done
+# Opt-in fresh start: \`./rr.sh up --new\` begins a NEW conversation. WITHOUT --new the
+# launched CLI resumes its most recent session for this workdir (so re-launching after a
+# reboot keeps context), falling back to a fresh start when there is none. Detected
+# anywhere in the args.
+NEW=0; for _a in "$@"; do [ "$_a" = "--new" ] && NEW=1; done
 # bypass flag for a CLI (defaults to PRIMARY) - so \`<cli> run --bypass\` works for all.
 bypass_flag() {
   case "\${1:-$PRIMARY}" in
@@ -111,10 +116,27 @@ bypass_flag() {
   esac
 }
 
+# Build the launch command for CLI $1 given its base command $2 (binary + any channel
+# flag) and bypass suffix $3. Default resumes the most recent session for this workdir;
+# \`--new\` forces a fresh start. Each CLI's resume form is cwd/project-scoped (claude
+# --continue, gemini --resume latest, codex resume --last) and the resume form falls back
+# to the fresh form (\`resume || fresh\`) so a first launch with no saved session starts
+# clean instead of erroring. Run via \`sh -c\` since the result may contain \`||\`.
+build_launch() {
+  cli="$1"; base="$2"; byp="$3"; resume=""
+  if [ "$NEW" = "1" ]; then echo "$base$byp"; return; fi
+  case "$cli" in
+    claude) resume="$base --continue$byp" ;;
+    gemini) resume="$base --resume latest$byp" ;;
+    codex)  resume="codex resume --last$byp" ;;
+    *)      echo "$base$byp"; return ;;
+  esac
+  echo "$resume || $base$byp"
+}
+
 LAUNCH="$PRIMARY"
 prepare_launch() {
-  local mode="pager" probe=""
-  LAUNCH="$PRIMARY"
+  local mode="pager" probe="" base="$PRIMARY" byp=""
   # Capture the probe to a var FIRST: piping \`claude --channels\` into grep under
   # \`set -o pipefail\` would report claude's intentional nonzero exit and make the
   # \`if\` always false (channels never activate). \`|| true\` keeps the nonzero from
@@ -122,7 +144,7 @@ prepare_launch() {
   if [ "$PRIMARY" = "claude" ]; then
     probe="$(claude --channels 2>&1 || true)"
     if grep -q "argument missing" <<<"$probe"; then
-      LAUNCH="claude --dangerously-load-development-channels server:relayroom-channel"
+      base="claude --dangerously-load-development-channels server:relayroom-channel"
       mode="channel"
     fi
   fi
@@ -131,8 +153,10 @@ prepare_launch() {
   # be written rather than launching with a wrong mode.
   $CLI delivery "$mode" >/dev/null || { echo "rr.sh: failed to set delivery=$mode - aborting launch" >&2; exit 1; }
   # Opt-in: skip the CLI's approval prompts (bypasses ALL permission checks, not just
-  # RelayRoom). Appended last so it composes with the channel flag.
-  [ "$BYPASS" = "1" ] && LAUNCH="$LAUNCH $(bypass_flag)" && echo "bypass: ON ($(bypass_flag))" >&2
+  # RelayRoom). Carried as a suffix so it composes with the channel + resume flags.
+  [ "$BYPASS" = "1" ] && byp=" $(bypass_flag)" && echo "bypass: ON ($(bypass_flag))" >&2
+  LAUNCH="$(build_launch "$PRIMARY" "$base" "$byp")"
+  [ "$NEW" = "1" ] && echo "session: NEW" >&2 || echo "session: resume last (--new for fresh)" >&2
   echo "wake delivery: $mode" >&2
 }
 
@@ -237,8 +261,8 @@ setup() { local a; IFS=',' read -ra _AS <<< "$AGENT"; for a in "\${_AS[@]}"; do 
 usage() {
   cat <<EOF
 RelayRoom console (part=$PART, session=$SESSION, agent=$AGENT)
-  rr.sh up [--bypass]            rebuild session + start pager + attach (after reboot)
-  rr.sh launch [--bypass]        from INSIDE a session: set delivery + pager + run the agent
+  rr.sh up [--bypass] [--new]    rebuild session + start pager + attach (after reboot)
+  rr.sh launch [--bypass] [--new]  from INSIDE a session: set delivery + pager + run the agent
   rr.sh down                     stop pager + kill the tmux session
   rr.sh status                   show tmux + pager status
   rr.sh info                     print resolved config
@@ -248,6 +272,7 @@ RelayRoom console (part=$PART, session=$SESSION, agent=$AGENT)
   rr.sh setup                    mcp-add + hooks for every configured agent
   rr.sh update [--self]          re-pull RELAYROOM.md from the hub (--self also regenerates rr.sh)
   --bypass                       launch the CLI with its skip-all-approvals flag
+  --new                          start a FRESH conversation (default resumes the last session)
 EOF
 }
 
@@ -262,7 +287,7 @@ case "\${1:-help}" in
   # RESTART the pager (not just start): prepare_launch may have CHANGED delivery
   # (channel<->pager), but the pager only reads delivery at startup, so a stale
   # running pager would deliver in the wrong mode.
-  launch) prepare_launch; pg_stop >/dev/null 2>&1 || true; pg_start; exec $LAUNCH ;;
+  launch) prepare_launch; pg_stop >/dev/null 2>&1 || true; pg_start; exec sh -c "$LAUNCH" ;;
   down) pg_stop; tmux kill-session -t "$SESSION" 2>/dev/null && echo "killed session '$SESSION'" || echo "no session to kill" ;;
   status)
     tx_status
@@ -279,11 +304,13 @@ case "\${1:-help}" in
   claude|gemini|codex) case "\${2:-}" in
       mcp-add) mcp_add "$1" ;; hooks) hooks_install "$1" ;;
       run)
-        # claude routes through prepare_launch (channel flag + bypass). gemini/codex
-        # have no channel path, but STILL honor --bypass with their own flag.
-        if [ "$1" = "claude" ]; then prepare_launch; exec $LAUNCH
-        elif [ "$BYPASS" = "1" ]; then exec "$1" "$(bypass_flag "$1")"
-        else exec "$1"; fi ;;
+        # claude routes through prepare_launch (channel flag + bypass + resume). gemini/codex
+        # have no channel path, but STILL honor --bypass (their own flag) and --new/resume.
+        if [ "$1" = "claude" ]; then prepare_launch; exec sh -c "$LAUNCH"
+        else
+          byp=""; [ "$BYPASS" = "1" ] && byp=" $(bypass_flag "$1")"
+          exec sh -c "$(build_launch "$1" "$1" "$byp")"
+        fi ;;
       *) usage; exit 1 ;; esac ;;
   setup) setup ;;
   # Refresh the agent-side files in place (run from INSIDE the agent, e.g. \`! ./rr.sh update\`).
