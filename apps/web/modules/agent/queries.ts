@@ -501,6 +501,39 @@ export async function getMyMainAgent(
   }
 }
 
+export interface AgentTarget {
+  id: string
+  part: string
+  nickname: string | null
+  role: string
+}
+
+/**
+ * Lightweight roster of a project's addressable parts - just enough for the
+ * dashboard "new message" composer (id/part/nickname/role). Excludes the
+ * soft-deleted and the virtual 'human' participant. Unlike listAgents() this
+ * does NO connection/usage/event joins, so it is cheap to load on the threads
+ * list page. `role === 'main'` lets the composer pre-select the main agent.
+ */
+export async function listAgentTargets(projectId: string): Promise<AgentTarget[]> {
+  try {
+    return await db
+      .select({
+        id: agents.id,
+        part: agents.part,
+        nickname: agents.nickname,
+        role: agents.role,
+      })
+      .from(agents)
+      .where(and(eq(agents.projectId, projectId), isNull(agents.deletedAt), ne(agents.part, HUMAN_PART)))
+      // main first, then newest, so the composer's default target is obvious.
+      .orderBy(desc(sql`(${agents.role} = 'main')`), desc(agents.createdAt))
+  } catch (err) {
+    console.error("[listAgentTargets]", err)
+    return []
+  }
+}
+
 // ── getAgent ──────────────────────────────────────────────────────────────────
 
 export async function getAgent(

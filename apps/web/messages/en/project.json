@@ -123,6 +123,24 @@
     "toastError": "Failed to send message.",
     "genericError": "An error occurred."
   },
+  "newThread": {
+    "button": "New message",
+    "title": "Send a new message",
+    "description": "Start a new conversation with an agent. The recipient defaults to the main agent.",
+    "subjectLabel": "Subject",
+    "subjectPlaceholder": "What is this about?",
+    "bodyLabel": "Message",
+    "bodyPlaceholder": "Type your message...",
+    "recipientsLabel": "Recipients",
+    "noAgents": "No agents are connected yet. Connect an agent first.",
+    "noMainHint": "No main agent is set. Pick a recipient below, or set a main agent first in the Agents tab.",
+    "mainBadge": "main",
+    "cancel": "Cancel",
+    "submit": "Send",
+    "toastSending": "Sending message...",
+    "toastSent": "Message sent.",
+    "genericError": "Failed to send the message."
+  },
   "threadStatus": {
     "open": "Reopen",
     "closed": "Close",
