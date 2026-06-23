@@ -6,6 +6,8 @@ import { NEEDS_HUMAN_TAG } from "@relayroom/shared"
 import {
   postMessageSchema,
   type PostMessageInput,
+  createThreadSchema,
+  type CreateThreadInput,
   closeThreadSchema,
   type CloseThreadInput,
   addTagsSchema,
@@ -14,6 +16,7 @@ import {
   type DismissAttentionInput,
 } from "./schema"
 import { db } from "@/modules/drizzle/db"
+import { publishMessageWakes, HUMAN_PART } from "@/lib/realtime/publish"
 import { threads, messages, messageRecipients, projects, agents } from "@relayroom/db/schema"
 import { better_auth_member } from "@relayroom/db/auth-schema"
 import { getServerSession } from "@/lib/auth-session"
@@ -63,7 +66,7 @@ async function requireThreadInOrg(
   threadId: string,
   orgId: string,
 ): Promise<
-  | { ok: true; thread: { id: string; projectId: string; status: string } }
+  | { ok: true; thread: { id: string; projectId: string; status: string; subject: string; projectSlug: string } }
   | { ok: false; message: string }
 > {
   const [row] = await db
@@ -71,6 +74,8 @@ async function requireThreadInOrg(
       id: threads.id,
       projectId: threads.projectId,
       status: threads.status,
+      subject: threads.subject,
+      projectSlug: projects.slug,
     })
     .from(threads)
     .innerJoin(projects, eq(threads.projectId, projects.id))
@@ -132,17 +137,18 @@ export async function postMessage(
 
     // Insert message_recipient rows for target agents if specified
     if (targetAgentIds && targetAgentIds.length > 0) {
-      // Verify each agent belongs to the same project (security)
+      // Verify each agent belongs to the same project (security); grab the part
+      // so we can wake each recipient over the bus.
       const validAgents = await db
-        .select({ id: agents.id })
+        .select({ id: agents.id, part: agents.part })
         .from(agents)
         .where(
           and(
             eq(agents.projectId, thread.projectId),
           ),
         )
-      const validIds = new Set(validAgents.map((a) => a.id))
-      const safeTargets = targetAgentIds.filter((id) => validIds.has(id))
+      const partById = new Map(validAgents.map((a) => [a.id, a.part]))
+      const safeTargets = targetAgentIds.filter((id) => partById.has(id))
 
       if (safeTargets.length > 0) {
         await db.insert(messageRecipients).values(
@@ -150,6 +156,22 @@ export async function postMessage(
             messageId: msg.id,
             agentId,
             required: false,
+          })),
+        )
+
+        // Live wake: a human reply addressed to a part should nudge that part's
+        // pager now, not just sit in the inbox. Best-effort (after the rows are
+        // committed); never blocks the reply.
+        await publishMessageWakes(
+          safeTargets.map((agentId) => ({
+            kind: "message" as const,
+            projectId: thread.projectId,
+            project: thread.projectSlug,
+            part: partById.get(agentId)!,
+            threadId,
+            messageId: msg.id,
+            subject: thread.subject,
+            fromPart: HUMAN_PART,
           })),
         )
       }
@@ -170,6 +192,88 @@ export async function postMessage(
   } catch (err) {
     console.error("[postMessage]", err)
     return { result: false, message: t("thread.postFailed") }
+  }
+}
+
+// ── createThread ────────────────────────────────────────────────────────────────
+
+/**
+ * Open a NEW thread from the dashboard - the human starting a conversation with
+ * an agent (the dashboard defaults the target to the project's main agent). The
+ * agent-side `send` MCP tool creates threads too; this is the human-originated
+ * counterpart, so it stamps `fromUserId` and wakes each addressed part the same
+ * way (see publishMessageWakes). Until this existed the human could only REPLY
+ * to threads an agent had already opened.
+ */
+export async function createThread(
+  input: CreateThreadInput,
+): Promise<ApiResultWithItem<{ id: string }>> {
+  const t = await getErrorTranslations()
+  try {
+    const access = await requireOrgAccess()
+    if (!access.ok) return { result: false, message: access.message }
+    const { session, orgId } = access
+
+    const parsed = createThreadSchema.safeParse(input)
+    if (!parsed.success) {
+      return { result: false, message: parsed.error.issues[0]?.message ?? t("thread.createFailed") }
+    }
+    const { projectId, subject, body, targetAgentIds } = parsed.data
+
+    // IDOR guard: the project must belong to the caller's org. Also grabs the
+    // slug for the wake event (display-only).
+    const [project] = await db
+      .select({ id: projects.id, slug: projects.slug })
+      .from(projects)
+      .where(and(eq(projects.id, projectId), eq(projects.organizationId, orgId)))
+      .limit(1)
+    if (!project) return { result: false, message: t("thread.notFound") }
+
+    // Verify recipients belong to the project (security) and resolve their parts.
+    const validAgents = await db
+      .select({ id: agents.id, part: agents.part })
+      .from(agents)
+      .where(and(eq(agents.projectId, projectId), isNull(agents.deletedAt)))
+    const partById = new Map(validAgents.map((a) => [a.id, a.part]))
+    const safeTargets = targetAgentIds.filter((id) => partById.has(id))
+    if (safeTargets.length === 0) {
+      return { result: false, message: t("thread.notFound") }
+    }
+
+    const [thread] = await db
+      .insert(threads)
+      .values({ projectId, subject, createdByUserId: session.user.id })
+      .returning({ id: threads.id })
+    if (!thread) return { result: false, message: t("thread.createFailed") }
+
+    const [msg] = await db
+      .insert(messages)
+      .values({ threadId: thread.id, fromUserId: session.user.id, body })
+      .returning({ id: messages.id })
+    if (!msg) return { result: false, message: t("thread.messageFailed") }
+
+    await db.insert(messageRecipients).values(
+      safeTargets.map((agentId) => ({ messageId: msg.id, agentId, required: false })),
+    )
+
+    // Live wake (best-effort): the addressed parts get nudged now.
+    await publishMessageWakes(
+      safeTargets.map((agentId) => ({
+        kind: "message" as const,
+        projectId,
+        project: project.slug,
+        part: partById.get(agentId)!,
+        threadId: thread.id,
+        messageId: msg.id,
+        subject,
+        fromPart: HUMAN_PART,
+      })),
+    )
+
+    return { result: true, item: { id: thread.id } }
+  } catch (err) {
+    console.error("[createThread]", err)
+    return { result: false, message: t("thread.createFailed") }
   }
 }
 
