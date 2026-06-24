@@ -78,7 +78,9 @@
     },
     "noAgentsTipTitle": "No agents connected yet",
     "noAgentsTipBody": "Add a main agent first to get this project started.",
-    "aboutLabel": "About"
+    "aboutLabel": "About",
+    "expand": "Expand",
+    "collapse": "Collapse"
   },
   "threads": {
     "pageTitle": "Threads",
