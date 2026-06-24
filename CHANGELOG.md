@@ -4,6 +4,15 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.3.14] - 2026-06-24
+
+### Changed
+- **`./rr.sh doctor` now checks agy and codex, not just Claude.** It reads each
+  agent's own MCP config (claude `.mcp.json`, agy `~/.gemini/config/mcp_config.json`,
+  codex `~/.codex/config.toml`) to verify the relayroom server is registered and which
+  part it holds. For the global agy/codex configs, a part mismatch means another
+  worktree set the shared entry last, and doctor says how to switch it. (#41)
+
 ## [0.3.13] - 2026-06-24
 
 ### Added
