@@ -261,6 +261,40 @@ mcp_add() {
 hooks_install() { $CLI hooks install --agent "$1"; }
 setup() { local a; IFS=',' read -ra _AS <<< "$AGENT"; for a in "\${_AS[@]}"; do mcp_add "$a" && hooks_install "$a"; done; }
 
+# ── doctor: diagnose common setup problems + print the exact fix command ───────
+# The #1 support issue is the git-worktree identity tangle: agents in different
+# worktrees all post as the same part because the MCP server was registered in
+# Claude's repo-root-keyed LOCAL scope instead of the per-worktree project scope.
+# doctor() catches that (and token/server/pager gaps) and prints what to run.
+doctor() {
+  local OKM="  ok  " WRN="  WARN" ERR="  ERR "
+  echo "RelayRoom doctor - worktree: $ROOT"
+  echo "  agent=$AGENT  part=$PART  session=$SESSION"
+  local ver; ver="$($CLI --version 2>/dev/null | head -1 || true)"
+  echo "$OKM CLI version: \${ver:-unknown}  (per-worktree identity needs 0.3.10+)"
+  [ -n "$CODE" ] && echo "$OKM connect code present" || echo "$ERR no connect code - run: relayroom init --code <code> --part $PART"
+  [ -n "$TOKEN" ] && echo "$OKM auth token present" || echo "$WRN no token - reconnect from the dashboard to issue one"
+  # Claude: is relayroom in THIS worktree's .mcp.json (project scope), or shared via
+  # the repo-root local scope (the tangle)?
+  if [ "$PRIMARY" = "claude" ]; then
+    local mp; mp="$(grep -oE 'part=[A-Za-z0-9_-]+' .mcp.json 2>/dev/null | head -1 | cut -d= -f2 || true)"
+    if [ -n "$mp" ]; then
+      echo "$OKM claude MCP in project scope (.mcp.json, part=$mp)"
+      [ "$mp" != "$PART" ] && echo "$WRN   .mcp.json part ($mp) != config part ($PART) - re-run: ./rr.sh setup"
+    else
+      echo "$WRN claude MCP not in this worktree's .mcp.json - likely sharing the repo-root local scope."
+      echo "       If worktrees post as the same part, run:  claude mcp remove relayroom -s local && ./rr.sh setup"
+    fi
+  fi
+  case "$PRIMARY" in
+    agy)   echo "$WRN agy MCP config is GLOBAL (~/.gemini/config/mcp_config.json) - all agy worktrees share one part identity." ;;
+    codex) echo "$WRN codex MCP config is GLOBAL (~/.codex) - all codex worktrees share one part identity." ;;
+  esac
+  if mcp_online; then echo "$OKM server reachable ($SERVER)"; else echo "$ERR server UNREACHABLE ($SERVER) - is the hub up?"; fi
+  pg_running && echo "$OKM pager running (pid $(cat "$PIDFILE"))" || echo "$WRN pager stopped - start with: ./rr.sh up"
+  tx_exists && echo "$OKM tmux session '$SESSION' running" || echo "$WRN no tmux session '$SESSION' - run: ./rr.sh up"
+}
+
 usage() {
   cat <<EOF
 RelayRoom console (part=$PART, session=$SESSION, agent=$AGENT)
@@ -273,6 +307,7 @@ RelayRoom console (part=$PART, session=$SESSION, agent=$AGENT)
   rr.sh pager start|stop|restart|status
   rr.sh claude|agy|codex mcp-add|hooks|run [--bypass]
   rr.sh setup                    mcp-add + hooks for every configured agent
+  rr.sh doctor                   diagnose setup problems (identity, token, server) + show fixes
   rr.sh update [--self]          re-pull RELAYROOM.md from the hub (--self also regenerates rr.sh)
   rr.sh --version                print the RelayRoom CLI version
   --bypass                       launch the CLI with its skip-all-approvals flag
@@ -298,6 +333,7 @@ case "\${1:-help}" in
     if mcp_online; then echo "mcp: server reachable ($SERVER)"; else echo "mcp: server UNREACHABLE ($SERVER) - is the hub up?"; fi
     pg_status ;;
   info) echo "code=$CODE part=$PART session=$SESSION agent=$AGENT server=$SERVER token=\${TOKEN:+set}" ;;
+  doctor) doctor ;;
   # Print the RelayRoom CLI version (delegates to the installed CLI, so it reflects
   # the current install - run \`./rr.sh update --self\` to regenerate rr.sh after upgrading).
   --version|-v|version) $CLI --version ;;
