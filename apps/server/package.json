@@ -1,6 +1,6 @@
 {
   "name": "@relayroom/server",
-  "version": "0.3.9",
+  "version": "0.3.10",
   "type": "module",
   "exports": {
     "./src/app": "./src/app.ts",

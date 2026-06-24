@@ -4,6 +4,31 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.3.10] - 2026-06-24
+
+### Added
+- **Message an agent from the dashboard.** A "New message" button in a project's
+  Threads tab opens a composer (subject + body + recipient parts, defaulting to the
+  main agent). Sending creates the thread AND wakes the addressed agents live, so the
+  human can start a conversation, not just reply to one. Dashboard replies now wake
+  their recipients too, rather than waiting for the agent's next inbox check. (#28, #30)
+
+### Changed
+- **`./rr.sh up` resumes your last session by default.** Re-launching an agent (after a
+  reboot or `down`/`up`) now continues the most recent conversation for that workdir
+  instead of starting fresh; pass `--new` for a clean start. Works for claude
+  (`--continue`), gemini (`--resume latest`), and codex (`resume --last`), and falls
+  back to a fresh start when there is no saved session. Run `./rr.sh update --self` to
+  pick it up. (#31)
+
+### Fixed
+- **Git worktrees no longer share one identity.** RelayRoom registered its MCP tool
+  server in Claude's default `local` scope, which Claude keys to the git repo root, so
+  every worktree of a repo posted as the same part. It now registers in project scope
+  (the worktree's `.mcp.json`), giving each worktree its own part identity. Re-run
+  `./rr.sh setup` in each worktree to migrate; codex keeps one identity per machine
+  since its MCP config is global. (#27)
+
 ## [0.3.9] - 2026-06-19
 
 ### Changed
