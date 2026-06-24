@@ -188,7 +188,8 @@ async function main() {
   let parsed
   try {
     if (AGENT === "codex") parsed = parseCodex(transcriptPath)
-    else if (AGENT === "gemini") parsed = parseGemini(transcriptPath)
+    // agy (Antigravity) reuses Gemini's ~/.gemini config root + transcript format.
+    else if (AGENT === "gemini" || AGENT === "agy") parsed = parseGemini(transcriptPath)
     else parsed = parseClaude(transcriptPath)
   } catch (err) { dbg({ stage: "parse-throw", agent: AGENT, err: String(err?.message ?? err) }); return }
   dbg({ stage: "parsed", agent: AGENT, parsed: parsed ?? null })

@@ -47,6 +47,7 @@ function mcpAddCommand(agent: AgentId, name: string, url: string, token: string)
     // AGY_MCP_MERGE_SCRIPT in packages/cli/src/providers.ts.
     const merge =
       'const fs=require("fs"),os=require("os"),path=require("path");' +
+      'if(!process.env.RELAYROOM_TOKEN){console.error("agy MCP: RELAYROOM_TOKEN not set");process.exit(1)}' +
       'const p=path.join(os.homedir(),".gemini","config","mcp_config.json");' +
       'fs.mkdirSync(path.dirname(p),{recursive:true});' +
       'let c={};try{c=JSON.parse(fs.readFileSync(p,"utf8")||"{}")}catch(e){}' +

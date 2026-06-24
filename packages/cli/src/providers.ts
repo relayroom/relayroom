@@ -40,6 +40,9 @@ export function isAgentId(v: string): v is AgentId {
  */
 export const AGY_MCP_MERGE_SCRIPT =
   'const fs=require("fs"),os=require("os"),path=require("path");' +
+  // Fail fast (before touching the file) if no token, so we never overwrite a working
+  // entry with an unusable empty `Bearer ` - e.g. `connect --run` without the env set.
+  'if(!process.env.RELAYROOM_TOKEN){console.error("agy MCP: RELAYROOM_TOKEN not set");process.exit(1)}' +
   'const p=path.join(os.homedir(),".gemini","config","mcp_config.json");' +
   'fs.mkdirSync(path.dirname(p),{recursive:true});' +
   'let c={};try{c=JSON.parse(fs.readFileSync(p,"utf8")||"{}")}catch(e){}' +
