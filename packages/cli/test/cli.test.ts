@@ -3,7 +3,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { connectUrl } from "../src/connect"
-import { mcpAddSpec, mcpAddCommand } from "../src/providers"
+import { mcpAddSpec, mcpAddCommand, AGY_MCP_MERGE_SCRIPT } from "../src/providers"
 import { hookCommand, hookBlock, installHook } from "../src/hooks"
 
 describe("connect", () => {
@@ -21,14 +21,19 @@ describe("connect", () => {
 describe("mcpAddSpec", () => {
   const url = "http://h:1/mcp/abc?part=web"
 
-  it("uses `mcp add --scope project --transport http` for Claude and Gemini", () => {
+  it("uses `mcp add --scope project --transport http` for Claude", () => {
     // Project scope => the server lands in the worktree's .mcp.json, so each git
     // worktree gets its own part identity (Claude's default `local` scope is keyed
     // to the repo root and shared across worktrees).
     expect(mcpAddSpec("claude", "rr", url))
       .toEqual({ bin: "claude", args: ["mcp", "add", "--scope", "project", "--transport", "http", "rr", url] })
-    expect(mcpAddSpec("gemini", "rr", url))
-      .toEqual({ bin: "gemini", args: ["mcp", "add", "--scope", "project", "--transport", "http", "rr", url] })
+  })
+
+  it("merges into ~/.gemini/config/mcp_config.json via node for agy", () => {
+    // agy (Antigravity) has no `mcp add` command; we merge the server into its JSON
+    // config file. The bearer token is read from $RELAYROOM_TOKEN, not argv.
+    expect(mcpAddSpec("agy", "rr", url))
+      .toEqual({ bin: "node", args: ["-e", AGY_MCP_MERGE_SCRIPT, url, "rr"] })
   })
 
   it("uses `mcp add <name> --url` for Codex", () => {
@@ -54,10 +59,10 @@ describe("hookCommand", () => {
 })
 
 describe("hookBlock", () => {
-  it("uses the Stop event for Claude/Codex and AfterAgent for Gemini", () => {
+  it("uses the Stop event for Claude/Codex and AfterAgent for agy", () => {
     expect(Object.keys(hookBlock({ agent: "claude", code: "c", part: "p" }).hooks)).toEqual(["Stop"])
     expect(Object.keys(hookBlock({ agent: "codex", code: "c", part: "p" }).hooks)).toEqual(["Stop"])
-    expect(Object.keys(hookBlock({ agent: "gemini", code: "c", part: "p" }).hooks)).toEqual(["AfterAgent"])
+    expect(Object.keys(hookBlock({ agent: "agy", code: "c", part: "p" }).hooks)).toEqual(["AfterAgent"])
   })
 })
 
@@ -78,12 +83,12 @@ describe("installHook", () => {
     expect(json.hooks.Stop[0].hooks[0].command).toContain("usage-report.mjs")
   })
 
-  it("writes the AfterAgent event for Gemini", () => {
+  it("writes the AfterAgent event for agy", () => {
     const path = join(dir, ".gemini/settings.json")
-    installHook({ agent: "gemini", code: "c1", part: "web", settings: path })
+    installHook({ agent: "agy", code: "c1", part: "web", settings: path })
     const json = JSON.parse(readFileSync(path, "utf8"))
     expect(json.hooks.AfterAgent).toHaveLength(1)
-    expect(json.hooks.AfterAgent[0].hooks[0].command).toContain("--agent gemini")
+    expect(json.hooks.AfterAgent[0].hooks[0].command).toContain("--agent agy")
   })
 
   it("is idempotent - re-install replaces, not duplicates", () => {

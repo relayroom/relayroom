@@ -77,7 +77,7 @@
         },
         "providerFamily": {
           "label": "Model provider family",
-          "detail": "Only the family: claude, codex, gemini, or other. Never the specific model, account, or key."
+          "detail": "Only the family: claude, codex, agy, or other. Never the specific model, account, or key."
         },
         "wakeLoopCount": {
           "label": "Wake loop count",

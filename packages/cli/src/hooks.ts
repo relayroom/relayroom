@@ -47,17 +47,17 @@ function ensureGuardScript(): string {
   return dest
 }
 
-/** Turn-end hook event each agent fires; Gemini calls it AfterAgent. */
+/** Turn-end hook event each agent fires; agy (Antigravity) calls it AfterAgent. */
 function hookEvent(agent: AgentId): "Stop" | "AfterAgent" {
-  return agent === "gemini" ? "AfterAgent" : "Stop"
+  return agent === "agy" ? "AfterAgent" : "Stop"
 }
 
-/** Default config file per agent (Claude/Gemini per-project, Codex global). */
+/** Default config file per agent (Claude/agy per-project, Codex global). */
 function defaultSettings(agent: AgentId): string {
   switch (agent) {
     case "claude":
       return ".claude/settings.json"
-    case "gemini":
+    case "agy":
       return ".gemini/settings.json"
     case "codex":
       return join(homedir(), ".codex", "hooks.json")
@@ -90,13 +90,13 @@ interface AgentSettings {
 }
 
 /**
- * One hook group for this agent. Gemini requires a `matcher` on each group (and
+ * One hook group for this agent. agy (like Gemini) requires a `matcher` on each group (and
  * accepts a `name`) - without it the group never fires, so usage+model never
  * report. Claude/Codex use the bare form they already work with.
  */
 function hookGroup(opts: HookOpts): HookGroup {
   const entry = { type: "command", command: hookCommand(opts) }
-  if ((opts.agent ?? "claude") === "gemini") {
+  if ((opts.agent ?? "claude") === "agy") {
     return { matcher: "*", hooks: [{ name: "relayroom-usage", ...entry }] }
   }
   return { hooks: [entry] }

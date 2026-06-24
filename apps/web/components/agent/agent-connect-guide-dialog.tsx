@@ -19,14 +19,12 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { connectAgent } from "@/modules/agent/actions"
 import { useRealtime } from "@/components/realtime/realtime-provider"
 
-type AgentId = "claude" | "gemini" | "codex"
-// Selectable CLIs in the connect guide. Gemini is temporarily HIDDEN (not removed):
-// gemini-3-flash-preview reaches for shell/curl instead of the RelayRoom MCP tools
-// and flails in the wake loop. CLI support stays intact (providers.ts, init, hooks)
-// so re-enabling is just uncommenting the line once a reliable gemini model is used.
+type AgentId = "claude" | "agy" | "codex"
+// Selectable CLIs in the connect guide. (Google shut down the Gemini CLI on
+// 2026-06-18; its successor Antigravity CLI `agy` replaces it here.)
 const AGENTS: { id: AgentId; label: string }[] = [
   { id: "claude", label: "Claude Code" },
-  // { id: "gemini", label: "Gemini CLI" }, // hidden: flash-preview ignores MCP tools (re-enable with a stronger model)
+  { id: "agy", label: "Antigravity CLI" },
   { id: "codex", label: "Codex" },
 ]
 
@@ -37,12 +35,28 @@ const AGENTS: { id: AgentId; label: string }[] = [
 const CLI_CMD = process.env.NEXT_PUBLIC_RELAYROOM_CLI ?? "npx -y @relayroom/cli"
 
 // The token authenticates every MCP call. Bake it into the command so the agent
-// authenticates directly (no OAuth/IDE prompt): claude/gemini take an inline
+// authenticates directly (no OAuth/IDE prompt): claude/agy take an inline
 // header; codex reads it from an env var (the `export` line above the add). We
 // remove any existing entry first so a re-connect swaps in the fresh token
 // instead of hitting "already exists" and keeping a stale (failing) config.
 function mcpAddCommand(agent: AgentId, name: string, url: string, token: string): string {
-  const bin = agent === "codex" ? "codex" : agent === "gemini" ? "gemini" : "claude"
+  if (agent === "agy") {
+    // agy (Antigravity) has no `mcp add` command - it reads
+    // ~/.gemini/config/mcp_config.json. Merge the server in via node, preserving any
+    // other servers. Token via env so it stays out of shell history. Mirrors the
+    // AGY_MCP_MERGE_SCRIPT in packages/cli/src/providers.ts.
+    const merge =
+      'const fs=require("fs"),os=require("os"),path=require("path");' +
+      'if(!process.env.RELAYROOM_TOKEN){console.error("agy MCP: RELAYROOM_TOKEN not set");process.exit(1)}' +
+      'const p=path.join(os.homedir(),".gemini","config","mcp_config.json");' +
+      'fs.mkdirSync(path.dirname(p),{recursive:true});' +
+      'let c={};try{c=JSON.parse(fs.readFileSync(p,"utf8")||"{}")}catch(e){}' +
+      'c.mcpServers=c.mcpServers||{};' +
+      'c.mcpServers[process.argv[2]]={serverUrl:process.argv[1],headers:{Authorization:"Bearer "+(process.env.RELAYROOM_TOKEN||"")}};' +
+      'fs.writeFileSync(p,JSON.stringify(c,null,2))'
+    return `RELAYROOM_TOKEN="${token}" node -e '${merge}' "${url}" ${name}`
+  }
+  const bin = agent === "codex" ? "codex" : "claude"
   const add =
     agent === "codex"
       ? `${bin} mcp add ${name} --url "${url}" --bearer-token-env-var RELAYROOM_TOKEN`
@@ -55,9 +69,7 @@ function mcpAddCommand(agent: AgentId, name: string, url: string, token: string)
 function bypassFlag(agent: AgentId): string {
   return agent === "codex"
     ? "--dangerously-bypass-approvals-and-sandbox"
-    : agent === "gemini"
-      ? "--yolo"
-      : "--dangerously-skip-permissions"
+    : "--dangerously-skip-permissions"
 }
 
 interface Props {
@@ -74,7 +86,7 @@ interface Props {
 }
 
 /**
- * Shows how to connect a local coding tool (Claude Code / Codex / Gemini) to an
+ * Shows how to connect a local coding tool (Claude Code / Codex / Antigravity) to an
  * already-registered agent - one job. Issues a fresh auth token when opened and
  * renders the copy-paste setup commands. Separate from the register dialog.
  */
