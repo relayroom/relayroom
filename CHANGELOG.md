@@ -4,6 +4,20 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.3.11] - 2026-06-24
+
+### Added
+- **Project descriptions are now visible.** A project's description (markdown) was
+  editable on the create/settings pages but rendered nowhere. It now shows on the
+  project overview tab, capped at a readable height with an expand/collapse toggle
+  for long text. (#34)
+
+### Changed
+- **The markdown editor uses write/preview tabs instead of a split.** The
+  side-by-side layout halved the writing area; it is now full width with the
+  preview one tab away. Applies to every composer (new message, reply, project
+  create/settings). (#33)
+
 ## [0.3.10] - 2026-06-24
 
 ### Added
