@@ -20,7 +20,7 @@ export function connectUrl(opts: ConnectOpts): string {
 /**
  * Print (or, with --run, execute) the `<agent> mcp add` command that wires this
  * coding CLI into a RelayRoom project over MCP. Printing is the default so the
- * user sees exactly what will run. Works for Claude Code, Gemini CLI, and Codex.
+ * user sees exactly what will run. Works for Claude Code, Antigravity CLI (agy), and Codex.
  */
 export function connect(opts: ConnectOpts): void {
   const agent: AgentId = opts.agent ?? "claude"

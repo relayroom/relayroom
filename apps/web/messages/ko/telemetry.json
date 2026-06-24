@@ -77,7 +77,7 @@
         },
         "providerFamily": {
           "label": "모델 provider 계열",
-          "detail": "계열만: claude, codex, gemini, other. 구체적 모델/계정/키는 절대 아닙니다."
+          "detail": "계열만: claude, codex, agy, other. 구체적 모델/계정/키는 절대 아닙니다."
         },
         "wakeLoopCount": {
           "label": "wake loop 카운트",

@@ -71,7 +71,7 @@ program
   .option("--code <connect_code>", "project connect code (first time only; then reused from .relayroom/config.json)")
   .option("--part <part>", "this agent's part (saved to .relayroom/config.json; reused on re-init)")
   .option("--target <tmux>", "tmux target for the pager (saved to .relayroom/config.json)")
-  .option("--agent <agent>", "coding CLI(s) to target, comma-separated (claude|codex|gemini)")
+  .option("--agent <agent>", "coding CLI(s) to target, comma-separated (claude|codex|agy)")
   .option("--token <token>", "bearer token, saved to .relayroom/config.json so rr.sh can re-run mcp add")
   // No Commander default: a baked-in default would overwrite a previously-saved
   // custom server on every re-init. init() resolves explicit flag -> saved config ->
