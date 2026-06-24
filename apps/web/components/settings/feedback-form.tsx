@@ -16,7 +16,7 @@ import { Textarea } from "@/components/ui/textarea"
  * the telemetry collector. The disclosure line states exactly what is sent, so
  * this works even when telemetry is off (an explicit, consented action).
  */
-export function FeedbackForm() {
+export function FeedbackForm({ onSuccess }: { onSuccess?: () => void } = {}) {
   const t = useTranslations("feedback.form")
   const [rating, setRating] = useState<number | null>(null)
   const [message, setMessage] = useState("")
@@ -41,6 +41,7 @@ export function FeedbackForm() {
         setRating(null)
         setMessage("")
         setContact("")
+        onSuccess?.()
       })()
 
       toast.promise(work, {

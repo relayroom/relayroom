@@ -59,6 +59,24 @@ export default async function TelemetryDataPage() {
         <p className="text-sm text-muted-foreground">{t("intro")}</p>
       </div>
 
+      {/* "Never collected" first - leads with the privacy reassurance before the list of what IS sent. */}
+      <Card className="border-destructive/30">
+        <CardHeader>
+          <CardTitle className="text-base">{t("never.title")}</CardTitle>
+          <CardDescription>{t("never.description")}</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ul className="space-y-2">
+            {NEVER_KEYS.map((key) => (
+              <li key={key} className="flex items-center gap-2.5">
+                <XIcon className="h-4 w-4 shrink-0 text-destructive" />
+                <span className="text-sm">{t(`never.items.${key}`)}</span>
+              </li>
+            ))}
+          </ul>
+        </CardContent>
+      </Card>
+
       <Card>
         <CardHeader>
           <CardTitle className="text-base">{t("collected.title")}</CardTitle>
@@ -75,23 +93,6 @@ export default async function TelemetryDataPage() {
                     {t(`collected.items.${key}.detail`)}
                   </p>
                 </div>
-              </li>
-            ))}
-          </ul>
-        </CardContent>
-      </Card>
-
-      <Card className="border-destructive/30">
-        <CardHeader>
-          <CardTitle className="text-base">{t("never.title")}</CardTitle>
-          <CardDescription>{t("never.description")}</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <ul className="space-y-2">
-            {NEVER_KEYS.map((key) => (
-              <li key={key} className="flex items-center gap-2.5">
-                <XIcon className="h-4 w-4 shrink-0 text-destructive" />
-                <span className="text-sm">{t(`never.items.${key}`)}</span>
               </li>
             ))}
           </ul>
