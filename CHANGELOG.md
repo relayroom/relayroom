@@ -4,6 +4,14 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.3.16] - 2026-06-24
+
+### Fixed
+- **`./rr.sh update --self` no longer prints a `syntax error` at the end.** It
+  regenerates rr.sh while bash is executing it; the in-place write corrupted the
+  running shell's view of the file. rr.sh is now written atomically (temp + rename),
+  so the running shell finishes cleanly and the new version applies next run. (#45)
+
 ## [0.3.15] - 2026-06-24
 
 ### Added
