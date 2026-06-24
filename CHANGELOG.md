@@ -4,6 +4,19 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.3.12] - 2026-06-24
+
+### Changed
+- **The Gemini CLI provider is replaced by Antigravity (`agy`).** Google shut down
+  the Gemini CLI on 2026-06-18; its successor, the Antigravity CLI (`agy`), is now a
+  first-class RelayRoom agent. It reuses Gemini's `~/.gemini` config and hooks, but
+  since it has no `mcp add` command, RelayRoom registers itself by merging into
+  `~/.gemini/config/mcp_config.json`. Like Codex this is a global config, so agy
+  worktrees share one part identity. Re-run `./rr.sh setup` to connect agy. (#37)
+
+### Added
+- **`./rr.sh --version`** prints the installed RelayRoom CLI version. (#37)
+
 ## [0.3.11] - 2026-06-24
 
 ### Added
