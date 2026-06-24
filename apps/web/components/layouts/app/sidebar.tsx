@@ -21,6 +21,7 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { RelayRoomMark } from "@/components/brand/relayroom-mark"
+import { FeedbackDialog } from "@/components/layouts/app/feedback-dialog"
 import { authClient } from "@/lib/auth-client"
 import type { VersionInfo } from "@/lib/version"
 
@@ -247,9 +248,24 @@ function SidebarContent({
         </Link>
       </div>
 
-      {/* Instance version + update nudge */}
+      {/* Instance version + GitHub / Feedback links + update nudge */}
       <div className="border-t border-border px-4 py-2 text-[11px] leading-tight text-muted-foreground/70">
-        <span>v{versionInfo.current}</span>
+        <div className="flex items-center justify-between gap-2">
+          <span>v{versionInfo.current}</span>
+          <div className="flex items-center gap-1.5">
+            <a
+              href="https://github.com/relayroom/relayroom"
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={onNavigate}
+              className="transition-colors hover:text-foreground hover:underline"
+            >
+              GitHub
+            </a>
+            <span aria-hidden>·</span>
+            <FeedbackDialog className="cursor-pointer transition-colors hover:text-foreground hover:underline" />
+          </div>
+        </div>
         {versionInfo.updateAvailable && versionInfo.latest && (
           <a
             href="https://github.com/relayroom/relayroom/releases/latest"
