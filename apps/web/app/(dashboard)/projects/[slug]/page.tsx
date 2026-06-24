@@ -10,6 +10,7 @@ import { listThreads } from "@/modules/thread/queries"
 import { listEvents } from "@/modules/event/queries"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Markdown } from "@/components/markdown"
 import { getUsageSeriesForProject } from "@/modules/usage/queries"
 import { UsageChart } from "@/components/dashboard/usage-chart"
 import { ThreadListItem } from "@/components/thread/thread-list-item"
@@ -130,6 +131,18 @@ export default async function ProjectOverviewPage({ params }: Props) {
           href={`/projects/${slug}/members`}
         />
       </div>
+
+      {/* Project description (markdown) - set on create/settings, surfaced here */}
+      {project.description?.trim() && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">{t("overview.aboutLabel")}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Markdown content={project.description} />
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Agents panel */}
