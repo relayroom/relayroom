@@ -274,22 +274,34 @@ doctor() {
   echo "$OKM CLI version: \${ver:-unknown}  (per-worktree identity needs 0.3.10+)"
   [ -n "$CODE" ] && echo "$OKM connect code present" || echo "$ERR no connect code - run: relayroom init --code <code> --part $PART"
   [ -n "$TOKEN" ] && echo "$OKM auth token present" || echo "$WRN no token - reconnect from the dashboard to issue one"
-  # Claude: is relayroom in THIS worktree's .mcp.json (project scope), or shared via
-  # the repo-root local scope (the tangle)?
-  if [ "$PRIMARY" = "claude" ]; then
-    local mp; mp="$(grep -oE 'part=[A-Za-z0-9_-]+' .mcp.json 2>/dev/null | head -1 | cut -d= -f2 || true)"
-    if [ -n "$mp" ]; then
-      echo "$OKM claude MCP in project scope (.mcp.json, part=$mp)"
-      [ "$mp" != "$PART" ] && echo "$WRN   .mcp.json part ($mp) != config part ($PART) - re-run: ./rr.sh setup"
-    else
-      echo "$WRN claude MCP not in this worktree's .mcp.json - likely sharing the repo-root local scope."
-      echo "       If worktrees post as the same part, run:  claude mcp remove relayroom -s local && ./rr.sh setup"
-    fi
-  fi
+  # MCP registration + identity, read from each agent's own config location.
+  # claude = per-worktree .mcp.json (project scope). agy/codex use a GLOBAL config
+  # file, so all their worktrees share ONE entry (whichever ran setup last wins) -
+  # a part mismatch there means another worktree owns the global entry.
+  local cfgfile cfgdesc global=""
   case "$PRIMARY" in
-    agy)   echo "$WRN agy MCP config is GLOBAL (~/.gemini/config/mcp_config.json) - all agy worktrees share one part identity." ;;
-    codex) echo "$WRN codex MCP config is GLOBAL (~/.codex) - all codex worktrees share one part identity." ;;
+    claude) cfgfile=".mcp.json"; cfgdesc="this worktree's .mcp.json" ;;
+    agy)    cfgfile="$HOME/.gemini/config/mcp_config.json"; cfgdesc="~/.gemini/config/mcp_config.json"; global=1 ;;
+    codex)  cfgfile="$HOME/.codex/config.toml"; cfgdesc="~/.codex/config.toml"; global=1 ;;
   esac
+  local rp; rp="$(grep -oE 'part=[A-Za-z0-9_-]+' "$cfgfile" 2>/dev/null | head -1 | cut -d= -f2 || true)"
+  if [ -n "$rp" ]; then
+    echo "$OKM $PRIMARY relayroom MCP registered ($cfgdesc, part=$rp)"
+    if [ "$rp" != "$PART" ]; then
+      if [ -n "$global" ]; then
+        echo "$WRN   registered part ($rp) != this worktree ($PART). $PRIMARY's MCP config is GLOBAL, so another worktree set it last."
+        echo "       Re-run ./rr.sh setup here to switch it (or use claude for true per-worktree identity)."
+      else
+        echo "$WRN   .mcp.json part ($rp) != config part ($PART) - re-run: ./rr.sh setup"
+      fi
+    fi
+  elif [ "$PRIMARY" = "claude" ]; then
+    echo "$WRN claude relayroom MCP not in this worktree's .mcp.json - likely sharing the repo-root local scope."
+    echo "       If worktrees post as the same part, run:  claude mcp remove relayroom -s local && ./rr.sh setup"
+  else
+    echo "$WRN $PRIMARY relayroom MCP not registered ($cfgdesc) - run: ./rr.sh setup"
+  fi
+  [ -n "$global" ] && echo "       note: $PRIMARY MCP config is GLOBAL - worktrees can't hold separate identities here (use claude for that)."
   if mcp_online; then echo "$OKM server reachable ($SERVER)"; else echo "$ERR server UNREACHABLE ($SERVER) - is the hub up?"; fi
   pg_running && echo "$OKM pager running (pid $(cat "$PIDFILE"))" || echo "$WRN pager stopped - start with: ./rr.sh up"
   tx_exists && echo "$OKM tmux session '$SESSION' running" || echo "$WRN no tmux session '$SESSION' - run: ./rr.sh up"
