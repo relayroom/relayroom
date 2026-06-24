@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { execFileSync } from "node:child_process"
 import { join, resolve } from "node:path"
 import { DEFAULT_SERVER } from "./constants"
@@ -541,8 +541,15 @@ export async function init(opts: InitOpts): Promise<void> {
   // reboot is just `./rr.sh up`. Lives at the worktree ROOT next to RELAYROOM.md
   // (short to type) and is gitignored like RELAYROOM.md.
   const rrScript = join(dir, "rr.sh")
-  writeFileSync(rrScript, RR_SCRIPT)
-  chmodSync(rrScript, 0o755)
+  // Write atomically (temp + rename). `./rr.sh update --self` regenerates rr.sh WHILE
+  // bash is still executing it; an in-place writeFileSync truncates+rewrites the SAME
+  // inode, so the running shell keeps reading from its old byte offset into the new
+  // (longer) content and dies with a syntax error. A rename puts the new content on a
+  // fresh inode and leaves the running shell's open handle on the original file.
+  const rrTmp = `${rrScript}.tmp`
+  writeFileSync(rrTmp, RR_SCRIPT)
+  chmodSync(rrTmp, 0o755)
+  renameSync(rrTmp, rrScript)
   if (ensureLine(join(dir, ".gitignore"), "rr.sh", { create: true }) === "added") {
     console.log("gitignored rr.sh")
   }
