@@ -4,6 +4,15 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.3.13] - 2026-06-24
+
+### Added
+- **`./rr.sh doctor`** diagnoses common setup problems in one command and prints the
+  fix for each: the git-worktree identity tangle (agents posting as the same part
+  because the MCP server is in Claude's shared local scope instead of per-worktree
+  project scope), missing token, server/pager/tmux gaps, and the agy/codex
+  global-config caveat. (#39)
+
 ## [0.3.12] - 2026-06-24
 
 ### Changed
