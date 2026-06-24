@@ -4,6 +4,17 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.3.15] - 2026-06-24
+
+### Added
+- **GitHub and Feedback links in the sidebar footer.** The version line now also
+  links to the GitHub repo and opens a Feedback dialog (the same form as
+  Settings -> Feedback, reused), so feedback is one click from anywhere. (#43)
+
+### Changed
+- **Telemetry data page leads with "never collected."** The privacy reassurance
+  (what is never sent) now appears before the list of what is collected. (#43)
+
 ## [0.3.14] - 2026-06-24
 
 ### Changed
