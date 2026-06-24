@@ -1,9 +1,10 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { useTranslations } from "next-intl"
 import { Textarea } from "@/components/ui/textarea"
 import { Markdown } from "@/components/markdown"
+import { cn } from "@/lib/utils"
 
 interface MarkdownEditorProps {
   value: string
@@ -13,23 +14,11 @@ interface MarkdownEditorProps {
   placeholder?: string
 }
 
-// sm(640px) 이상이면 작성/미리보기 좌우 분할, 미만이면 textarea만.
-const PREVIEW_QUERY = "(min-width: 640px)"
+const TABS = ["write", "preview"] as const
+type Tab = (typeof TABS)[number]
 
-function useMediaQuery(query: string): boolean {
-  // SSR/최초 렌더는 false로 시작해 textarea만 그린 뒤,
-  // 마운트 후 실제 매치 결과로 갱신한다 (hydration mismatch 방지).
-  const [matches, setMatches] = useState(false)
-  useEffect(() => {
-    const mql = window.matchMedia(query)
-    setMatches(mql.matches)
-    const onChange = (e: MediaQueryListEvent) => setMatches(e.matches)
-    mql.addEventListener("change", onChange)
-    return () => mql.removeEventListener("change", onChange)
-  }, [query])
-  return matches
-}
-
+// 작성/미리보기를 좌우 분할 대신 탭으로 전환한다. 분할은 작성칸이 절반으로
+// 좁아져 답답했어서, 탭이면 활성 탭이 전체 폭을 쓴다.
 export function MarkdownEditor({
   value,
   onChange,
@@ -38,52 +27,51 @@ export function MarkdownEditor({
   placeholder,
 }: MarkdownEditorProps) {
   const t = useTranslations("ui")
-  const showPreview = useMediaQuery(PREVIEW_QUERY)
+  const [tab, setTab] = useState<Tab>("write")
   const minHeight = `${rows * 1.5}rem`
   const resolvedPlaceholder = placeholder ?? t("markdownEditor.defaultPlaceholder")
 
-  const editor = (
-    <Textarea
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      disabled={disabled}
-      rows={rows}
-      placeholder={resolvedPlaceholder}
-      className="resize-y font-mono text-sm"
-      style={{ minHeight }}
-    />
-  )
-
-  const preview = (
-    <div
-      className="overflow-auto rounded-md border border-border bg-background px-3 py-2"
-      style={{ minHeight }}
-    >
-      {value.trim() ? (
-        <Markdown content={value} />
-      ) : (
-        <p className="text-xs text-muted-foreground">{t("markdownEditor.previewEmpty")}</p>
-      )}
-    </div>
-  )
-
   return (
     <div className="space-y-1.5">
-      {showPreview ? (
-        // sm 이상: 좌 작성 / 우 미리보기 (라이브 프리뷰)
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1">
-            <span className="text-xs font-medium text-muted-foreground">{t("markdownEditor.write")}</span>
-            {editor}
-          </div>
-          <div className="space-y-1">
-            <span className="text-xs font-medium text-muted-foreground">{t("markdownEditor.preview")}</span>
-            {preview}
-          </div>
-        </div>
+      <div className="flex gap-1 border-b border-border">
+        {TABS.map((key) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setTab(key)}
+            className={cn(
+              "-mb-px border-b-2 px-3 py-1.5 text-xs font-medium transition-colors",
+              tab === key
+                ? "border-foreground text-foreground"
+                : "border-transparent text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {t(`markdownEditor.${key}`)}
+          </button>
+        ))}
+      </div>
+
+      {tab === "write" ? (
+        <Textarea
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          disabled={disabled}
+          rows={rows}
+          placeholder={resolvedPlaceholder}
+          className="resize-y font-mono text-sm"
+          style={{ minHeight }}
+        />
       ) : (
-        // sm 미만: textarea만
-        editor
+        <div
+          className="overflow-auto rounded-md border border-border bg-background px-3 py-2"
+          style={{ minHeight }}
+        >
+          {value.trim() ? (
+            <Markdown content={value} />
+          ) : (
+            <p className="text-xs text-muted-foreground">{t("markdownEditor.previewEmpty")}</p>
+          )}
+        </div>
       )}
 
       <p className="text-xs text-muted-foreground">{t("markdownEditor.supportsMarkdown")}</p>
