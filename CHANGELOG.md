@@ -4,6 +4,24 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.3.18] - 2026-06-25
+
+### Added
+- **tmux sessions are named deterministically as `RR-<project-slug>-<part>`.**
+  Previously the session name was whatever tmux session `relayroom init` was run
+  inside (or a bare part fallback), so parts looked inconsistent (`relayroom-ai`,
+  `digital-docent-web-part`). Now every part on every machine reads "RelayRoom,
+  which project, which agent" at a glance. The hub returns the project slug in an
+  `x-relayroom-project-slug` header on the relayroom-md endpoint; the CLI caches it
+  and names the session from it (an explicit `--target` still wins). Re-running
+  `relayroom init` migrates an existing worktree to the standard name. (#52)
+
+### Fixed
+- **`./rr.sh update --self` works outside tmux.** It regenerates rr.sh by calling
+  `relayroom init`, which enforced a "must run inside tmux" guard - but you update
+  after exiting your agent and tmux. `update --self` now skips that guard (the
+  guard still applies to first-time `relayroom init`). (#51)
+
 ## [0.3.17] - 2026-06-25
 
 ### Fixed
