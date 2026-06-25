@@ -1,5 +1,4 @@
 import { chmodSync, existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
-import { execFileSync } from "node:child_process"
 import { join, resolve } from "node:path"
 import { DEFAULT_SERVER } from "./constants"
 import { RELAYROOM_DIR, writeConfig, readConfig } from "./config"
@@ -449,19 +448,6 @@ function assertInsideTmux(opts: InitOpts): void {
   process.exit(1)
 }
 
-/** Current tmux session name (for the pager target), or undefined if unavailable. */
-function currentTmuxSession(): string | undefined {
-  try {
-    const s = execFileSync("tmux", ["display-message", "-p", "#S"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim()
-    return s || undefined
-  } catch {
-    return undefined
-  }
-}
-
 /**
  * Append `line` to a file if it is not already present (one line per check).
  * `create` controls whether a missing file is created. Returns what happened.
@@ -490,10 +476,6 @@ export async function init(opts: InitOpts): Promise<void> {
   // Guard: must run inside tmux so the pager can wake this agent. Blocks unless
   // --no-tmux-check. When inside tmux, default the pager target to this session.
   assertInsideTmux(opts)
-  const target = opts.target ?? (process.env.TMUX ? currentTmuxSession() : undefined)
-  if (!opts.target && target) {
-    console.log(`detected tmux session "${target}" - using it as the pager target`)
-  }
 
   const dir = resolve(opts.dir ?? ".")
   // Identity resolves explicit flag -> previously-saved config, so a re-init in an
@@ -514,10 +496,12 @@ export async function init(opts: InitOpts): Promise<void> {
   const url = `${server}/mcp/${encodeURIComponent(code)}/relayroom-md`
 
   let content: string
+  let slugHeader: string | undefined
   try {
     const res = await fetch(url)
     if (!res.ok) throw new Error(`server responded ${res.status}`)
     content = await res.text()
+    slugHeader = res.headers.get("x-relayroom-project-slug") ?? undefined
   } catch (err) {
     console.error(`error: could not fetch RELAYROOM.md from ${url}: ${(err as Error).message}`)
     process.exit(1)
@@ -534,12 +518,25 @@ export async function init(opts: InitOpts): Promise<void> {
     console.log("gitignored RELAYROOM.md")
   }
 
+  // Name the tmux session deterministically as RR-<slug>-<part> so every part on
+  // every machine reads "RelayRoom, project, agent" at a glance. An explicit
+  // --target always wins; otherwise the hub's project slug drives the name, with a
+  // cached slug or the legacy relayroom-<part> as fallbacks if the hub is silent.
+  const projectSlug = slugHeader ?? saved.projectSlug
+  const target =
+    opts.target ??
+    (projectSlug && part
+      ? `RR-${projectSlug}-${part}`
+      : saved.target ?? (part ? `relayroom-${part}` : undefined))
+  if (!opts.target && target) console.log(`tmux session / pager target: ${target}`)
+
   // Write the machine-local connection identity so the pager, usage hook, and a
   // compacted agent can recover it without re-passing flags. gitignore it.
   const configFile = writeConfig(dir, {
     code,
     part,
     target,
+    projectSlug,
     server,
     agent: opts.agent,
     token: opts.token,

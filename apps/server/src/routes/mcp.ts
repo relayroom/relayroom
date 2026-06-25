@@ -1322,7 +1322,7 @@ export function createMcpRoute(db: Db, bus: Bus) {
   route.get('/:connectCode/relayroom-md', async (c) => {
     const connectCode = c.req.param('connectCode')
     const [project] = await db
-      .select({ id: projects.id, relayroomMd: projects.relayroomMd })
+      .select({ id: projects.id, slug: projects.slug, relayroomMd: projects.relayroomMd })
       .from(projects)
       .where(eq(projects.connectCode, connectCode))
       .limit(1)
@@ -1330,8 +1330,11 @@ export function createMcpRoute(db: Db, bus: Bus) {
 
     const base = project.relayroomMd ?? DEFAULT_RELAYROOM_MD
     const md = base + (await renderCurrentMainSection(db, project.id))
+    // Expose the project slug so `relayroom init` can name the tmux session
+    // deterministically (RR-<slug>-<part>) without a second round trip.
     return c.text(md, 200, {
       'content-type': 'text/markdown; charset=utf-8',
+      'x-relayroom-project-slug': project.slug,
     })
   })
 
