@@ -522,12 +522,16 @@ export async function init(opts: InitOpts): Promise<void> {
   // every machine reads "RelayRoom, project, agent" at a glance. An explicit
   // --target always wins; otherwise the hub's project slug drives the name, with a
   // cached slug or the legacy relayroom-<part> as fallbacks if the hub is silent.
+  // Sanitize the auto-generated name: tmux session names cannot contain '.', ':',
+  // or whitespace, and a slug created outside the web form (e.g. via a bootstrap
+  // helper) is not guaranteed clean. Collapse anything else to '-'.
+  const tmuxSafe = (s: string) => s.replace(/[^A-Za-z0-9_-]/g, "-")
   const projectSlug = slugHeader ?? saved.projectSlug
   const target =
     opts.target ??
     (projectSlug && part
-      ? `RR-${projectSlug}-${part}`
-      : saved.target ?? (part ? `relayroom-${part}` : undefined))
+      ? `RR-${tmuxSafe(projectSlug)}-${tmuxSafe(part)}`
+      : saved.target ?? (part ? `relayroom-${tmuxSafe(part)}` : undefined))
   if (!opts.target && target) console.log(`tmux session / pager target: ${target}`)
 
   // Write the machine-local connection identity so the pager, usage hook, and a
