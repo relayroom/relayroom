@@ -267,7 +267,15 @@ setup() { local a; IFS=',' read -ra _AS <<< "$AGENT"; for a in "\${_AS[@]}"; do 
 # Claude's repo-root-keyed LOCAL scope instead of the per-worktree project scope.
 # doctor() catches that (and token/server/pager gaps) and prints what to run.
 doctor() {
-  local OKM="  ok  " WRN="  WARN" ERR="  ERR "
+  # Conventional CLI coloring: green ok / yellow WARN / red ERR, but only when stdout
+  # is a terminal (so piping doctor into a file or grep stays clean). tput avoids
+  # hardcoding ANSI escapes; it emits nothing when the terminal has no color.
+  local _g="" _y="" _r="" _n=""
+  if [ -t 1 ]; then
+    _g="$(tput setaf 2 2>/dev/null || true)"; _y="$(tput setaf 3 2>/dev/null || true)"
+    _r="$(tput setaf 1 2>/dev/null || true)"; _n="$(tput sgr0 2>/dev/null || true)"
+  fi
+  local OKM="  \${_g}ok\${_n}  " WRN="  \${_y}WARN\${_n}" ERR="  \${_r}ERR\${_n} "
   echo "RelayRoom doctor - worktree: $ROOT"
   echo "  agent=$AGENT  part=$PART  session=$SESSION"
   local ver; ver="$($CLI --version 2>/dev/null | head -1 || true)"
