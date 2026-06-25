@@ -4,6 +4,18 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.3.20] - 2026-06-25
+
+### Fixed
+- **`./rr.sh up` restarts the pager so it targets the current session.** The pager
+  reads `.relayroom/config.json` once at startup and has no `--target`, so a pager
+  left over from a previous session keeps the old target in memory. `up` called a
+  bare `pg_start`, which no-ops when any pager is alive, so after a session rename
+  or migration the stale pager kept painting a dead session and the new one got no
+  status color (the bar fell back to tmux's default green) or wake delivery. `up`
+  now stops then starts the pager, so it re-reads config and targets the current
+  session. (#56)
+
 ## [0.3.19] - 2026-06-25
 
 ### Added
