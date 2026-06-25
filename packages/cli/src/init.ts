@@ -210,7 +210,11 @@ unread_count() {
 # inbox: N is the open-unread count - highlighted when >0 so a user holding the chat
 # window sees there is something to handle; dim when 0.
 sl() {
-  local sep mcp pgr inbox n upd
+  # upd="" is initialized (not just declared): it is only ASSIGNED when a CLI update
+  # is pending (.relayroom/.update exists), so without this an up-to-date install
+  # hits \`set -u\` ("upd: unbound variable") when tmux runs the statusline - the bar
+  # then shows only the clock. Bash version dependent, so it bit Linux/tmux first.
+  local sep mcp pgr inbox n upd=""
   sep="#[fg=colour240]│#[default]"
   n="$(unread_count)"
   if [ "\${n:-0}" -gt 0 ] 2>/dev/null; then inbox="#[fg=yellow,bold]inbox: \${n}#[default]"; else inbox="#[fg=colour244]inbox: 0#[default]"; fi
