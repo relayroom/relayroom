@@ -548,10 +548,11 @@ function setupStatusBar() {
     "#(cd '#{pane_current_path}' 2>/dev/null && [ -x ./rr.sh ] && ./rr.sh statusline 2>/dev/null) #[fg=colour240]│#[fg=colour244] %H:%M ")
   set("set-option", "-t", TARGET, "status-right-length", "80")
   // tmux's default status-left-length is 10, which truncates the default
-  // "[#{session_name}] " mid-name for RelayRoom sessions (e.g. "relayroom-ai"
-  // -> "[relayroom" with no closing bracket, running into the window list).
-  // Widen it so the session name and its bracket always render in full.
-  set("set-option", "-t", TARGET, "status-left-length", "40")
+  // "[#{session_name}] " mid-name for RelayRoom sessions (e.g. the standard
+  // "RR-<project-slug>-<part>" name -> "[RR-digita" with no closing bracket,
+  // running into the window list). Widen it so the session name and its bracket
+  // always render in full (60 covers a 32-char slug + "RR-" + "-<part>").
+  set("set-option", "-t", TARGET, "status-left-length", "60")
   set("set-option", "-t", TARGET, "status-interval", "5")
 }
 

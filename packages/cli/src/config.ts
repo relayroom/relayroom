@@ -16,6 +16,10 @@ export interface RelayRoomConfig {
   part?: string
   server?: string
   target?: string
+  /** Project slug from the hub (e.g. "digital-docent"). Used to name the tmux
+   *  session deterministically as RR-<slug>-<part>. Cached so a re-init can keep
+   *  the standard name even if the slug header is briefly unavailable. */
+  projectSlug?: string
   machineLabel?: string
   /** The coding CLI(s) to relaunch in the tmux session (e.g. "claude" or
    *  "claude,codex"); used by rr.sh. The first is launched in the session. */
