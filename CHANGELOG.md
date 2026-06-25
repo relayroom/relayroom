@@ -4,6 +4,32 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.3.17] - 2026-06-25
+
+### Fixed
+- **The tmux status line renders again when no CLI update is pending.** The
+  generated `rr.sh` ran under `set -u`, but `sl()` only assigned `upd` when a
+  `.relayroom/.update` marker existed; on an up-to-date install the final
+  `printf` hit an unbound variable, the statusline subcommand exited non-zero,
+  and tmux showed only the clock. `upd` is now initialized. Surfaced on
+  Linux/tmux first, where bash errors on the unset local. (#49)
+- **The session name no longer gets truncated in the status line.** tmux's
+  default `status-left-length` of 10 cut `[#{session_name}] ` mid-name (e.g.
+  `relayroom-ai` -> `[relayroom` with no closing bracket). The pager now widens
+  `status-left-length` so the name and its bracket render in full. (#49)
+
+### Added
+- **The events page shows the agent's answer, not just the prompt.** The
+  usage hook now captures the turn's final assistant text into `detail.summary`,
+  and the event detail page renders a readable Prompt/Answer exchange above the
+  raw JSON. (#48)
+- **`./rr.sh doctor` status labels are colored** (green ok / yellow WARN /
+  red ERR), gated on a TTY so piped output stays plain. (#47)
+
+### Changed
+- **CI runs on Node 24 runtimes.** GitHub Actions workflows bumped off the
+  deprecated Node 20 actions. (#36)
+
 ## [0.3.16] - 2026-06-24
 
 ### Fixed
