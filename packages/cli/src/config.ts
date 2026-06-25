@@ -20,6 +20,10 @@ export interface RelayRoomConfig {
    *  session deterministically as RR-<slug>-<part>. Cached so a re-init can keep
    *  the standard name even if the slug header is briefly unavailable. */
   projectSlug?: string
+  /** The previous `target` when init last changed it. Lets rr.sh auto-rename a
+   *  still-running session from the old name to the new one (e.g. when the naming
+   *  convention changes), so the user never recreates the session by hand. */
+  previousTarget?: string
   machineLabel?: string
   /** The coding CLI(s) to relaunch in the tmux session (e.g. "claude" or
    *  "claude,codex"); used by rr.sh. The first is launched in the session. */

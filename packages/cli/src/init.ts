@@ -1,4 +1,5 @@
 import { chmodSync, existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import { execFileSync } from "node:child_process"
 import { join, resolve } from "node:path"
 import { DEFAULT_SERVER } from "./constants"
 import { RELAYROOM_DIR, writeConfig, readConfig } from "./config"
@@ -81,9 +82,10 @@ CONF="$ROOT/.relayroom/config.json"
 [ -f "$CONF" ] || { echo "no .relayroom/config.json here - run 'relayroom init' first"; exit 1; }
 
 # Load all config fields in ONE node call (statusline runs every few seconds, so
-# avoid 6 separate spawns). Fields are slug/url/hex - none contain '|'.
-_C="$(node -e 'var c=require(process.argv[1]);process.stdout.write([c.code,c.part,c.server,c.target,c.agent,c.token].map(function(x){return String(x||"")}).join("|"))' "$CONF" 2>/dev/null || true)"
-IFS='|' read -r CODE PART SERVER SESSION AGENT TOKEN <<< "$_C"
+# avoid 6 separate spawns). Fields are slug/url/hex - none contain '|'. PREV is the
+# previous session name (if init just renamed it) so up can migrate a live session.
+_C="$(node -e 'var c=require(process.argv[1]);process.stdout.write([c.code,c.part,c.server,c.target,c.agent,c.token,c.previousTarget].map(function(x){return String(x||"")}).join("|"))' "$CONF" 2>/dev/null || true)"
+IFS='|' read -r CODE PART SERVER SESSION AGENT TOKEN PREV <<< "$_C"
 [ -n "$SERVER" ] || SERVER="http://localhost:48801"
 [ -n "$SESSION" ] || SESSION="$PART"
 PRIMARY="\${AGENT%%,*}"; [ -n "$PRIMARY" ] || PRIMARY="claude"
@@ -226,12 +228,43 @@ sl() {
 }
 
 # ── tmux ─────────────────────────────────────────────────────────────────────
-tx_exists() { tmux has-session -t "$SESSION" 2>/dev/null; }
+tx_exists() { tmux has-session -t "=$SESSION" 2>/dev/null; }
 tx_start() {
-  if tx_exists; then echo "session '$SESSION' exists - attaching"; tmux attach -t "$SESSION";
+  if tx_exists; then echo "session '$SESSION' exists - attaching"; tmux attach -t "=$SESSION";
   else prepare_launch; echo "creating session '$SESSION' running '$LAUNCH'"; tmux new-session -s "$SESSION" "$LAUNCH"; fi
 }
 tx_status() { tx_exists && echo "tmux: session '$SESSION' running" || echo "tmux: no session '$SESSION'"; }
+
+# Migrate a renamed session: if init recorded a previous name (PREV) and that old
+# session is still running while the new name is free, rename it in place. The
+# agent keeps running - only the label changes - so a naming-convention change
+# rolls out with no manual \`tmux rename-session\` and no recreating the session.
+migrate_session_name() {
+  [ -n "$PREV" ] && [ "$PREV" != "$SESSION" ] || return 0
+  if tmux has-session -t "=$PREV" 2>/dev/null && ! tx_exists; then
+    tmux rename-session -t "=$PREV" "$SESSION" 2>/dev/null && echo "renamed session: $PREV -> $SESSION"
+  fi
+}
+
+# If the hub flagged a newer CLI (the pager writes .relayroom/.update), upgrade
+# before launching so \`up\` never runs a stale rr.sh. Best-effort: a failed upgrade
+# (e.g. a global install needing sudo) prints a note and continues on the current
+# version - it never blocks the launch. On success it regenerates rr.sh and re-execs
+# it once (guarded by RR_SELF_UPDATED) so the rest of \`up\` runs the fresh script.
+self_update_if_pending() {
+  [ -f "$ROOT/.relayroom/.update" ] && [ -z "\${RR_SELF_UPDATED:-}" ] || return 0
+  echo "rr: CLI update available ($(cat "$ROOT/.relayroom/.update" 2>/dev/null)) - updating before launch..."
+  if command -v relayroom >/dev/null 2>&1; then
+    npm i -g @relayroom/cli@latest >/dev/null 2>&1 || echo "rr: could not update the global CLI (continuing on the current version)"
+  else
+    # npx path: drop the cached package so the next npx resolves the latest version.
+    for _d in "$HOME"/.npm/_npx/*/; do [ -e "$_d/node_modules/@relayroom/cli/package.json" ] && rm -rf "$_d" 2>/dev/null || true; done
+  fi
+  # Regenerate rr.sh + config from the (now-current) CLI, then re-exec the new script.
+  $CLI init --code "$CODE" --part "$PART" --server "$SERVER" --no-tmux-check >/dev/null 2>&1 || true
+  export RR_SELF_UPDATED=1
+  exec "$ROOT/rr.sh" "$@"
+}
 
 # ── per-CLI setup (mcp registration + usage hook) ─────────────────────────────
 mcp_add() {
@@ -321,7 +354,8 @@ doctor() {
 usage() {
   cat <<EOF
 RelayRoom console (part=$PART, session=$SESSION, agent=$AGENT)
-  rr.sh up [--bypass] [--new]    rebuild session + start pager + attach (after reboot)
+  rr.sh up [--bypass] [--new]    auto-update if a newer CLI is out, then rebuild
+                                 session + start pager + attach (after reboot)
   rr.sh launch [--bypass] [--new]  from INSIDE a session: set delivery + pager + run the agent
   rr.sh down                     stop pager + kill the tmux session
   rr.sh status                   show tmux + pager status
@@ -340,8 +374,13 @@ EOF
 
 case "\${1:-help}" in
   up)
+    self_update_if_pending "$@"   # auto-update first if the hub flagged a newer CLI (may re-exec)
+    migrate_session_name          # rename a still-running old-named session to the standard name
     if ! tx_exists; then prepare_launch; echo "starting session '$SESSION' running '$LAUNCH'"; tmux new-session -d -s "$SESSION" "$LAUNCH"; fi
-    pg_start; echo "attaching ('Ctrl-b d' to detach)"; tmux attach -t "$SESSION" ;;
+    pg_start; echo "attaching ('Ctrl-b d' to detach)"
+    # Inside another tmux session, \`attach\` is refused (nesting) - switch the client
+    # instead so \`up\` also works from within tmux.
+    if [ -n "\${TMUX:-}" ]; then tmux switch-client -t "=$SESSION"; else tmux attach -t "=$SESSION"; fi ;;
   # In-session launcher (you are ALREADY inside the tmux session, e.g. the connect
   # guide's paste). Decides delivery (channel vs pager), starts the pager with that
   # mode, then replaces this shell with the agent - all in the right order so channels
@@ -452,6 +491,31 @@ function assertInsideTmux(opts: InitOpts): void {
 }
 
 /**
+ * When init runs inside the agent's tmux session, rename that session to `target`
+ * (the standard RR-<slug>-<part> name) if it differs - so a naming change applies
+ * with no manual `tmux rename-session`. Best-effort: skipped when not in tmux, the
+ * name already matches, tmux is unavailable, or a session named `target` already
+ * exists (never clobber a different session).
+ */
+function alignTmuxSessionName(target: string): void {
+  if (!process.env.TMUX) return
+  try {
+    const current = execFileSync("tmux", ["display-message", "-p", "#S"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim()
+    if (!current || current === target) return
+    // A session already named `target` means renaming would collide - leave both be.
+    try {
+      execFileSync("tmux", ["has-session", "-t", `=${target}`], { stdio: "ignore" })
+      return
+    } catch { /* no such session - the name is free */ }
+    execFileSync("tmux", ["rename-session", "-t", `=${current}`, target], { stdio: "ignore" })
+    console.log(`renamed tmux session: ${current} -> ${target}`)
+  } catch { /* tmux not available - leave the session name as-is */ }
+}
+
+/**
  * Append `line` to a file if it is not already present (one line per check).
  * `create` controls whether a missing file is created. Returns what happened.
  */
@@ -537,12 +601,17 @@ export async function init(opts: InitOpts): Promise<void> {
       : saved.target ?? (part ? `relayroom-${tmuxSafe(part)}` : undefined))
   if (!opts.target && target) console.log(`tmux session / pager target: ${target}`)
 
+  // Record the prior name when the target changes so rr.sh can auto-rename a
+  // still-running session from the old name to the new one (zero manual steps).
+  const previousTarget = saved.target && target && saved.target !== target ? saved.target : undefined
+
   // Write the machine-local connection identity so the pager, usage hook, and a
   // compacted agent can recover it without re-passing flags. gitignore it.
   const configFile = writeConfig(dir, {
     code,
     part,
     target,
+    previousTarget,
     projectSlug,
     server,
     agent: opts.agent,
@@ -552,6 +621,13 @@ export async function init(opts: InitOpts): Promise<void> {
   if (ensureLine(join(dir, ".gitignore"), `${RELAYROOM_DIR}/`, { create: true }) === "added") {
     console.log(`gitignored ${RELAYROOM_DIR}/`)
   }
+
+  // If init is running inside the agent's own tmux session and its name doesn't
+  // match the standard target, rename it in place so the convention applies
+  // without recreating the session. Best-effort: no tmux, or a name clash with an
+  // existing target session, is silently skipped (rr.sh's migrate step is the
+  // from-outside equivalent).
+  if (target) alignTmuxSessionName(target)
 
   // rr.sh control console: one entry point for tmux + pager + per-CLI setup, so a
   // reboot is just `./rr.sh up`. Lives at the worktree ROOT next to RELAYROOM.md
