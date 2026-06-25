@@ -4,6 +4,25 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.3.19] - 2026-06-25
+
+### Added
+- **`./rr.sh up` auto-updates the CLI before launching.** When the hub flags a
+  newer version (the `↑` status marker), `up` upgrades first - `npm i -g` for a
+  global install, or refreshing the npx cache - then regenerates rr.sh and
+  re-execs it before starting the session. Best-effort: a failed upgrade (e.g.
+  one needing sudo) prints a note and continues on the current version, never
+  blocking the launch. (#54)
+- **Renamed sessions migrate automatically.** init records the prior session name,
+  and `up` renames a still-running old-named session to the standard
+  `RR-<slug>-<part>` in place (the agent keeps running). Running init inside a
+  session (e.g. `update --self`) renames it directly. No manual
+  `tmux rename-session`, no session recreation. (#54)
+
+### Changed
+- **`./rr.sh up` works from inside tmux too**, switching the client instead of a
+  nested `attach`. (#54)
+
 ## [0.3.18] - 2026-06-25
 
 ### Added
