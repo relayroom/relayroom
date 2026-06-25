@@ -377,7 +377,11 @@ case "\${1:-help}" in
     self_update_if_pending "$@"   # auto-update first if the hub flagged a newer CLI (may re-exec)
     migrate_session_name          # rename a still-running old-named session to the standard name
     if ! tx_exists; then prepare_launch; echo "starting session '$SESSION' running '$LAUNCH'"; tmux new-session -d -s "$SESSION" "$LAUNCH"; fi
-    pg_start; echo "attaching ('Ctrl-b d' to detach)"
+    # RESTART the pager (not just start): a pager left over from a previous session
+    # has the OLD target baked in (it reads config.json once at startup and has no
+    # --target), so a bare pg_start would no-op on the stale pager and the new
+    # session would get no status color / wake delivery. Stop + start re-reads config.
+    pg_stop >/dev/null 2>&1 || true; pg_start; echo "attaching ('Ctrl-b d' to detach)"
     # Inside another tmux session, \`attach\` is refused (nesting) - switch the client
     # instead so \`up\` also works from within tmux.
     if [ -n "\${TMUX:-}" ]; then tmux switch-client -t "=$SESSION"; else tmux attach -t "=$SESSION"; fi ;;
