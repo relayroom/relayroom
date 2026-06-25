@@ -184,7 +184,9 @@
     "usageCost": "비용",
     "usageModel": "모델",
     "sectionDetail": "상세 데이터",
-    "sectionProgress": "이벤트 진행내역"
+    "sectionProgress": "이벤트 진행내역",
+    "prompt": "질문",
+    "answer": "답변"
   },
   "agents": {
     "pageTitle": "에이전트",
