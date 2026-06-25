@@ -148,6 +148,31 @@ export default async function EventDetailPage({ params }: Props) {
         </div>
       </div>
 
+      {/* Readable exchange: the prompt that opened the turn + the agent's answer
+          (usage hook captures both into detail.title / detail.summary). */}
+      {(() => {
+        const d = (event.detail ?? {}) as Record<string, unknown>
+        const prompt = typeof d.title === "string" && d.title.trim() ? d.title : null
+        const answer = typeof d.summary === "string" && d.summary.trim() ? d.summary : null
+        if (!prompt && !answer) return null
+        return (
+          <div className="space-y-3 rounded-lg border border-border bg-card p-4">
+            {prompt && (
+              <div className="space-y-1">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t("eventDetail.prompt")}</p>
+                <p className="whitespace-pre-wrap break-words text-sm">{prompt}</p>
+              </div>
+            )}
+            {answer && (
+              <div className="space-y-1">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t("eventDetail.answer")}</p>
+                <p className="whitespace-pre-wrap break-words text-sm text-foreground/90">{answer}</p>
+              </div>
+            )}
+          </div>
+        )
+      })()}
+
       {/* Detail JSON */}
       <div className="rounded-lg border border-border bg-card p-4 space-y-3">
         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{t("eventDetail.sectionDetail")}</p>

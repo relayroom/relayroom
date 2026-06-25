@@ -184,7 +184,9 @@
     "usageCost": "Cost",
     "usageModel": "Model",
     "sectionDetail": "Detail data",
-    "sectionProgress": "Event progress"
+    "sectionProgress": "Event progress",
+    "prompt": "Prompt",
+    "answer": "Answer"
   },
   "agents": {
     "pageTitle": "Agents",

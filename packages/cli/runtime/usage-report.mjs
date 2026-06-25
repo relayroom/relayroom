@@ -75,9 +75,22 @@ function claudeUserText(row) {
   return ""
 }
 
+// Assistant TEXT blocks only (skip tool_use/tool_result) - the readable answer.
+function claudeAssistantText(row) {
+  const c = row?.message?.content
+  if (typeof c === "string") return c
+  if (Array.isArray(c)) {
+    return c
+      .filter((p) => typeof p === "string" || p?.type === "text")
+      .map((p) => (typeof p === "string" ? p : p?.text ?? ""))
+      .join(" ")
+  }
+  return ""
+}
+
 function parseClaude(transcriptPath) {
   const lines = readFileSync(transcriptPath, "utf8").split("\n").filter(Boolean)
-  let inTok = 0, outTok = 0, cacheTok = 0, model, title, startedAt, endedAt
+  let inTok = 0, outTok = 0, cacheTok = 0, model, title, summary, startedAt, endedAt
   for (let i = lines.length - 1; i >= 0; i--) {
     let row
     try { row = JSON.parse(lines[i]) } catch { continue }
@@ -88,16 +101,24 @@ function parseClaude(transcriptPath) {
       if (row.timestamp) startedAt = row.timestamp
       break // turn boundary
     }
-    if (row.type === "assistant" && row.message?.usage) {
-      const u = row.message.usage
-      inTok += u.input_tokens ?? 0
-      outTok += u.output_tokens ?? 0
-      cacheTok += (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0)
-      model ??= row.message.model
-      if (!endedAt && row.timestamp) endedAt = row.timestamp // latest assistant
+    if (row.type === "assistant") {
+      const u = row.message?.usage
+      if (u) {
+        inTok += u.input_tokens ?? 0
+        outTok += u.output_tokens ?? 0
+        cacheTok += (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0)
+        model ??= row.message.model
+        if (!endedAt && row.timestamp) endedAt = row.timestamp // latest assistant
+      }
+      // The LAST assistant text block of the turn = the answer (first one we hit
+      // going backwards). Skips tool_use-only messages until it finds real text.
+      if (!summary) {
+        const at = claudeAssistantText(row).replace(/\s+/g, " ").trim()
+        if (at) summary = at.slice(0, 500)
+      }
     }
   }
-  return { inTok, outTok, cacheTok, model, title, startedAt, endedAt }
+  return { inTok, outTok, cacheTok, model, title, summary, startedAt, endedAt }
 }
 
 // ── Codex: rollout JSONL with `token_count` events; use the last turn's delta ──
@@ -195,7 +216,7 @@ async function main() {
   dbg({ stage: "parsed", agent: AGENT, parsed: parsed ?? null })
   if (!parsed) return
 
-  const { inTok, outTok, cacheTok, model, title, startedAt, endedAt } = parsed
+  const { inTok, outTok, cacheTok, model, title, summary, startedAt, endedAt } = parsed
   if (inTok + outTok + cacheTok <= 0) { dbg({ stage: "zero-usage", agent: AGENT }); return } // nothing to report
 
   let cost
@@ -207,7 +228,9 @@ async function main() {
   if (cost != null) usage.cost_usd = cost
 
   const body = { part: PART, type: "complete", usage }
-  if (title) body.detail = { title }
+  // title = the prompt that opened the turn; summary = the agent's answer. Both let
+  // the dashboard event show the full exchange, not just "a turn happened".
+  if (title || summary) body.detail = { ...(title ? { title } : {}), ...(summary ? { summary } : {}) }
   if (startedAt) body.startedAt = startedAt
   if (endedAt) body.endedAt = endedAt
 
