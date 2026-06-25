@@ -385,7 +385,10 @@ case "\${1:-help}" in
       --self)
         # Also regenerate rr.sh itself via the installed CLI. To get a newer rr.sh,
         # update the CLI on npm first (the \`↑<ver>\` status marker shows when one is out).
-        $CLI init --code "$CODE" --part "$PART" --server "$SERVER" ;;
+        # --no-tmux-check: regenerating rr.sh is maintenance, not launching the agent,
+        # so it must work from anywhere (you usually update AFTER exiting tmux). The
+        # tmux guard only matters for first-time \`relayroom init\`, which keeps it.
+        $CLI init --code "$CODE" --part "$PART" --server "$SERVER" --no-tmux-check ;;
       *)
         # Re-pull just RELAYROOM.md from the hub - no npm needed (the CLI updates via
         # npm). The running agent caches the old copy, so re-read it afterwards.
