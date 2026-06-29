@@ -1,7 +1,7 @@
 import "server-only"
 
 // Baked at image build (Dockerfile ARG RELAYROOM_VERSION). Falls back for local dev.
-export const CURRENT_VERSION = process.env.RELAYROOM_VERSION ?? "0.3.20"
+export const CURRENT_VERSION = process.env.RELAYROOM_VERSION ?? "0.3.21"
 
 export interface VersionInfo {
   current: string
