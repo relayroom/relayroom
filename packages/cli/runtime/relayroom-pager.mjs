@@ -193,11 +193,10 @@ async function agentPresent() {
   // defers its wakes forever. The agent is present iff the pane's process subtree
   // holds any non-shell process.
   const comms = await psDescendantComms(pid.out.trim())
-  if (comms === null) {
-    // ps unavailable: fall back to the foreground-command check (fail toward delivery).
-    const fg = await tmuxCapture(["display-message", "-p", "-t", TARGET, "#{pane_current_command}"])
-    return !fg.ok || !SHELL_COMMANDS.has(fg.out.trim())
-  }
+  // ps unavailable: we cannot inspect the subtree, so fail OPEN (deliver). Falling
+  // back to the pane_current_command check would re-introduce the very bug this
+  // fixes - a shell-wrapped agent looks like a bare shell.
+  if (comms === null) return true
   return comms.some((c) => c && !SHELL_COMMANDS.has(basename(c)))
 }
 
