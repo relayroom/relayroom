@@ -282,7 +282,7 @@ mcp_add() {
     # in (preserving any other servers). Token via env so it never lands in shell
     # history. This is a GLOBAL file - like codex, all agy worktrees share this entry,
     # so per-worktree part identity is not possible here.
-    RELAYROOM_TOKEN="$TOKEN" node -e 'const fs=require("fs"),os=require("os"),path=require("path");if(!process.env.RELAYROOM_TOKEN){console.error("agy MCP: RELAYROOM_TOKEN not set");process.exit(1)}const p=path.join(os.homedir(),".gemini","config","mcp_config.json");fs.mkdirSync(path.dirname(p),{recursive:true});let c={};try{c=JSON.parse(fs.readFileSync(p,"utf8")||"{}")}catch(e){}c.mcpServers=c.mcpServers||{};c.mcpServers.relayroom={httpEndpoint:process.argv[1],headers:{Authorization:"Bearer "+process.env.RELAYROOM_TOKEN}};fs.writeFileSync(p,JSON.stringify(c,null,2))' "$URL"
+    RELAYROOM_TOKEN="$TOKEN" node -e 'const fs=require("fs"),os=require("os"),path=require("path");if(!process.env.RELAYROOM_TOKEN){console.error("agy MCP: RELAYROOM_TOKEN not set");process.exit(1)}const p=path.join(os.homedir(),".gemini","config","mcp_config.json");fs.mkdirSync(path.dirname(p),{recursive:true});let c={};try{c=JSON.parse(fs.readFileSync(p,"utf8")||"{}")}catch(e){}c.mcpServers=c.mcpServers||{};c.mcpServers.relayroom={url:process.argv[1],headers:{Authorization:"Bearer "+process.env.RELAYROOM_TOKEN}};fs.writeFileSync(p,JSON.stringify(c,null,2))' "$URL"
   else
     # Claude defaults to LOCAL scope, which it keys to the git REPO ROOT - so every
     # worktree shares one entry and they all post as the same part. Register in

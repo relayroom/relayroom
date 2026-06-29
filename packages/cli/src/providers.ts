@@ -38,10 +38,12 @@ export function isAgentId(v: string): v is AgentId {
  * argv[1] = server URL and argv[2] = server name. Deliberately avoids template
  * literals / backticks so it embeds cleanly in the rr.sh shell template too.
  *
- * Uses `httpEndpoint` (NOT `serverUrl`): the relayroom MCP is Streamable HTTP, and
- * agy's only HTTP MCP connector is StreamableHTTPConnector, which keys off
- * `http_endpoint`. `serverUrl` matches no connector (agy has no legacy SSE one), so
- * the server hangs at "initializing" forever.
+ * Uses `url` - the field agy's StreamableHTTP connector reads (its "no connector can
+ * handle spec" error reports `url=`). `httpEndpoint` matches no agy connector. The
+ * "initializing..." hang agy showed was NOT this field (both `url` and the older
+ * `serverUrl` match a connector) - it was the stateless MCP endpoint holding a GET
+ * (the server->client SSE stream) open instead of 405ing it; agy opens that GET
+ * during init. That is fixed server-side in apps/server/src/routes/mcp.ts.
  */
 export const AGY_MCP_MERGE_SCRIPT =
   'const fs=require("fs"),os=require("os"),path=require("path");' +
@@ -52,7 +54,7 @@ export const AGY_MCP_MERGE_SCRIPT =
   'fs.mkdirSync(path.dirname(p),{recursive:true});' +
   'let c={};try{c=JSON.parse(fs.readFileSync(p,"utf8")||"{}")}catch(e){}' +
   'c.mcpServers=c.mcpServers||{};' +
-  'c.mcpServers[process.argv[2]]={httpEndpoint:process.argv[1],headers:{Authorization:"Bearer "+(process.env.RELAYROOM_TOKEN||"")}};' +
+  'c.mcpServers[process.argv[2]]={url:process.argv[1],headers:{Authorization:"Bearer "+(process.env.RELAYROOM_TOKEN||"")}};' +
   'fs.writeFileSync(p,JSON.stringify(c,null,2));' +
   'console.error("registered "+process.argv[2]+" in "+p)'
 

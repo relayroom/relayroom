@@ -1597,6 +1597,18 @@ export function createMcpRoute(db: Db, bus: Bus) {
     const connectCode = c.req.param('connectCode')
     const serverBase = getServerBase()
 
+    // This MCP endpoint is STATELESS (sessionIdGenerator: undefined): the only
+    // supported method is POST (request -> response). A GET opens the server->client
+    // SSE stream, which a stateless transport holds open with no data - and the
+    // handler below buffers the body via `.text()`, so a GET hangs forever. Some
+    // clients (e.g. Antigravity CLI / agy) open that GET during initialization and
+    // then wait on it, stalling at "initializing...". RelayRoom delivers wakes via
+    // the pager / Claude Channels, not the MCP server->client stream, so reject every
+    // non-POST method with 405 (spec-compliant: the server may decline GET/DELETE).
+    if (c.req.method !== 'POST') {
+      return c.text('Method Not Allowed', 405, { Allow: 'POST' })
+    }
+
     // Extract bearer token — auth is ALWAYS required on /mcp
     const authHeader = c.req.header('Authorization') ?? ''
     const tokenMatch = /^Bearer (.+)$/i.exec(authHeader)
