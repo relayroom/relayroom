@@ -4,6 +4,31 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.3.21] - 2026-06-29
+
+### Fixed
+- **Codex agents now run autonomously instead of prompting for every command.**
+  Codex has no per-project approval setting and its `--dangerously-bypass` flag does
+  not apply reliably through `codex resume`, so codex worktrees kept prompting for
+  approval on shell commands and MCP tools - there is no human at a RelayRoom agent's
+  console to answer. `rr.sh` now launches codex under a scoped `relayroom` profile
+  (`~/.codex/relayroom.config.toml`: `approval_policy = "never"`,
+  `sandbox_mode = "danger-full-access"`), written idempotently before launch so
+  `codex --profile relayroom` always resolves. Scoped to codex; plain `codex` in
+  other projects keeps its normal approval behavior. (#59)
+- **Codex now actually connects to the RelayRoom MCP server.** Codex reads its MCP
+  bearer from `$RELAYROOM_TOKEN` at runtime (it has no static-token option for
+  Streamable HTTP), but tmux does not propagate the variable into a freshly created
+  pane, so codex started with an empty `Bearer`, the server returned 401, and codex
+  silently dropped the relayroom server - leaving the session with no inbox/reply
+  tools (the cause of codex never answering threads). `rr.sh` now inlines a
+  quote-safe `RELAYROOM_TOKEN` export into the codex launch command. (#59)
+- **agy's MCP connection no longer hangs on "initializing".** The stateless
+  Streamable HTTP MCP endpoint held an open GET (the server-to-client SSE stream)
+  that agy and codex open during init, stalling startup. The endpoint now returns
+  `405 Method Not Allowed` (with `Allow: POST`) for non-POST requests, and agy's MCP
+  registration writes the `url` field its Streamable HTTP connector reads. (#59)
+
 ## [0.3.20] - 2026-06-25
 
 ### Fixed
