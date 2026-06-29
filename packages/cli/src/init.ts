@@ -189,7 +189,35 @@ RRPROFILE
 
 # ── pager ────────────────────────────────────────────────────────────────────
 pg_running() { [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; }
+# Reap stray pagers for THIS worktree (cwd == ROOT) that the PIDFILE no longer tracks.
+# Orphans accumulate across restarts/crashes: each keeps its SSE subscription and claims
+# the part's wake lease, delivering nudges into a dead pane - so the LIVE pager gets
+# "no active wake" and the agent only re-wakes on the ~30s heartbeat sweep (it feels
+# slow/stuck). Match by cwd so a pager in another worktree is never touched. Best-effort:
+# needs pgrep + lsof; degrades to PIDFILE-only behavior when either is missing.
+pg_reap_strays() {
+  command -v lsof >/dev/null 2>&1 && command -v pgrep >/dev/null 2>&1 || return 0
+  # lsof reports the PHYSICAL cwd (symlinks resolved), so compare against ROOT resolved
+  # the same way - else a worktree under a symlinked path never matches and nothing reaps.
+  local keep="\${1:-0}" pid cmd cwd root_p
+  root_p="$(cd "$ROOT" 2>/dev/null && pwd -P)" || root_p="$ROOT"
+  for pid in $(pgrep -f "relayroom.*pager" 2>/dev/null); do
+    [ "$pid" = "$keep" ] && continue
+    # Only an actual pager: its command ENDS with the \`pager\` subcommand. Excludes the
+    # agent (codex/claude/agy - argv contains "relayroom" but no trailing "pager") and any
+    # short-lived \`rr.sh pager <sub>\` call. The \`|| cmd=\`/\`|| cwd=\` fallbacks keep a
+    # racing ps/lsof failure (pid vanished mid-loop) from aborting pg_start under set -e.
+    cmd="$(ps -o command= -p "$pid" 2>/dev/null)" || cmd=""
+    case "$cmd" in *" pager") ;; *) continue ;; esac
+    cwd="$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p')" || cwd=""
+    [ "$cwd" = "$root_p" ] && kill "$pid" 2>/dev/null && echo "reaped stray pager (pid $pid)"
+  done
+  return 0   # never let a non-matching last iteration fail pg_start under set -e
+}
 pg_start() {
+  # Kill untracked strays for this worktree first (keep the PIDFILE pid if still alive),
+  # so re-launching can never leave two pagers racing for the same part's wake lease.
+  pg_reap_strays "$(cat "$PIDFILE" 2>/dev/null || echo 0)"
   if pg_running; then echo "pager already running (pid $(cat "$PIDFILE"))"; return 0; fi
   nohup $CLI pager >"$LOG" 2>&1 &
   echo $! > "$PIDFILE"; echo "pager started (pid $!) -> $LOG"
