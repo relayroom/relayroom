@@ -28,7 +28,7 @@
 import { execFile } from "node:child_process"
 import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs"
 import { hostname } from "node:os"
-import { join } from "node:path"
+import { basename, join } from "node:path"
 
 // ── Args ────────────────────────────────────────────────────────────────────
 function arg(name, fallback) {
@@ -150,10 +150,54 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 // these, the agent (claude/codex/gemini) has EXITED. Typing a wake into a shell
 // just spams it (and errors), so we skip the nudge until the agent is back.
 const SHELL_COMMANDS = new Set(["zsh", "bash", "sh", "fish", "tcsh", "dash", "ksh", "-zsh", "-bash", "-sh"])
+
+// Command names of every descendant process of `rootPid` (best-effort, null if ps
+// is unavailable). `comm` may be a full path on macOS, so callers basename() it.
+function psDescendantComms(rootPid) {
+  return new Promise((resolve) => {
+    execFile("ps", ["-axo", "pid=,ppid=,comm="], { timeout: TMUX_TIMEOUT_MS }, (err, stdout) => {
+      if (err || !stdout) { resolve(null); return }
+      const kids = new Map()   // ppid -> [pid]
+      const comm = new Map()   // pid -> command
+      for (const line of stdout.split("\n")) {
+        const m = line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/)
+        if (!m) continue
+        comm.set(m[1], m[3].trim())
+        const arr = kids.get(m[2]) ?? []
+        arr.push(m[1]); kids.set(m[2], arr)
+      }
+      const out = []
+      const seen = new Set()
+      const stack = [String(rootPid)]
+      while (stack.length) {
+        const p = stack.pop()
+        for (const c of kids.get(p) ?? []) {
+          if (seen.has(c)) continue
+          seen.add(c)
+          out.push(comm.get(c) ?? "")
+          stack.push(c)
+        }
+      }
+      resolve(out)
+    })
+  })
+}
+
 async function agentPresent() {
-  const { ok, out } = await tmuxCapture(["display-message", "-p", "-t", TARGET, "#{pane_current_command}"])
-  if (!ok) return true // can't tell (session/tmux issue) - don't block on uncertainty
-  return !SHELL_COMMANDS.has(out.trim())
+  const pid = await tmuxCapture(["display-message", "-p", "-t", TARGET, "#{pane_pid}"])
+  if (!pid.ok || !pid.out.trim()) return true // can't tell - don't block on uncertainty
+  // The default `up` launches the agent as `sh -c "<resume> || <fresh>"`, so the
+  // pane's FOREGROUND command is a shell while the real agent (claude/codex/agy and
+  // its node MCP children) runs as a DESCENDANT. Checking only pane_current_command
+  // falsely reports "agent exited" for every resume-launched send-keys agent and
+  // defers its wakes forever. The agent is present iff the pane's process subtree
+  // holds any non-shell process.
+  const comms = await psDescendantComms(pid.out.trim())
+  // ps unavailable: we cannot inspect the subtree, so fail OPEN (deliver). Falling
+  // back to the pane_current_command check would re-introduce the very bug this
+  // fixes - a shell-wrapped agent looks like a bare shell.
+  if (comms === null) return true
+  return comms.some((c) => c && !SHELL_COMMANDS.has(basename(c)))
 }
 
 // Defer-until-quiet: inject only when the pane is quiet, so a nudge never lands in
