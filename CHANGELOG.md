@@ -4,6 +4,20 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.3.22] - 2026-06-29
+
+### Fixed
+- **Pagers no longer pile up and steal each other's wakes.** `pg_start` only tracked
+  the pid in `.relayroom/pager.pid`, so a pager orphaned by a restart or crash kept
+  running. Each orphan still holds its SSE subscription and claims the part's wake
+  lease, then delivers the nudge into a dead pane - so the live pager's claim returns
+  "no active wake" and the agent only re-wakes on the ~30s heartbeat sweep (it felt
+  slow or stuck, while a part with a single healthy pager answered instantly). `up`
+  now reaps every pager whose working directory is this worktree (keeping the tracked
+  pid if it is still alive) before starting one, guaranteeing exactly one pager per
+  part. Matched by cwd + an exact `pager` command tail so a pager in another worktree,
+  the agent itself, and `rr.sh pager <sub>` calls are never touched. (#60)
+
 ## [0.3.21] - 2026-06-29
 
 ### Fixed
