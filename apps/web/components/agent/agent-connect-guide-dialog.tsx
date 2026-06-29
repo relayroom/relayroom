@@ -52,7 +52,7 @@ function mcpAddCommand(agent: AgentId, name: string, url: string, token: string)
       'fs.mkdirSync(path.dirname(p),{recursive:true});' +
       'let c={};try{c=JSON.parse(fs.readFileSync(p,"utf8")||"{}")}catch(e){}' +
       'c.mcpServers=c.mcpServers||{};' +
-      'c.mcpServers[process.argv[2]]={serverUrl:process.argv[1],headers:{Authorization:"Bearer "+(process.env.RELAYROOM_TOKEN||"")}};' +
+      'c.mcpServers[process.argv[2]]={httpEndpoint:process.argv[1],headers:{Authorization:"Bearer "+(process.env.RELAYROOM_TOKEN||"")}};' +
       'fs.writeFileSync(p,JSON.stringify(c,null,2))'
     return `RELAYROOM_TOKEN="${token}" node -e '${merge}' "${url}" ${name}`
   }

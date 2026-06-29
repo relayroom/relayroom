@@ -37,6 +37,11 @@ export function isAgentId(v: string): v is AgentId {
  * `$RELAYROOM_TOKEN` (kept out of argv so it never lands in shell history). It takes
  * argv[1] = server URL and argv[2] = server name. Deliberately avoids template
  * literals / backticks so it embeds cleanly in the rr.sh shell template too.
+ *
+ * Uses `httpEndpoint` (NOT `serverUrl`): the relayroom MCP is Streamable HTTP, and
+ * agy's only HTTP MCP connector is StreamableHTTPConnector, which keys off
+ * `http_endpoint`. `serverUrl` matches no connector (agy has no legacy SSE one), so
+ * the server hangs at "initializing" forever.
  */
 export const AGY_MCP_MERGE_SCRIPT =
   'const fs=require("fs"),os=require("os"),path=require("path");' +
@@ -47,7 +52,7 @@ export const AGY_MCP_MERGE_SCRIPT =
   'fs.mkdirSync(path.dirname(p),{recursive:true});' +
   'let c={};try{c=JSON.parse(fs.readFileSync(p,"utf8")||"{}")}catch(e){}' +
   'c.mcpServers=c.mcpServers||{};' +
-  'c.mcpServers[process.argv[2]]={serverUrl:process.argv[1],headers:{Authorization:"Bearer "+(process.env.RELAYROOM_TOKEN||"")}};' +
+  'c.mcpServers[process.argv[2]]={httpEndpoint:process.argv[1],headers:{Authorization:"Bearer "+(process.env.RELAYROOM_TOKEN||"")}};' +
   'fs.writeFileSync(p,JSON.stringify(c,null,2));' +
   'console.error("registered "+process.argv[2]+" in "+p)'
 
