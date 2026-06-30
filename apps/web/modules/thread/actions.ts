@@ -19,7 +19,7 @@ import { db } from "@/modules/drizzle/db"
 import { publishMessageWakes, HUMAN_PART } from "@/lib/realtime/publish"
 import { threads, messages, messageRecipients, projects, agents } from "@relayroom/db/schema"
 import { better_auth_member } from "@relayroom/db/auth-schema"
-import { getServerSession } from "@/lib/auth-session"
+import { getServerSession, isBannedFromProject } from "@/lib/auth-session"
 import { resolveActiveOrgId } from "@/lib/active-org"
 import { getErrorTranslations } from "@/lib/action-i18n"
 
@@ -117,6 +117,12 @@ export async function postMessage(
     if (!threadCheck.ok) return { result: false, message: threadCheck.message }
 
     const thread = threadCheck.thread
+
+    // Ban gate: a member banned from this project cannot post (mirror of the agent-bus
+    // gate). Without this the ban is cosmetic for anyone using the dashboard.
+    if (await isBannedFromProject(thread.projectId, session.user.id)) {
+      return { result: false, message: t("project.banned") }
+    }
 
     // Prevent posting to closed/canceled threads
     if (thread.status === "closed" || thread.status === "canceled") {
@@ -229,6 +235,11 @@ export async function createThread(
       .limit(1)
     if (!project) return { result: false, message: t("thread.notFound") }
 
+    // Ban gate: a member banned from this project cannot open threads / wake agents.
+    if (await isBannedFromProject(projectId, session.user.id)) {
+      return { result: false, message: t("project.banned") }
+    }
+
     // Verify recipients belong to the project (security) and resolve their parts.
     const validAgents = await db
       .select({ id: agents.id, part: agents.part })
@@ -284,7 +295,7 @@ export async function closeThread(input: CloseThreadInput): Promise<ApiResult> {
   try {
     const access = await requireOrgAccess()
     if (!access.ok) return { result: false, message: access.message }
-    const { orgId } = access
+    const { session, orgId } = access
 
     const parsed = closeThreadSchema.safeParse(input)
     if (!parsed.success) {
@@ -292,6 +303,13 @@ export async function closeThread(input: CloseThreadInput): Promise<ApiResult> {
     }
 
     const { threadId, status } = parsed.data
+
+    // Resolve the thread (IDOR guard) + ban gate before mutating.
+    const threadCheck = await requireThreadInOrg(threadId, orgId)
+    if (!threadCheck.ok) return { result: false, message: threadCheck.message }
+    if (await isBannedFromProject(threadCheck.thread.projectId, session.user.id)) {
+      return { result: false, message: t("project.banned") }
+    }
 
     // IDOR guard: join threads -> projects -> org check
     const [row] = await db
@@ -337,7 +355,7 @@ export async function addTags(input: AddTagsInput): Promise<ApiResult> {
   try {
     const access = await requireOrgAccess()
     if (!access.ok) return { result: false, message: access.message }
-    const { orgId } = access
+    const { session, orgId } = access
 
     const parsed = addTagsSchema.safeParse(input)
     if (!parsed.success) {
@@ -349,6 +367,9 @@ export async function addTags(input: AddTagsInput): Promise<ApiResult> {
     // IDOR guard: verify thread in org
     const threadCheck = await requireThreadInOrg(threadId, orgId)
     if (!threadCheck.ok) return { result: false, message: threadCheck.message }
+    if (await isBannedFromProject(threadCheck.thread.projectId, session.user.id)) {
+      return { result: false, message: t("project.banned") }
+    }
 
     // Merge new tags with existing, deduplicate
     // Merge atomically in ONE update (union + dedup in SQL), not read-modify-write:
@@ -385,7 +406,7 @@ export async function dismissAttention(
   try {
     const access = await requireOrgAccess()
     if (!access.ok) return { result: false, message: access.message }
-    const { orgId } = access
+    const { session, orgId } = access
 
     const parsed = dismissAttentionSchema.safeParse(input)
     if (!parsed.success) {
@@ -397,6 +418,9 @@ export async function dismissAttention(
     // IDOR guard: verify thread in org
     const threadCheck = await requireThreadInOrg(threadId, orgId)
     if (!threadCheck.ok) return { result: false, message: threadCheck.message }
+    if (await isBannedFromProject(threadCheck.thread.projectId, session.user.id)) {
+      return { result: false, message: t("project.banned") }
+    }
 
     await db
       .update(threads)

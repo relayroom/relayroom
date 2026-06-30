@@ -22,6 +22,7 @@
   },
   "project": {
     "notFound": "This project does not exist or you do not have access to it.",
+    "banned": "You are banned from this project.",
     "slugTaken": "The slug \"{slug}\" is already in use.",
     "createFailed": "We could not create the project.",
     "updateFailed": "We could not update the project.",
