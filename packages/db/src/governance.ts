@@ -98,12 +98,26 @@ export async function applyBan(db: GovDb, opts: ApplyBanOpts): Promise<ApplyBanR
 
   await db.transaction(async tx => {
     for (const pid of targetProjects) {
-      // (1) bannedAt toggle - reversible, NEVER a hard delete. Skips members with
-      // no project_access row (org member who never joined this project).
+      // (1) bannedAt toggle - reversible, NEVER a hard delete. UPSERT (not a bare
+      // UPDATE): a member who reached this project purely via ORG membership has no
+      // project_access row, and the bannedAt gate in mcp.ts resolveConnection keys
+      // off project_access.bannedAt - so a plain UPDATE would touch 0 rows and the ban
+      // would be SILENTLY ineffective on the agent bus for that member. Insert a banned
+      // row at the lowest level (readonly); bannedAt is the authoritative gate, not level.
       await tx
-        .update(projectAccess)
-        .set({ bannedAt: sql`now()`, bannedByUserId: opts.bannedByUserId })
-        .where(and(eq(projectAccess.projectId, pid), eq(projectAccess.userId, opts.userId)))
+        .insert(projectAccess)
+        .values({
+          projectId: pid,
+          userId: opts.userId,
+          level: 'readonly',
+          bannedAt: sql`now()`,
+          bannedByUserId: opts.bannedByUserId,
+          createdByUserId: opts.bannedByUserId,
+        })
+        .onConflictDoUpdate({
+          target: [projectAccess.projectId, projectAccess.userId],
+          set: { bannedAt: sql`now()`, bannedByUserId: opts.bannedByUserId },
+        })
 
       // (2) find this member's agents in the project.
       const memberAgents = await tx

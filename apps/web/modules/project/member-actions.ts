@@ -67,6 +67,17 @@ export async function requireProjectManage(
     .limit(1)
   if (!row) return { ok: false, message: t("project.notFound") }
 
+  // A member banned from THIS project loses ALL management authority, even if they
+  // still hold an 'owner' project_access row or an org owner/admin role - otherwise a
+  // banned owner could call unbanProjectMember on themselves and re-take the project
+  // (governance takeover). They must be unbanned by another manager first.
+  const [selfPa] = await db
+    .select({ bannedAt: projectAccess.bannedAt })
+    .from(projectAccess)
+    .where(and(eq(projectAccess.projectId, projectId), eq(projectAccess.userId, session.user.id)))
+    .limit(1)
+  if (selfPa?.bannedAt) return { ok: false, message: t("member.manageDenied") }
+
   // Org owners/admins manage any project; otherwise the caller must be a
   // project owner. Read/write members cannot change who has access.
   let canManage = role === "owner" || role === "admin"
@@ -93,12 +104,17 @@ async function memberLevel(projectId: string, userId: string): Promise<string | 
   return pa?.level ?? null
 }
 
-/** Number of owners on a project (a project must always keep at least one). */
+/**
+ * Number of EFFECTIVE owners on a project (a project must always keep at least one).
+ * Banned owners are excluded: a banned member is not an effective owner, so they must
+ * not satisfy last-owner protection (which would let the remaining real owner be
+ * demoted/banned/removed and orphan the project).
+ */
 async function ownerCount(projectId: string): Promise<number> {
   const [row] = await db
     .select({ n: count() })
     .from(projectAccess)
-    .where(and(eq(projectAccess.projectId, projectId), eq(projectAccess.level, "owner")))
+    .where(and(eq(projectAccess.projectId, projectId), eq(projectAccess.level, "owner"), isNull(projectAccess.bannedAt)))
   return Number(row?.n ?? 0)
 }
 
