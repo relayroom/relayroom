@@ -29,6 +29,10 @@ import { execFile } from "node:child_process"
 import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs"
 import { hostname } from "node:os"
 import { basename, join } from "node:path"
+// Nudge text builder + keystroke sanitizer live in a side-effect-free module so they
+// are unit-testable and so peer/server-controlled subject/fromPart can never carry a
+// control byte (e.g. \r => Enter) into `tmux send-keys -l`. See pager-text.mjs.
+import { buildText } from "./pager-text.mjs"
 
 // ── Args ────────────────────────────────────────────────────────────────────
 function arg(name, fallback) {
@@ -351,22 +355,8 @@ function leaseDecision(lease) {
   return { go: true, wakeId: lease.wakeId }
 }
 
-// Wording matters: telling the agent to "reply" makes it answer every message
-// (incl. acks), which wakes the sender back -> an endless ack-of-ack loop that
-// burns tokens. Instead: read, reply ONLY if an answer is needed, and `ack`
-// when handled. Empty subject/sender are omitted (no ugly ""/? ).
-function buildText(batch, wakeId) {
-  const guidance = `Use the RelayRoom \`inbox\` MCP tool to read (NOT curl/shell - the HTTP API 404s and won't mark anything read). Reply ONLY if it needs an answer; otherwise just ack it. Do NOT reply to acknowledge or confirm. Close the thread when it's resolved.`
-  const wakeTag = wakeId ? ` (wake ${String(wakeId).slice(0, 8)})` : ""
-  if (batch.length === 1) {
-    const e = batch[0]
-    const subj = e.subject ? ` "${e.subject}"` : ""
-    const who = e.fromPart ? ` from ${e.fromPart}` : ""
-    return `📬 RelayRoom: new message${subj}${who} (you are part "${PART}"). ${guidance}${wakeTag}`
-  }
-  const froms = [...new Set(batch.map((e) => e.fromPart).filter(Boolean))].join(", ")
-  return `📬 RelayRoom: ${batch.length} new messages for part "${PART}"${froms ? ` (from ${froms})` : ""}. ${guidance}${wakeTag}`
-}
+// buildText now lives in pager-text.mjs (imported above) so the keystroke sanitizer is
+// unit-testable and applied to every peer/server-controlled field.
 
 // Single-flight + drain. Concurrent enqueues during a slow flush (defer can wait
 // minutes) used to spawn overlapping flushes that raced on currentWakeId and the
@@ -417,7 +407,7 @@ async function flush() {
       if (!(await agentPresent())) { requeue(batch, "agent exited during defer"); break }
 
       // 6) Deliver, then fence the wake pending -> delivered with the re-claimed wakeId.
-      const ok = await sendKeysOnce(buildText(batch, wakeId))
+      const ok = await sendKeysOnce(buildText(batch, wakeId, PART))
       if (ok) {
         retries = 0
         log(`nudged ${TARGET}: ${batch.length} msg`)
