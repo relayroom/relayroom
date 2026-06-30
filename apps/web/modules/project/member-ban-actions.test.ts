@@ -208,4 +208,42 @@ describe("banProjectMember", () => {
     expect(await bannedAtOf(projectId, TARGET)).toBeNull()
     expect(await bannedAtOf(p2.id, TARGET)).toBeNull()
   })
+
+  it("bans an org member who has NO project_access row (upsert, not a silent no-op)", async () => {
+    // TARGET2 is an org member but was never granted project_access (no row). A bare
+    // UPDATE would touch 0 rows and the ban would be silently ineffective on the bus;
+    // applyBan upserts a banned row so resolveConnection's bannedAt gate fires.
+    expect(await bannedAtOf(projectId, TARGET2)).toBeNull() // no row exists at all
+    const res = await banProjectMember({ projectId, userId: TARGET2, scope: "project" })
+    expect(res.result).toBe(true)
+    expect(await bannedAtOf(projectId, TARGET2)).not.toBeNull()
+  })
+})
+
+describe("banned owner cannot self-unban or retaliate (governance takeover guard)", () => {
+  beforeEach(async () => {
+    // Promote TARGET to a second owner so neither is the "last owner", then OWNER
+    // bans co-owner TARGET. (Outer beforeEach already reset state + actingUserId=OWNER.)
+    await db
+      .update(projectAccess)
+      .set({ level: "owner" })
+      .where(and(eq(projectAccess.projectId, projectId), eq(projectAccess.userId, TARGET)))
+    const banned = await banProjectMember({ projectId, userId: TARGET, scope: "project" })
+    expect(banned.result).toBe(true)
+    expect(await bannedAtOf(projectId, TARGET)).not.toBeNull()
+  })
+
+  it("a banned owner cannot unban themselves", async () => {
+    actingUserId = TARGET // the banned co-owner acts
+    const res = await unbanProjectMember({ projectId, userId: TARGET, scope: "project" })
+    expect(res.result).toBe(false)
+    expect(await bannedAtOf(projectId, TARGET)).not.toBeNull() // still banned
+  })
+
+  it("a banned owner cannot retaliate by banning the manager who banned them", async () => {
+    actingUserId = TARGET // banned co-owner tries to ban OWNER
+    const res = await banProjectMember({ projectId, userId: OWNER, scope: "project" })
+    expect(res.result).toBe(false)
+    expect(await bannedAtOf(projectId, OWNER)).toBeNull()
+  })
 })
