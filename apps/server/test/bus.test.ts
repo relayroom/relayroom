@@ -52,6 +52,11 @@ describe('Postgres LISTEN/NOTIFY bus', () => {
     // Exactly one delivery — no double-emit.
     expect(received).toHaveLength(1)
     expect(received[0]).toBe('bus-hello')
+    // Both pg clients are connected after a successful round-trip, so the bus is
+    // not degraded (the self-heal flag /health surfaces). NOTE: a full drop->reconnect
+    // integration test is deferred - pg_terminate_backend is flaky under a parallel
+    // file runner; the reconnect path mirrors the proven web listener (lib/realtime).
+    expect(bus.degraded()).toBe(false)
   })
 
   it('does not deliver to a removed listener', async () => {
