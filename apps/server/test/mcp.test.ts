@@ -258,6 +258,32 @@ describe('MCP resource server (/mcp/:connectCode)', () => {
     }
   })
 
+  it('archived project -> 404: connect-code endpoints are cut off after archive', async () => {
+    const { projectId, connectCode, rawToken } = await setupCaller()
+    await ensureAgents(projectId, 'worker')
+    // Archive the project: every connect-code lookup must now resolve no project, so
+    // the agent bus + the connect-code-only endpoints are cut off (the dashboard copy
+    // says archive disables agent connections; before this they kept serving).
+    await db.update(projects).set({ archivedAt: new Date() }).where(eq(projects.id, projectId))
+
+    // MCP transport: project no longer resolves -> 404 unknown connect code.
+    const transport = await app.request(`/mcp/${connectCode}?part=worker`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${rawToken}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json, text/event-stream',
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }),
+    })
+    expect(transport.status).toBe(404)
+    expect(((await transport.json()) as { error: string }).error).toMatch(/connect code/)
+
+    // Connect-code-only endpoints are cut off too.
+    expect((await app.request(`/mcp/${connectCode}/unread?part=worker`)).status).toBe(404)
+    expect((await app.request(`/mcp/${connectCode}/relayroom-md`)).status).toBe(404)
+  })
+
   it('ownership: a member with the connect code cannot seize another user\'s agent (403)', async () => {
     const orgId = `mcp-org-own-${randomBytes(4).toString('hex')}`
     const alice = await insertTestUser()

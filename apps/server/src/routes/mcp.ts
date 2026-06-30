@@ -251,7 +251,7 @@ async function resolveConnection(
   const [project] = await db
     .select()
     .from(projects)
-    .where(eq(projects.connectCode, connectCode))
+    .where(and(eq(projects.connectCode, connectCode), isNull(projects.archivedAt)))
     .limit(1)
 
   if (!project) {
@@ -1286,7 +1286,7 @@ export function createMcpRoute(db: Db, bus: Bus) {
     const [project] = await db
       .select({ id: projects.id })
       .from(projects)
-      .where(eq(projects.connectCode, connectCode))
+      .where(and(eq(projects.connectCode, connectCode), isNull(projects.archivedAt)))
       .limit(1)
     if (!project) return c.json({ error: 'unknown connect code' }, 404)
 
@@ -1324,7 +1324,7 @@ export function createMcpRoute(db: Db, bus: Bus) {
     const [project] = await db
       .select({ id: projects.id, slug: projects.slug, relayroomMd: projects.relayroomMd })
       .from(projects)
-      .where(eq(projects.connectCode, connectCode))
+      .where(and(eq(projects.connectCode, connectCode), isNull(projects.archivedAt)))
       .limit(1)
     if (!project) return c.json({ error: 'unknown connect code' }, 404)
 
@@ -1348,7 +1348,7 @@ export function createMcpRoute(db: Db, bus: Bus) {
     const [project] = await db
       .select({ id: projects.id })
       .from(projects)
-      .where(eq(projects.connectCode, connectCode))
+      .where(and(eq(projects.connectCode, connectCode), isNull(projects.archivedAt)))
       .limit(1)
     if (!project) return c.json({ error: 'unknown connect code' }, 404)
     const [agent] = await db
@@ -1374,7 +1374,7 @@ export function createMcpRoute(db: Db, bus: Bus) {
     const [project] = await db
       .select({ id: projects.id, slug: projects.slug })
       .from(projects)
-      .where(eq(projects.connectCode, connectCode))
+      .where(and(eq(projects.connectCode, connectCode), isNull(projects.archivedAt)))
       .limit(1)
     if (!project) return c.json({ error: 'unknown connect code' }, 404)
 
@@ -1460,7 +1460,7 @@ export function createMcpRoute(db: Db, bus: Bus) {
     const [project] = await db
       .select({ id: projects.id })
       .from(projects)
-      .where(eq(projects.connectCode, connectCode))
+      .where(and(eq(projects.connectCode, connectCode), isNull(projects.archivedAt)))
       .limit(1)
     if (!project) return null
     const [agent] = await db
@@ -1551,7 +1551,7 @@ export function createMcpRoute(db: Db, bus: Bus) {
     const [project] = await db
       .select({ id: projects.id })
       .from(projects)
-      .where(eq(projects.connectCode, connectCode))
+      .where(and(eq(projects.connectCode, connectCode), isNull(projects.archivedAt)))
       .limit(1)
     if (!project) return c.json({ error: 'unknown connect code' }, 404)
 
