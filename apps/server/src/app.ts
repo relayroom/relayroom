@@ -25,7 +25,10 @@ export function createApp(db: Db, bus: Bus) {
     origin: origin => (allowedOrigins.includes(origin) ? origin : null),
     credentials: true,
   }))
-  app.get('/health', c => c.json({ ok: true }))
+  // /health stays ok:true even when the realtime bus is degraded (the server still
+  // serves requests + migrations are done); busDegraded surfaces a Postgres LISTEN/
+  // NOTIFY drop so operators can see why live wakes stalled. It self-heals on backoff.
+  app.get('/health', c => c.json({ ok: true, busDegraded: bus.degraded() }))
 
   // ── RFC 9728: OAuth Protected Resource metadata ───────────────────────────
   // MCP clients fetch this to discover the authorization server.
