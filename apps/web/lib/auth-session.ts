@@ -9,6 +9,7 @@ import {
   better_auth_member,
   better_auth_invitation,
 } from "@relayroom/db/auth-schema"
+import { projectAccess } from "@relayroom/db/schema"
 import { SIGN_IN_PATH, PENDING_PATH } from "@/constants/service"
 
 export type Session = Awaited<ReturnType<typeof auth.api.getSession>>
@@ -184,6 +185,30 @@ export const isOrgManager = cache(async (orgId: string): Promise<boolean> => {
   const role = await getOrgRole(orgId)
   return role === "owner" || role === "admin"
 })
+
+/**
+ * Whether the given user is currently banned from the given project
+ * (project_access.bannedAt is non-null). This is the AUTHORITATIVE project-scope ban
+ * gate on the web side - mirror of the gate in mcp.ts resolveConnection. A project ban
+ * must cut a member off on the dashboard too (reads, writes, live SSE), not just on the
+ * agent bus, or the ban is merely cosmetic for anyone using the web UI. Returns false
+ * for a user with no project_access row (not banned).
+ */
+export const isBannedFromProject = cache(
+  async (projectId: string, userId: string): Promise<boolean> => {
+    const [row] = await db
+      .select({ bannedAt: projectAccess.bannedAt })
+      .from(projectAccess)
+      .where(
+        and(
+          eq(projectAccess.projectId, projectId),
+          eq(projectAccess.userId, userId),
+        ),
+      )
+      .limit(1)
+    return row?.bannedAt != null
+  },
+)
 
 /**
  * List pending invitations for a SPECIFIC organization (the one being viewed).

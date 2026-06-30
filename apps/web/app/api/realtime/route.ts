@@ -1,6 +1,6 @@
 import type { HubBusEvent } from "@relayroom/shared"
 import { eq } from "drizzle-orm"
-import { getServerSession, isOrgMember } from "@/lib/auth-session"
+import { getServerSession, isOrgMember, isBannedFromProject } from "@/lib/auth-session"
 import { db } from "@/modules/drizzle/db"
 import { projects } from "@relayroom/db/schema"
 import { subscribe } from "@/lib/realtime/listener"
@@ -31,6 +31,11 @@ export async function GET(req: Request) {
     .limit(1)
   if (!project) return new Response("not found", { status: 404 })
   if (!(await isOrgMember(project.organizationId))) {
+    return new Response("forbidden", { status: 403 })
+  }
+  // Ban gate: a member banned from this project must not receive its live event
+  // stream (subjects, senders, pager liveness). Mirror of the agent-bus ban gate.
+  if (await isBannedFromProject(project.id, session.user.id)) {
     return new Response("forbidden", { status: 403 })
   }
 
