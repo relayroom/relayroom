@@ -1,5 +1,5 @@
 import type { HubBusEvent } from '@relayroom/shared'
-import { eq } from 'drizzle-orm'
+import { and, eq, isNull } from 'drizzle-orm'
 import type { Db } from '@relayroom/db'
 import { projects } from '@relayroom/db'
 import { Hono } from 'hono'
@@ -43,7 +43,7 @@ export function createSseRoute(db: Db, bus: Bus) {
       const [proj] = await db
         .select({ id: projects.id })
         .from(projects)
-        .where(eq(projects.connectCode, queryCode))
+        .where(and(eq(projects.connectCode, queryCode), isNull(projects.archivedAt)))
         .limit(1)
       if (!proj) return c.json({ error: 'unknown connect code' }, 404)
       const projectId = proj.id
