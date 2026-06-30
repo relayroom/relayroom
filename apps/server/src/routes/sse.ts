@@ -27,6 +27,16 @@ export function createSseRoute(db: Db, bus: Bus) {
     //   2. ?code=<connect_code> (globally unique) -> resolve to projectId
     let matches: (event: HubBusEvent) => boolean
     if (ctx) {
+      // Archive cutoff: the connect-code branch below filters archivedAt, but the token
+      // branch derives its project from the token's agent connection, so an already-
+      // connected agent with a still-valid token could otherwise keep streaming an
+      // archived project's events. Reject if the token's project is archived.
+      const [live] = await db
+        .select({ id: projects.id })
+        .from(projects)
+        .where(and(eq(projects.id, ctx.projectId), isNull(projects.archivedAt)))
+        .limit(1)
+      if (!live) return c.json({ error: 'project archived' }, 404)
       // Authenticated: subscribe only to the token's project/part; reject mismatch.
       if (queryProject !== undefined && queryProject !== ctx.projectSlug) {
         return c.json({ error: `token is scoped to project '${ctx.projectSlug}'` }, 403)
