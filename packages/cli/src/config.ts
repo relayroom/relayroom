@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 
 /**
@@ -55,11 +55,18 @@ export function readConfig(dir = "."): RelayRoomConfig {
 /** Merge non-empty fields into `.relayroom/config.json` (creates the dir). */
 export function writeConfig(dir: string, config: RelayRoomConfig): string {
   const path = configPath(dir)
-  mkdirSync(join(resolve(dir), RELAYROOM_DIR), { recursive: true })
+  const relayroomDir = join(resolve(dir), RELAYROOM_DIR)
+  mkdirSync(relayroomDir, { recursive: true })
   const merged: Record<string, unknown> = { ...readConfig(dir) }
   for (const [k, v] of Object.entries(config)) {
     if (v !== undefined && v !== null && v !== "") merged[k] = v
   }
   writeFileSync(path, JSON.stringify(merged, null, 2) + "\n")
+  // config.json holds the bearer token, so keep the dir + file owner-only. mkdir/write
+  // `mode` is umask-masked AND a no-op on an already-existing path, so chmod explicitly
+  // here - this also tightens files written by an older CLI before this fix. Best-effort:
+  // chmod can fail on exotic filesystems (e.g. some Windows/network mounts).
+  try { chmodSync(relayroomDir, 0o700) } catch { /* best-effort */ }
+  try { chmodSync(path, 0o600) } catch { /* best-effort */ }
   return path
 }
