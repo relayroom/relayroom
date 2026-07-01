@@ -17,3 +17,6 @@ db_data/
 # Claude Code runtime
 .claude/scheduled_tasks.lock
 .claude/
+
+# Local npm-publish helper (personal release convenience, not part of CE)
+np.sh
