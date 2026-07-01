@@ -74,6 +74,17 @@ const RETRY_MAX = (() => {
   return Number.isFinite(n) ? Math.min(8, Math.max(0, n)) : 3
 })()
 const RETRY_BASE_MS = 500                      // backoff base
+// Settle delay between the literal text and the submitting Enter. codex/gemini TUIs run
+// paste/burst detection: an Enter that arrives in the SAME fast keystroke burst as the
+// text is folded into the composer as a newline, NOT treated as a submit - so the nudge
+// lands in the input box but is never sent until a human presses Enter. Waiting a beat
+// makes the Enter a distinct keypress the TUI submits. Tunable via --submit-delay (ms)
+// for a slow TUI/host; clamped to [0, 3000], 0 disables. claude's Channels path bypasses
+// send-keys entirely, so this only affects the send-keys agents.
+const SUBMIT_DELAY_MS = (() => {
+  const n = Math.floor(Number(arg("submit-delay", "300")))
+  return Number.isFinite(n) ? Math.min(3000, Math.max(0, n)) : 300
+})()
 
 // CODE (connect code) is REQUIRED: the lease/wake/heartbeat endpoints are all
 // connect-code keyed. A --project-only (legacy slug) start can subscribe to SSE but
@@ -267,6 +278,11 @@ async function sendKeysOnce(text) {
   await exitCopyMode()
   // -l sends the text literally (no key-name interpretation); Enter submits it.
   if (!(await retryTmux(["send-keys", "-t", TARGET, "-l", "--", text]))) return false
+  // Let the TUI finish ingesting the literal text before the Enter, so codex/gemini
+  // paste-burst detection doesn't fold the Enter into the composer as a newline (which
+  // leaves the nudge sitting unsent in the input box). See SUBMIT_DELAY_MS. Kept on the
+  // SAME retry-separated step as before: the text is already in, so we only (re)send Enter.
+  if (SUBMIT_DELAY_MS > 0) await sleep(SUBMIT_DELAY_MS)
   return await retryTmux(["send-keys", "-t", TARGET, "Enter"])
 }
 
