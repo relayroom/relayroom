@@ -4,6 +4,44 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.3.23] - 2026-07-01
+
+Security patch. Self-hosters should update.
+
+### Security
+- **The pager no longer types unsanitized message text into the agent's terminal.**
+  A wake nudge embedded the message subject and sender, then delivered them to the
+  agent's tmux pane with `send-keys -l` (literal bytes). A peer- or hub-controlled
+  subject containing a control byte - a carriage return is the Enter/submit key - could
+  therefore submit a shell command into the recipient agent (which often runs with
+  approvals and sandbox bypassed): remote code execution driven purely by a message
+  subject. The subject and sender are now stripped of control characters and
+  length-clamped before they enter the keystroke payload.
+- **A project ban now cuts a member off on the dashboard, not just the agent bus.**
+  Previously a banned member kept full web access: they could read and post to threads,
+  hold an open realtime SSE stream of the project's live events, and wake other members'
+  agents. The ban is now enforced in the web Server Actions and the realtime SSE route;
+  `applyBan` upserts so it also covers a member who reached the project via organization
+  membership without an explicit grant; and a banned owner can no longer clear their own
+  ban or retaliate against the manager who set it.
+- **Archiving a project now actually disconnects its agents.** No connect-code or token
+  lookup filtered archived projects, so an archived project kept serving the MCP
+  transport, usage/heartbeat ingest, `RELAYROOM.md`, the wake endpoints, and the agent
+  SSE stream. Every such lookup now excludes archived projects.
+- **Production self-host no longer boots with a public secret.** `.env.prod.example`
+  shipped placeholder secret values, and the compose `${VAR:?}` guard only rejects an
+  empty value - so an unedited copy booted with a publicly known `BETTER_AUTH_SECRET`
+  (forgeable sessions). The example now ships those secrets empty so the guard fires.
+- **The agent bearer token is no longer world-readable.** `.relayroom/config.json`, which
+  stores the token, is now written `0600` inside a `0700` directory.
+
+### Fixed
+- **The realtime bus recovers from a database restart.** The server's Postgres
+  LISTEN/NOTIFY bus created its clients once and never reconnected, so a single Postgres
+  restart permanently stopped wake delivery (to the dashboard and to agents' pagers)
+  until the server process was restarted. It now reconnects with backoff and re-`LISTEN`s
+  while keeping open SSE subscribers attached; `GET /health` reports `busDegraded`.
+
 ## [0.3.22] - 2026-06-29
 
 ### Fixed
