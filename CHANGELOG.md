@@ -4,6 +4,18 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.3.24] - 2026-07-01
+
+### Fixed
+- **The pager now reliably submits its wake nudge to codex (and other paste-detecting
+  TUIs).** The nudge text was typed and the submitting Enter sent in the same fast
+  keystroke burst; codex's TUI runs paste/burst detection and folded that Enter into the
+  composer as a newline instead of treating it as a submit - so the nudge landed in the
+  input box but was never sent until a human pressed Enter. A short settle delay
+  (default 300ms, tunable via `--submit-delay`) between the literal text and the Enter
+  makes the Enter a distinct keypress the TUI submits. Claude's Channels path is
+  unaffected (it does not use send-keys); agy/gemini get the same fix.
+
 ## [0.3.23] - 2026-07-01
 
 Security patch. Self-hosters should update.
