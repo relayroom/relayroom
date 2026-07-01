@@ -134,4 +134,18 @@ export type HubPagerEvent = {
   online: boolean
 }
 
-export type HubBusEvent = HubMessageEvent | HubPagerEvent
+/** An agent marked a message read (ack) - drives live read-receipt refresh on the
+ *  dashboard. A dedicated kind (not `message`) so pagers do NOT treat it as a wake. */
+export type HubReadEvent = {
+  kind: 'read'
+  /** Authoritative project id (used for tenant-safe SSE filtering). */
+  projectId: string
+  /** Project slug (display only; not unique across orgs). */
+  project: string
+  /** The part that read the message (the reader). */
+  part: string
+  /** The message that was read. */
+  messageId: string
+}
+
+export type HubBusEvent = HubMessageEvent | HubPagerEvent | HubReadEvent
