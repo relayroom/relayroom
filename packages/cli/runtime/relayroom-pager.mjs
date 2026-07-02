@@ -146,6 +146,20 @@ function authHeaders(extra) {
   return h
 }
 
+let activeHeadlessChild = null
+
+function killHeadlessChild(child = activeHeadlessChild, signal = "SIGTERM", force = false) {
+  if (!child || !child.pid || (child.killed && !force)) return
+  try {
+    // Headless CLIs may spawn helper/model/MCP children. On Unix, detached:true below
+    // makes the CLI a process-group leader, so negative pid kills the whole group.
+    if (process.platform !== "win32") process.kill(-child.pid, signal)
+    else child.kill(signal)
+  } catch {
+    try { child.kill(signal) } catch { /* ignore */ }
+  }
+}
+
 // Best-effort lease release on shutdown. fire-and-forget (cannot await in a
 // signal handler); the server lease TTL backstops a dropped call.
 const releaseLease = () => {
@@ -156,7 +170,7 @@ const releaseLease = () => {
     body: JSON.stringify({ part: PART, holder: HOLDER, release: true }),
   }).catch(() => {})
 }
-for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => { releaseLease(); process.exit(0) })
+for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => { killHeadlessChild(activeHeadlessChild, sig); releaseLease(); process.exit(0) })
 
 // ── tmux nudge ──────────────────────────────────────────────────────────────
 const TMUX_TIMEOUT_MS = 5000 // kill a hung tmux child so the defer loop can't wait forever
@@ -321,14 +335,28 @@ function spawnHeadless(batch, wakeId) {
   return new Promise((resolve) => {
     // execFile (no shell) so the prompt is a single argv element - never re-parsed by a
     // shell, so nothing in it can inject a command. Merge only the token into the child env.
-    execFile(spec.command, spec.args, {
-      timeout: HEADLESS_TIMEOUT_MS,
+    let timedOut = false
+    const child = execFile(spec.command, spec.args, {
+      detached: process.platform !== "win32",
       env: { ...process.env, ...spec.env },
       maxBuffer: 16 * 1024 * 1024, // codex --json / agy output can be chatty; don't EPIPE
     }, (err) => {
-      if (err) { log(`headless ${spec.command} failed:`, err.message); resolve(false) }
+      clearTimeout(timeout)
+      if (activeHeadlessChild === child) activeHeadlessChild = null
+      if (err) {
+        killHeadlessChild(child, "SIGTERM", true)
+        log(`headless ${spec.command} failed:`, timedOut ? `timed out after ${HEADLESS_TIMEOUT_MS}ms` : err.message)
+        resolve(false)
+      }
       else resolve(true)
     })
+    activeHeadlessChild = child
+    const timeout = setTimeout(() => {
+      timedOut = true
+      killHeadlessChild(child, "SIGTERM")
+      setTimeout(() => killHeadlessChild(child, "SIGKILL", true), 5000).unref()
+    }, HEADLESS_TIMEOUT_MS)
+    timeout.unref()
   })
 }
 
