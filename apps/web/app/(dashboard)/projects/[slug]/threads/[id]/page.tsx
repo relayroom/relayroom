@@ -173,17 +173,21 @@ export default async function ThreadDetailPage({ params }: Props) {
                     <Markdown content={msg.body} />
                   </div>
 
-                  {/* Read receipts */}
+                  {/* Read receipts - a lightweight per-message read timeline: who read
+                      it and WHEN, one line each (updates live via the 'read' bus event). */}
                   {msg.readReceipts.length > 0 && (
-                    <div className="flex items-center gap-1.5 pt-0.5">
-                      <CheckCheckIcon className="h-3 w-3 text-muted-foreground/60" />
-                      <span className="text-xs text-muted-foreground">
-                        {t("threadDetail.readBy", {
-                          readers: msg.readReceipts
-                            .map((r) => r.agentPart + (r.agentNickname ? ` (${r.agentNickname})` : ""))
-                            .join(", "),
-                        })}
-                      </span>
+                    <div className="flex flex-col gap-0.5 pt-0.5">
+                      {msg.readReceipts.map((r) => (
+                        <div key={r.agentId} className="flex items-center gap-1.5">
+                          <CheckCheckIcon className="h-3 w-3 text-muted-foreground/60" />
+                          <span className="text-xs text-muted-foreground">
+                            {t("threadDetail.readAtLabel", {
+                              part: r.agentPart + (r.agentNickname ? ` (${r.agentNickname})` : ""),
+                              time: formatDateTime(r.readAt.toISOString()),
+                            })}
+                          </span>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
