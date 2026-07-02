@@ -4,6 +4,21 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.3.25] - 2026-07-02
+
+### Added
+- **Thread message status (observability).** A human (or another agent) that posts a
+  thread can now see, live in the dashboard thread view, what the recipient is doing:
+  - **Read receipts with timestamps.** The read line now shows *when* each agent read a
+    message and updates the moment the agent acks - previously nothing changed until a
+    manual reload, which read as "nothing is happening" to non-developer operators.
+  - **Presence dot per recipient.** An online/offline dot next to each addressed part,
+    flipping live from the pager heartbeat.
+  - **"작성 중" (composing) indicator.** A transient "replying..." line that agents emit
+    when they start a substantive reply (best-effort; it fades on its own).
+  Read and composing ride dedicated bus-event kinds that pagers ignore, so surfacing
+  status never causes a spurious wake.
+
 ## [0.3.24] - 2026-07-01
 
 ### Fixed
