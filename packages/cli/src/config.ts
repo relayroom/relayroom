@@ -32,10 +32,12 @@ export interface RelayRoomConfig {
    *  + gitignored (same secret the CLI already stores in .claude.json etc.). */
   token?: string
   /** Wake delivery path for the primary agent. "channel" => Claude Code Channels
-   *  (the pager skips send-keys; the channel server pushes notifications). "pager"
-   *  or absent => the pager's send-keys deferral. Set by rr.sh at launch based on
-   *  Channels availability; read by the pager to gate its flush. */
-  delivery?: "channel" | "pager"
+   *  (the pager skips send-keys; the channel server pushes notifications). "headless"
+   *  => the pager spawns the part's CLI (codex/agy) once per wake instead of typing
+   *  into a tmux pane (no send-keys, no interactive session). "pager" or absent =>
+   *  the pager's send-keys deferral (the default; the rollback target). Set by rr.sh
+   *  at launch; read by the pager to choose its delivery path. */
+  delivery?: "channel" | "pager" | "headless"
 }
 
 export function configPath(dir = "."): string {

@@ -33,6 +33,9 @@ import { basename, join } from "node:path"
 // are unit-testable and so peer/server-controlled subject/fromPart can never carry a
 // control byte (e.g. \r => Enter) into `tmux send-keys -l`. See pager-text.mjs.
 import { buildText } from "./pager-text.mjs"
+// Headless delivery (delivery=headless, codex/agy only): spawn the part's CLI per wake
+// instead of tmux send-keys. Pure spec/prompt builders live in a testable sibling module.
+import { buildHeadlessPrompt, headlessSpawnSpec } from "./pager-headless.mjs"
 
 // ── Args ────────────────────────────────────────────────────────────────────
 function arg(name, fallback) {
@@ -60,13 +63,26 @@ const VERSION = (() => {
   catch { return null }
 })()
 const DEBOUNCE_MS = Number(arg("debounce", "1200"))
-const TOKEN = arg("token") // optional agent bearer; needed only if /api/sse enforces auth
+// Bearer token: needed for /api/sse auth AND, under headless delivery, injected into the
+// codex child env (RELAYROOM_TOKEN). Fall back to config.json so a bare `pager` start
+// (no --token flag) still authenticates a headless spawn.
+const TOKEN = arg("token", CFG.token)
 const DIR = arg("dir", process.cwd()) // worktree dir; used to detect RELAYROOM.md
 const HEARTBEAT_MS = 30000
 // Wake delivery path (set by rr.sh). "channel" => a Claude Code Channels server
 // pushes wakes; the pager must NOT also send-keys (double-wake). Under "channel" the
 // pager runs heartbeat/statusline/presence only and skips SSE + flush entirely.
+// "headless" => spawn the part's CLI (codex/agy) per wake instead of tmux send-keys;
+// the pager keeps SSE + lease + heartbeat but the delivery step is a process spawn.
 const DELIVERY = arg("delivery", CFG.delivery ?? "pager")
+const HEADLESS = DELIVERY === "headless"
+// The CLI to spawn under headless delivery (config.agent's primary entry). codex/agy only.
+const AGENT_CLI = arg("agent-cli", String(CFG.agent ?? "").split(",")[0].trim())
+// Cap one headless wake so a hung/looping child can't pin the single-flight flush forever.
+const HEADLESS_TIMEOUT_MS = (() => {
+  const n = Math.floor(Number(arg("headless-timeout", "180000")))
+  return Number.isFinite(n) ? Math.min(600_000, Math.max(10_000, n)) : 180_000
+})()
 // K: send-keys retries after the first fire. Clamp to a finite [0, 8] so a bad
 // --retries (NaN, negative, or Infinity) can't turn retryTmux into an unbounded loop.
 const RETRY_MAX = (() => {
@@ -90,8 +106,16 @@ const SUBMIT_DELAY_MS = (() => {
 // connect-code keyed. A --project-only (legacy slug) start can subscribe to SSE but
 // can never claim a lease, so it would fail-closed forever (or, with the backoff
 // re-queue, spin). Require CODE so that can't happen.
-if (!CODE || !PART || !TARGET) {
+// TARGET is required for the tmux paths (pager/channel) but NOT for headless, which
+// spawns a CLI instead of typing into a pane. Headless instead needs a supported AGENT_CLI.
+if (!CODE || !PART || (!HEADLESS && !TARGET)) {
   console.error("usage: node relayroom-pager.mjs --code <connect_code> --part <part> --target <tmux-target> [--server url] [--debounce ms] [--token bearer] [--retries K]")
+  process.exit(1)
+}
+if (HEADLESS && !headlessSpawnSpec(AGENT_CLI, {})) {
+  // headlessSpawnSpec returns null for claude/unknown; fail loud at startup rather than
+  // re-queueing every wake forever with an "unsupported CLI" that can never succeed.
+  console.error(`relayroom-pager: delivery=headless needs --agent-cli codex|agy (got "${AGENT_CLI || "none"}")`)
   process.exit(1)
 }
 
@@ -286,6 +310,28 @@ async function sendKeysOnce(text) {
   return await retryTmux(["send-keys", "-t", TARGET, "Enter"])
 }
 
+// ── Headless delivery (codex/agy) ─────────────────────────────────────────────
+// Instead of typing into a tmux pane, spawn the part's CLI once for this wake so it
+// reads/handles its inbox via the RelayRoom MCP tools and exits. Subscription-covered
+// (codex ChatGPT auth / agy Google plan), no send-keys, no interactive session. Resolves
+// true on a clean exit (fence the wake), false on spawn/exec failure or timeout (re-queue).
+function spawnHeadless(batch, wakeId) {
+  const spec = headlessSpawnSpec(AGENT_CLI, { token: TOKEN, prompt: buildHeadlessPrompt(batch, wakeId, PART) })
+  if (!spec) { log(`headless: unsupported agent CLI "${AGENT_CLI}"`); return Promise.resolve(false) }
+  return new Promise((resolve) => {
+    // execFile (no shell) so the prompt is a single argv element - never re-parsed by a
+    // shell, so nothing in it can inject a command. Merge only the token into the child env.
+    execFile(spec.command, spec.args, {
+      timeout: HEADLESS_TIMEOUT_MS,
+      env: { ...process.env, ...spec.env },
+      maxBuffer: 16 * 1024 * 1024, // codex --json / agy output can be chatty; don't EPIPE
+    }, (err) => {
+      if (err) { log(`headless ${spec.command} failed:`, err.message); resolve(false) }
+      else resolve(true)
+    })
+  })
+}
+
 // Claim the server-side lease for this part's active wake. Returns the response
 // JSON ({ ok, held?, holder?, wakeId?, noWake? }) or null on transport failure.
 async function claimLease() {
@@ -395,6 +441,21 @@ async function flush() {
         // Transient (server unreachable) -> re-queue+backoff; definitive -> drop.
         if (first.transient) { requeue(batch, first.reason); break }
         retries = 0; log(`skip nudge: ${first.reason}`); continue
+      }
+
+      // Headless delivery: no tmux pane, so skip agentPresent/defer/re-claim entirely.
+      // There is no defer window, so first.wakeId is the current wake - spawn the CLI,
+      // then fence pending -> delivered. Failure (spawn/exec/timeout) re-queues with backoff.
+      if (HEADLESS) {
+        const ok = await spawnHeadless(batch, first.wakeId)
+        if (ok) {
+          retries = 0
+          log(`headless delivered via ${AGENT_CLI}: ${batch.length} wake(s)`)
+          await reportDelivered(first.wakeId)
+        } else {
+          requeue(batch, "headless spawn failed"); break
+        }
+        continue
       }
 
       // 2) Don't type into a bare shell (agent exited). Re-queue (the agent usually
@@ -568,10 +629,11 @@ async function heartbeat() {
           try { writeFileSync(join(DIR, ".relayroom", "color"), json.color) } catch { /* ignore */ }
           lastColor = json.color
         }
-        if (TARGET) {
+        if (TARGET && !HEADLESS) {
           // Timeout like every other tmux call - a hung set-option on each heartbeat
           // would otherwise pile up zombie children forever. (truecolor + status-right
           // content are wired once in setupStatusBar; here we only repaint the color.)
+          // Headless has no tmux pane, so never paint (a stale config target could exist).
           execFile("tmux", ["set-option", "-t", TARGET, "status-style", `bg=${json.color},fg=${contrastOn(json.color)}`], { timeout: TMUX_TIMEOUT_MS }, () => {})
         }
       }
@@ -650,7 +712,9 @@ async function catchUp() {
 }
 
 async function main() {
-  setupStatusBar()
+  // Headless delivery has no tmux pane, so skip status-bar wiring; heartbeat still runs
+  // (it is the presence signal for a headless part, and skips its own tmux paint below).
+  if (!HEADLESS) setupStatusBar()
   heartbeat()
   setInterval(heartbeat, HEARTBEAT_MS)
   // Channel delivery: a Claude Channels server owns wakes. Keep heartbeat/statusline
@@ -659,7 +723,11 @@ async function main() {
     log(`delivery=channel for part=${PART} → wakes via Claude Channels; pager runs heartbeat/statusline only`)
     return
   }
-  log(`watching ${CODE ? `code=${CODE}` : `project=${PROJECT}`} part=${PART} → tmux ${TARGET} (server ${SERVER})`)
+  if (HEADLESS) {
+    log(`delivery=headless for part=${PART} → wakes spawn \`${AGENT_CLI}\` (server ${SERVER}); no tmux/send-keys`)
+  } else {
+    log(`watching ${CODE ? `code=${CODE}` : `project=${PROJECT}`} part=${PART} → tmux ${TARGET} (server ${SERVER})`)
+  }
   for (;;) {
     try {
       await subscribe()

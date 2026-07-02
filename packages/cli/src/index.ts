@@ -94,12 +94,24 @@ program
   .option("--token <token>", "bearer token, if the SSE endpoint requires auth")
   .action((opts) => {
     const o = withConfig(opts)
+    // Headless delivery (codex/agy) spawns the CLI per wake instead of typing into a
+    // tmux pane, so a tmux --target is not required. Every other mode keeps needing it.
+    const cfg = readConfig(".")
+    const headless = cfg.delivery === "headless"
     const args = [
       "--code", need(o.code, "code"),
       "--part", need(o.part, "part"),
-      "--target", need(o.target, "target"),
       "--server", o.server,
     ]
+    if (headless) {
+      if (o.target) args.push("--target", o.target) // optional; used only for presence/status if present
+      // The pager reads delivery/token from config.json too, but pass the CLI to spawn
+      // explicitly (config.agent may be a comma list; the first entry is the primary).
+      const cli = String(cfg.agent ?? "").split(",")[0]?.trim()
+      if (cli) args.push("--agent-cli", cli)
+    } else {
+      args.push("--target", need(o.target, "target"))
+    }
     if (o.debounce) args.push("--debounce", o.debounce)
     if (o.token) args.push("--token", o.token)
     // The pager is a long-lived foreground daemon; inherit stdio and mirror its
@@ -143,12 +155,12 @@ program
 // ── delivery: set the wake delivery mode in .relayroom/config.json ──────────────
 program
   .command("delivery")
-  .description("Set the wake delivery mode (channel|pager) in .relayroom/config.json")
-  .argument("<mode>", "channel or pager")
+  .description("Set the wake delivery mode (channel|pager|headless) in .relayroom/config.json")
+  .argument("<mode>", "channel, pager, or headless")
   .option("--dir <path>", "worktree directory", ".")
   .action((mode: string, opts: { dir: string }) => {
-    if (mode !== "channel" && mode !== "pager") {
-      console.error(`error: mode must be "channel" or "pager" (got "${mode}")`)
+    if (mode !== "channel" && mode !== "pager" && mode !== "headless") {
+      console.error(`error: mode must be "channel", "pager", or "headless" (got "${mode}")`)
       process.exit(1)
     }
     const path = writeConfig(opts.dir, { delivery: mode })
