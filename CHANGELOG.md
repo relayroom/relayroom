@@ -4,6 +4,22 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.3.26] - 2026-07-02
+
+### Added
+- **Headless wake delivery for codex/agy parts (`delivery: "headless"`).** An opt-in
+  third delivery mode for unattended worker parts: instead of typing a nudge into a tmux
+  pane with `send-keys`, the pager spawns the part's own CLI once per wake
+  (`codex exec --profile relayroom` / `agy -p`) and the agent drains its inbox through the
+  RelayRoom MCP tools. It is subscription-covered (codex ChatGPT auth / agy Google plan),
+  needs no interactive session, and sidesteps the paste-burst fragility that made
+  `send-keys` unreliable on codex/agy. Turn it on per part with `rr.sh headless` (codex/agy
+  only); `claude` keeps Channels/pager. The `send-keys` path is unchanged and remains the
+  default and the rollback target (`rr.sh pager stop; relayroom delivery pager; rr.sh up`).
+  A per-wakeId spawn de-dup (a sweep-re-issued, un-acked wake never triggers a second model
+  run) and detached process-group cleanup (an in-flight child is killed with the pager)
+  keep headless from leaking processes or looping.
+
 ## [0.3.25] - 2026-07-02
 
 ### Added
