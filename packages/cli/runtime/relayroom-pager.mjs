@@ -35,7 +35,7 @@ import { basename, join } from "node:path"
 import { buildText } from "./pager-text.mjs"
 // Headless delivery (delivery=headless, codex/agy only): spawn the part's CLI per wake
 // instead of tmux send-keys. Pure spec/prompt builders live in a testable sibling module.
-import { buildHeadlessPrompt, headlessSpawnSpec } from "./pager-headless.mjs"
+import { buildHeadlessPrompt, headlessSpawnSpec, makeWakeDedup } from "./pager-headless.mjs"
 
 // ── Args ────────────────────────────────────────────────────────────────────
 function arg(name, fallback) {
@@ -399,6 +399,10 @@ let timer = null
 let flushing = false // single-flight guard: only one flush() runs at a time
 let retries = 0      // consecutive transient-failure count -> backoff level
 const RETRY_MAX_MS = 30_000 // backoff cap; keep retrying for the session, never drop a live wake
+
+// Headless de-dup: wakeIds we have already spawned a CLI for, so a sweep-re-issued
+// (un-acked) wake never triggers a second expensive model run. See makeWakeDedup.
+const headlessDedup = makeWakeDedup()
 // messageIds seen on the live SSE stream. Role reduced under 07: the authoritative
 // coalescing is now the server-side wake state machine + per-part lease, and
 
@@ -475,9 +479,22 @@ async function flush() {
       // There is no defer window, so first.wakeId is the current wake - spawn the CLI,
       // then fence pending -> delivered. Failure (spawn/exec/timeout) re-queues with backoff.
       if (HEADLESS) {
+        // Spawn a full CLI run at most ONCE per wakeId. reportDelivered fences the wake
+        // pending -> delivered, but the server keeps re-issuing a wake until the AGENT acks
+        // it; if the spawned codex/agy read the inbox but did not ack (e.g. it decided not
+        // to reply), every SSE reconnect/catch-up would re-claim the SAME wakeId and spawn
+        // another expensive model run - an unbounded quota-burning loop. Send-keys re-nudges
+        // cheaply, but a headless re-spawn is not cheap, so we de-dup here. A genuinely new
+        // message settles the old wake and issues a NEW wakeId (rollover), which passes.
+        if (headlessDedup.has(first.wakeId)) {
+          retries = 0
+          log(`headless: wake ${String(first.wakeId).slice(0, 8)} already delivered - not re-spawning`)
+          continue
+        }
         const ok = await spawnHeadless(batch, first.wakeId)
         if (ok) {
           retries = 0
+          headlessDedup.mark(first.wakeId)
           log(`headless delivered via ${AGENT_CLI}: ${batch.length} wake(s)`)
           await reportDelivered(first.wakeId)
         } else {

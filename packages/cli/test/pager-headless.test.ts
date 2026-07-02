@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 // @ts-expect-error - runtime .mjs has no type declarations; tested at runtime only.
-import { buildHeadlessPrompt, headlessSpawnSpec } from "../runtime/pager-headless.mjs"
+import { buildHeadlessPrompt, headlessSpawnSpec, makeWakeDedup } from "../runtime/pager-headless.mjs"
 
 describe("buildHeadlessPrompt", () => {
   it("counts unread across the batch (sum of count, default 1 each)", () => {
@@ -24,6 +24,12 @@ describe("buildHeadlessPrompt", () => {
     const p = buildHeadlessPrompt([{}], "w", "p")
     expect(p).toContain("`inbox` MCP tool")
     expect(p).toContain("NOT curl/shell")
+  })
+
+  it("mandates acking every read message so the wake settles (no re-spawn loop)", () => {
+    const p = buildHeadlessPrompt([{}], "w", "p")
+    expect(p).toContain("MUST `ack` every message")
+    expect(p).toContain("spawned again for the same wake")
   })
 
   it("tolerates an empty batch and a missing wakeId", () => {
@@ -58,5 +64,41 @@ describe("headlessSpawnSpec", () => {
     expect(headlessSpawnSpec("", { prompt: "x" })).toBeNull()
     expect(headlessSpawnSpec(undefined, { prompt: "x" })).toBeNull()
     expect(headlessSpawnSpec("gemini", { prompt: "x" })).toBeNull()
+  })
+})
+
+describe("makeWakeDedup", () => {
+  it("reports a wake as seen only after it is marked", () => {
+    const d = makeWakeDedup()
+    expect(d.has("w1")).toBe(false)
+    d.mark("w1")
+    expect(d.has("w1")).toBe(true)
+    expect(d.has("w2")).toBe(false)
+  })
+
+  it("ignores empty/falsy wakeIds (never marks, never matches)", () => {
+    const d = makeWakeDedup()
+    d.mark("")
+    d.mark(undefined)
+    expect(d.has("")).toBe(false)
+    expect(d.has(undefined)).toBe(false)
+    expect(d.size).toBe(0)
+  })
+
+  it("evicts the oldest wakeId once the cap is exceeded (bounded memory)", () => {
+    const d = makeWakeDedup(3)
+    d.mark("a"); d.mark("b"); d.mark("c")
+    expect(d.size).toBe(3)
+    d.mark("d") // evicts "a" (oldest)
+    expect(d.size).toBe(3)
+    expect(d.has("a")).toBe(false)
+    expect(d.has("b")).toBe(true)
+    expect(d.has("d")).toBe(true)
+  })
+
+  it("re-marking an existing wakeId does not grow the set", () => {
+    const d = makeWakeDedup(3)
+    d.mark("a"); d.mark("a"); d.mark("a")
+    expect(d.size).toBe(1)
   })
 })
