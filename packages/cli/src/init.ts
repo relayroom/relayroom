@@ -416,6 +416,7 @@ RelayRoom console (part=$PART, session=$SESSION, agent=$AGENT)
   rr.sh info                     print resolved config
   rr.sh tmux start|continue|exit|status
   rr.sh pager start|stop|restart|status
+  rr.sh headless [stop|status]   codex/agy only: run this part headless (pager spawns the CLI per wake, no tmux)
   rr.sh claude|agy|codex mcp-add|hooks|run [--bypass]
   rr.sh setup                    mcp-add + hooks for every configured agent
   rr.sh doctor                   diagnose setup problems (identity, token, server) + show fixes
@@ -463,6 +464,19 @@ case "\${1:-help}" in
       status) tx_status ;; *) usage; exit 1 ;; esac ;;
   pager) case "\${2:-}" in
       start) pg_start ;; stop) pg_stop ;; restart) pg_stop; pg_start ;; status) pg_status ;;
+      *) usage; exit 1 ;; esac ;;
+  # Opt-in HEADLESS mode (codex/agy only). No tmux session and no interactive agent:
+  # the pager spawns the CLI once per wake to process the inbox via the RelayRoom MCP
+  # tools. Sets delivery=headless in config, then (re)starts the pager in that mode.
+  # \`up\` is untouched and unchanged; this is a separate path a part opts into. Roll back
+  # to interactive send-keys with: rr.sh pager stop; $CLI delivery pager; rr.sh up.
+  headless) case "\${2:-start}" in
+      start|"")
+        case "\${AGENT%%,*}" in codex|agy) ;; *) echo "rr.sh headless: only codex/agy parts support this (agent=$AGENT)" >&2; exit 1 ;; esac
+        $CLI delivery headless >/dev/null || { echo "rr.sh: failed to set delivery=headless - aborting" >&2; exit 1; }
+        pg_stop >/dev/null 2>&1 || true; pg_start
+        echo "headless ON: wakes spawn '\${AGENT%%,*}' per message (no tmux). Roll back: rr.sh pager stop; $CLI delivery pager; rr.sh up" ;;
+      stop) pg_stop ;; status) pg_status ;;
       *) usage; exit 1 ;; esac ;;
   claude|agy|codex) case "\${2:-}" in
       mcp-add) mcp_add "$1" ;; hooks) hooks_install "$1" ;;

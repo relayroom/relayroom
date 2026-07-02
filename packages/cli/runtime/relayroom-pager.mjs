@@ -495,7 +495,7 @@ async function flush() {
         if (ok) {
           retries = 0
           headlessDedup.mark(first.wakeId)
-          log(`headless delivered via ${AGENT_CLI}: ${batch.length} wake(s)`)
+          log(`headless delivered via ${AGENT_CLI}: ${batch.length} message(s)`)
           await reportDelivered(first.wakeId)
         } else {
           requeue(batch, "headless spawn failed"); break
