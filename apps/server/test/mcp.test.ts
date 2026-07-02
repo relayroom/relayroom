@@ -15,6 +15,7 @@ import postgres from 'postgres'
 import { checkLoopBreaker, resetLoopBreaker } from '../src/wake/pipeline'
 import { invalidateWakeFlagCache } from '../src/wake/flag'
 import { ensurePending } from '../src/wake/state'
+import type { HubBusEvent } from '@relayroom/shared'
 import { makeTestApp, TEST_DATABASE_URL } from './helpers'
 
 const { app, db, bus } = makeTestApp()
@@ -282,6 +283,33 @@ describe('MCP resource server (/mcp/:connectCode)', () => {
     // Connect-code-only endpoints are cut off too.
     expect((await app.request(`/mcp/${connectCode}/unread?part=worker`)).status).toBe(404)
     expect((await app.request(`/mcp/${connectCode}/relayroom-md`)).status).toBe(404)
+  })
+
+  it('ack emits a read bus event (live read receipts) on a first read', async () => {
+    const { projectId, connectCode, rawToken } = await setupCaller()
+    await ensureAgents(projectId, 'reader', 'sender')
+    // 'sender' opens a thread addressed to 'reader'.
+    const sent = await callTool(connectCode, rawToken, 'sender', 'send', {
+      subject: 'ping', body: 'hi', to: ['reader'],
+    })
+    const { messageId } = JSON.parse(sent.text) as { threadId: string; messageId: string }
+
+    // Subscribe, then 'reader' acks; a 'read' event for the reader must arrive.
+    const reads: Array<{ part: string; messageId: string }> = []
+    const listener = (e: HubBusEvent) => {
+      if (e.kind === 'read') reads.push({ part: e.part, messageId: e.messageId })
+    }
+    bus.on('message', listener)
+    await callTool(connectCode, rawToken, 'reader', 'ack', { messageId })
+    await new Promise<void>((resolve, reject) => {
+      const deadline = setTimeout(() => reject(new Error('no read event')), 3000)
+      const poll = setInterval(() => {
+        if (reads.some((r) => r.part === 'reader' && r.messageId === messageId)) {
+          clearInterval(poll); clearTimeout(deadline); resolve()
+        }
+      }, 10)
+    })
+    bus.off('message', listener)
   })
 
   it('ownership: a member with the connect code cannot seize another user\'s agent (403)', async () => {

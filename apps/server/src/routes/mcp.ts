@@ -716,6 +716,16 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
         // lifecycle was missing - without it a delivered wake never settles and the
         // pager re-delivers it forever.
         if (await openUnreadCount(db, me.id) === 0) await settleCaughtUp(db, me.id)
+        // Live read receipt: tell the dashboard this message was read so the thread view
+        // refreshes without a manual reload. A 'read' kind (NOT 'message') so pagers
+        // ignore it - they only wake on kind:'message'.
+        bus.emit('message', {
+          kind: 'read',
+          projectId: ctx.projectId,
+          project: ctx.projectSlug,
+          part: ctx.part,
+          messageId: args.messageId,
+        })
         return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true }) }] }
       }
       // Check if it exists at all
