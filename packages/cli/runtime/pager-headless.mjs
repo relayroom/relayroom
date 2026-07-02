@@ -23,10 +23,35 @@ export function buildHeadlessPrompt(batch, wakeId, part) {
   return (
     `You have ${n} unread RelayRoom message${n === 1 ? "" : "s"}${tag} for part "${part}". ` +
     "Use the RelayRoom `inbox` MCP tool to read them (NOT curl/shell - the HTTP API 404s " +
-    "and won't mark anything read). Reply ONLY if an answer is needed; otherwise `ack` the " +
-    "message. Do NOT reply just to acknowledge or confirm. Close each thread once it is " +
-    "resolved. If nothing is unread, stop without sending anything."
+    "and won't mark anything read). You MUST `ack` every message you read so it is marked " +
+    "handled - if you leave a message un-acked you will be spawned again for the same wake. " +
+    "Reply ONLY if an answer is genuinely needed (then still `ack`); do NOT reply just to " +
+    "acknowledge or confirm. Close each thread once it is resolved. If nothing is unread, stop."
   )
+}
+
+/**
+ * Per-wakeId de-dup guard for headless delivery. reportDelivered fences a wake pending ->
+ * delivered, but the server's eligibility sweep re-issues an un-acked wake under the SAME
+ * wakeId (coalescing keeps one active wake per agent). Without this, each sweep retry would
+ * spawn another full model run - a quota-burning loop. So we spawn at most once per wakeId.
+ * A genuinely new message settles the old wake and issues a NEW wakeId, which passes.
+ *
+ * Insertion-ordered Set with a cap so a long-lived pager never grows it unbounded (wakes
+ * settle roughly in order, so evicting the oldest is safe). Returned as a tiny object so
+ * the pager's module-level state stays here and the logic is unit-testable.
+ */
+export function makeWakeDedup(cap = 256) {
+  const seen = new Set()
+  return {
+    has: (wakeId) => Boolean(wakeId) && seen.has(wakeId),
+    mark: (wakeId) => {
+      if (!wakeId) return
+      seen.add(wakeId)
+      while (seen.size > cap) seen.delete(seen.values().next().value)
+    },
+    get size() { return seen.size },
+  }
 }
 
 /**
