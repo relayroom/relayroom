@@ -10,6 +10,7 @@ import { formatDateTime } from "@/lib/format"
 import { Badge } from "@/components/ui/badge"
 import { Markdown } from "@/components/markdown"
 import { resolveAgentColor } from "@/components/agent/agent-appearance"
+import { PresenceDot } from "@/components/agent/presence-dot"
 import { ThreadReplyForm } from "./thread-reply-form"
 import { ThreadStatusControls } from "./thread-status-controls"
 
@@ -160,6 +161,12 @@ export default async function ThreadDetailPage({ params }: Props) {
                               c.avatar,
                             ].join(" ")}
                           >
+                            <PresenceDot
+                              agentId={r.agentId}
+                              initialOnline={r.online}
+                              onlineLabel={t("threadDetail.online")}
+                              offlineLabel={t("threadDetail.offline")}
+                            />
                             {r.part}
                             {r.nickname && <span className="opacity-70">"{r.nickname}"</span>}
                           </span>

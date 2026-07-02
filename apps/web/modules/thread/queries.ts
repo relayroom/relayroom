@@ -4,6 +4,7 @@ import { db } from "@/modules/drizzle/db"
 import { threads, messages, agents, messageRecipients } from "@relayroom/db/schema"
 import { better_auth_user } from "@relayroom/db/auth-schema"
 import { stripMarkdown } from "@/lib/format"
+import { isPagerOnline } from "@/modules/agent/queries"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -62,6 +63,9 @@ export interface MessageDetail {
     part: string
     nickname: string | null
     color: string | null
+    // Presence at query time (pager heartbeat within the online window). The thread
+    // view shows a live dot; the client refreshes this from realtime pager events.
+    online: boolean
   }>
 }
 
@@ -323,6 +327,7 @@ export async function getThread(
         nickname: agents.nickname,
         color: agents.color,
         badge: agents.badge,
+        pagerLastSeenAt: agents.pagerLastSeenAt,
       })
       .from(messageRecipients)
       .innerJoin(agents, eq(messageRecipients.agentId, agents.id))
@@ -333,7 +338,13 @@ export async function getThread(
     const targetAgentMap = new Map<string, ThreadDetail["targetAgents"][number]>()
     for (const r of recipientRows) {
       const list = recipientsByMessage.get(r.messageId) ?? []
-      list.push({ agentId: r.agentId, part: r.part, nickname: r.nickname, color: r.color })
+      list.push({
+        agentId: r.agentId,
+        part: r.part,
+        nickname: r.nickname,
+        color: r.color,
+        online: isPagerOnline(r.pagerLastSeenAt),
+      })
       recipientsByMessage.set(r.messageId, list)
       if (!targetAgentMap.has(r.agentId)) {
         targetAgentMap.set(r.agentId, {

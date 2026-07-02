@@ -109,6 +109,8 @@
     "closedMessage": "This thread is closed with status: {status}.",
     "readBy": "Read by: {readers}",
     "readAtLabel": "{part} read at {time}",
+    "online": "Online",
+    "offline": "Offline",
     "to": "To:",
     "status": {
       "open": "Open",
