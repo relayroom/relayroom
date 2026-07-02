@@ -88,4 +88,29 @@ describe("getThread read receipts", () => {
     expect(m!.readReceipts[0]!.readAt).toBeInstanceOf(Date)
     expect(m!.readReceipts[0]!.agentPart).toBe("reader-x")
   })
+
+  it("recipients carry live presence (online) from the pager heartbeat", async () => {
+    const [onAgent] = await db
+      .insert(agents)
+      .values({ projectId, part: "online-x", pagerLastSeenAt: new Date() })
+      .returning({ id: agents.id })
+    const [thread] = await db
+      .insert(threads)
+      .values({ projectId, subject: "presence test", status: "open" })
+      .returning({ id: threads.id })
+    const [msg] = await db
+      .insert(messages)
+      .values({ threadId: thread!.id, body: "hi" })
+      .returning({ id: messages.id })
+    await db
+      .insert(messageRecipients)
+      .values({ messageId: msg!.id, agentId: onAgent!.id })
+
+    const res = await getThread(projectId, thread!.id)
+    expect(res.result).toBe(true)
+    if (!res.result) return
+    const m = res.item.messages.find((mm) => mm.id === msg!.id)
+    const rcpt = m!.recipients.find((x) => x.agentId === onAgent!.id)
+    expect(rcpt?.online).toBe(true)
+  })
 })

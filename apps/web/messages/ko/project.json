@@ -109,6 +109,8 @@
     "closedMessage": "이 스레드는 {status} 상태로 닫혀 있습니다.",
     "readBy": "읽음: {readers}",
     "readAtLabel": "{part} 읽음 · {time}",
+    "online": "온라인",
+    "offline": "오프라인",
     "to": "받는 대상:",
     "status": {
       "open": "열림",
