@@ -42,13 +42,14 @@ export function buildHeadlessPrompt(batch, wakeId, part) {
  * the pager's module-level state stays here and the logic is unit-testable.
  */
 export function makeWakeDedup(cap = 256) {
+  const max = Number.isFinite(cap) ? Math.max(0, Math.floor(cap)) : 256
   const seen = new Set()
   return {
     has: (wakeId) => Boolean(wakeId) && seen.has(wakeId),
     mark: (wakeId) => {
       if (!wakeId) return
       seen.add(wakeId)
-      while (seen.size > cap) seen.delete(seen.values().next().value)
+      while (seen.size > max) seen.delete(seen.values().next().value)
     },
     get size() { return seen.size },
   }

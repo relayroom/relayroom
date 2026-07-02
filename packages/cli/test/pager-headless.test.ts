@@ -96,6 +96,13 @@ describe("makeWakeDedup", () => {
     expect(d.has("d")).toBe(true)
   })
 
+  it("treats a negative cap as zero instead of looping forever", () => {
+    const d = makeWakeDedup(-1)
+    d.mark("a")
+    expect(d.size).toBe(0)
+    expect(d.has("a")).toBe(false)
+  })
+
   it("re-marking an existing wakeId does not grow the set", () => {
     const d = makeWakeDedup(3)
     d.mark("a"); d.mark("a"); d.mark("a")
