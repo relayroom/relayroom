@@ -108,6 +108,7 @@
     "replyTitle": "Reply",
     "closedMessage": "This thread is closed with status: {status}.",
     "readBy": "Read by: {readers}",
+    "readAtLabel": "{part} read at {time}",
     "to": "To:",
     "status": {
       "open": "Open",

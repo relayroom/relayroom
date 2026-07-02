@@ -108,6 +108,7 @@
     "replyTitle": "답장",
     "closedMessage": "이 스레드는 {status} 상태로 닫혀 있습니다.",
     "readBy": "읽음: {readers}",
+    "readAtLabel": "{part} 읽음 · {time}",
     "to": "받는 대상:",
     "status": {
       "open": "열림",
