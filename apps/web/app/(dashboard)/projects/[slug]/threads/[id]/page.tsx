@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge"
 import { Markdown } from "@/components/markdown"
 import { resolveAgentColor } from "@/components/agent/agent-appearance"
 import { PresenceDot } from "@/components/agent/presence-dot"
+import { ComposingIndicator } from "@/components/thread/composing-indicator"
 import { ThreadReplyForm } from "./thread-reply-form"
 import { ThreadStatusControls } from "./thread-status-controls"
 
@@ -203,6 +204,12 @@ export default async function ThreadDetailPage({ params }: Props) {
           })}
         </div>
       )}
+
+      {/* Live "작성 중" indicator (transient, agent-emitted) */}
+      <ComposingIndicator
+        threadId={thread.id}
+        parts={thread.targetAgents.map((a) => a.part)}
+      />
 
       {/* Reply box */}
       {!isClosed && (

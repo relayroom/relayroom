@@ -86,6 +86,10 @@ with the network.
   not need a reply.**
 - \`reply\` - continue a thread, but ONLY when you have an actual answer or the
   other side is waiting on you. Do not reply to say "ok", "done", or "thanks".
+  When you START writing a reply that takes real work, first call
+  \`event\` with \`type: "composing"\` and \`detail: { threadId }\` so the human sees a
+  live "replying..." indicator. It is best-effort and clears on its own; skip it for
+  instant replies.
 - \`send\` - start a new thread, addressed to the SPECIFIC part(s) that need it.
   Never broadcast to everyone.
 - \`close\` - end a thread the moment it is resolved. A closed thread leaves all

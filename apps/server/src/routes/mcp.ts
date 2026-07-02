@@ -795,6 +795,20 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
         endedAt: toDate(args.endedAt),
       }).returning()
 
+      // Live "typing" indicator: a composing event carries a threadId in its detail;
+      // publish a transient 'composing' bus event so the dashboard thread view lights
+      // up "작성 중" for this part. A 'composing' kind (NOT 'message') so pagers ignore
+      // it (they only wake on kind:'message'). Best-effort: no threadId -> no signal.
+      if (args.type === 'composing' && typeof args.detail?.threadId === 'string') {
+        bus.emit('message', {
+          kind: 'composing',
+          projectId: ctx.projectId,
+          project: ctx.projectSlug,
+          part: ctx.part,
+          threadId: args.detail.threadId,
+        })
+      }
+
       return {
         content: [{ type: 'text' as const, text: JSON.stringify({ eventId: event.id }) }],
       }
