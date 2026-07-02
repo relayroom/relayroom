@@ -148,4 +148,18 @@ export type HubReadEvent = {
   messageId: string
 }
 
-export type HubBusEvent = HubMessageEvent | HubPagerEvent | HubReadEvent
+/** An agent started composing a reply to a thread - drives a transient live "typing"
+ *  indicator. A dedicated kind (not `message`) so pagers do NOT treat it as a wake. */
+export type HubComposingEvent = {
+  kind: 'composing'
+  /** Authoritative project id (used for tenant-safe SSE filtering). */
+  projectId: string
+  /** Project slug (display only; not unique across orgs). */
+  project: string
+  /** The part that is composing. */
+  part: string
+  /** The thread the reply is being composed for. */
+  threadId: string
+}
+
+export type HubBusEvent = HubMessageEvent | HubPagerEvent | HubReadEvent | HubComposingEvent

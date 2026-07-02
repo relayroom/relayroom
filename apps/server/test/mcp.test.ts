@@ -312,6 +312,33 @@ describe('MCP resource server (/mcp/:connectCode)', () => {
     bus.off('message', listener)
   })
 
+  it('event type=composing emits a composing bus event with the threadId', async () => {
+    const { projectId, connectCode, rawToken } = await setupCaller()
+    await ensureAgents(projectId, 'reader', 'sender')
+    const sent = await callTool(connectCode, rawToken, 'sender', 'send', {
+      subject: 'q', body: 'help', to: ['reader'],
+    })
+    const { threadId } = JSON.parse(sent.text) as { threadId: string; messageId: string }
+
+    const composing: Array<{ part: string; threadId: string }> = []
+    const listener = (e: HubBusEvent) => {
+      if (e.kind === 'composing') composing.push({ part: e.part, threadId: e.threadId })
+    }
+    bus.on('message', listener)
+    await callTool(connectCode, rawToken, 'reader', 'event', {
+      type: 'composing', detail: { threadId },
+    })
+    await new Promise<void>((resolve, reject) => {
+      const deadline = setTimeout(() => reject(new Error('no composing event')), 3000)
+      const poll = setInterval(() => {
+        if (composing.some((c) => c.part === 'reader' && c.threadId === threadId)) {
+          clearInterval(poll); clearTimeout(deadline); resolve()
+        }
+      }, 10)
+    })
+    bus.off('message', listener)
+  })
+
   it('ownership: a member with the connect code cannot seize another user\'s agent (403)', async () => {
     const orgId = `mcp-org-own-${randomBytes(4).toString('hex')}`
     const alice = await insertTestUser()

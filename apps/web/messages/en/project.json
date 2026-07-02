@@ -111,6 +111,7 @@
     "readAtLabel": "{part} read at {time}",
     "online": "Online",
     "offline": "Offline",
+    "composing": "{part} is replying…",
     "to": "To:",
     "status": {
       "open": "Open",
