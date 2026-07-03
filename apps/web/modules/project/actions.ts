@@ -14,7 +14,7 @@ import {
 import { db } from "@/modules/drizzle/db"
 import { projects, projectAccess } from "@relayroom/db/schema"
 import { better_auth_member } from "@relayroom/db/auth-schema"
-import { getServerSession } from "@/lib/auth-session"
+import { getServerSession, requireProjectAccess } from "@/lib/auth-session"
 import { resolveActiveOrgId } from "@/lib/active-org"
 import { getErrorTranslations } from "@/lib/action-i18n"
 import { isUuid } from "@/lib/uuid"
@@ -69,6 +69,14 @@ async function requireOrgAccess(): Promise<
   if (!member) return { ok: false, message: t("auth.noOrgAccess") }
 
   return { ok: true, session, orgId }
+}
+
+/** Just the authenticated caller's id, for the requireProjectAccess(userId, ...) calls below. */
+async function requireUserId(): Promise<{ ok: true; userId: string } | { ok: false; message: string }> {
+  const t = await getErrorTranslations()
+  const session = await getServerSession()
+  if (!session) return { ok: false, message: t("auth.loginRequired") }
+  return { ok: true, userId: session.user.id }
 }
 
 // ── createProject ─────────────────────────────────────────────────────────────
@@ -175,16 +183,21 @@ export async function updateProject(
 ): Promise<ApiResultWithItem<{ id: string }>> {
   const t = await getErrorTranslations()
   try {
-    const access = await requireOrgAccess()
-    if (!access.ok) return { result: false, message: access.message }
-    const { orgId } = access
-
     const parsed = updateProjectSchema.safeParse(input)
     if (!parsed.success) {
       return { result: false, message: parsed.error.issues[0]?.message ?? t("common.invalidInput") }
     }
 
     const { projectId, ...fields } = parsed.data
+
+    const who = await requireUserId()
+    if (!who.ok) return { result: false, message: who.message }
+
+    // AC-1: editing project details requires at least `write` project_access
+    // (not just org membership) - a readonly grant may not change anything.
+    const access = await requireProjectAccess(who.userId, projectId, "write")
+    if (!access.ok) return { result: false, message: access.message }
+    const { orgId } = access
 
     const [row] = await db
       .update(projects)
@@ -219,16 +232,20 @@ export async function updateRelayroomMd(
 ): Promise<ApiResultWithItem<{ id: string }>> {
   const t = await getErrorTranslations()
   try {
-    const access = await requireOrgAccess()
-    if (!access.ok) return { result: false, message: access.message }
-    const { orgId } = access
-
     const parsed = updateRelayroomMdSchema.safeParse(input)
     if (!parsed.success) {
       return { result: false, message: parsed.error.issues[0]?.message ?? t("common.invalidInput") }
     }
 
     const { projectId, content } = parsed.data
+
+    const who = await requireUserId()
+    if (!who.ok) return { result: false, message: who.message }
+
+    // AC-1: same bar as updateProject - `write`+ required.
+    const access = await requireProjectAccess(who.userId, projectId, "write")
+    if (!access.ok) return { result: false, message: access.message }
+    const { orgId } = access
     const trimmed = content.trim()
 
     const [row] = await db
@@ -252,7 +269,12 @@ export async function archiveProject(projectId: string): Promise<ApiResult> {
   const t = await getErrorTranslations()
   try {
     if (!isUuid(projectId)) return { result: false, message: t("project.notFound") }
-    const access = await requireOrgAccess()
+
+    const who = await requireUserId()
+    if (!who.ok) return { result: false, message: who.message }
+
+    // AC-1: archiving is destructive (cuts off MCP/agent access) - require `owner`.
+    const access = await requireProjectAccess(who.userId, projectId, "owner")
     if (!access.ok) return { result: false, message: access.message }
     const { orgId } = access
 
@@ -279,7 +301,15 @@ export async function regenerateConnectCode(
 ): Promise<ApiResultWithItem<{ connectCode: string }>> {
   const t = await getErrorTranslations()
   try {
-    const access = await requireOrgAccess()
+    if (!isUuid(projectId)) return { result: false, message: t("project.notFound") }
+
+    const who = await requireUserId()
+    if (!who.ok) return { result: false, message: who.message }
+
+    // AC-1: the connect_code is the credential agents use to join a project -
+    // rotating it is a `owner`-only action (revokes every unconnected agent's
+    // ability to (re)join via the old code).
+    const access = await requireProjectAccess(who.userId, projectId, "owner")
     if (!access.ok) return { result: false, message: access.message }
     const { orgId } = access
 
