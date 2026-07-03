@@ -1,12 +1,10 @@
 "use server"
 
 import { z } from "zod"
-import { and, eq, sql } from "drizzle-orm"
-import { db } from "@/lib/db"
 import { auth } from "@/lib/auth"
-import { better_auth_user } from "@relayroom/db/auth-schema"
 import { adminExists } from "@/lib/auth-session"
 import { credentialSchema } from "@/lib/validation"
+import { promoteToAdminAtomic } from "@/lib/promote-admin"
 
 /**
  * Create the first admin user (one-time bootstrap).
@@ -64,39 +62,4 @@ export async function createFirstAdmin(params: {
   }
 
   return userId
-}
-
-/**
- * Promote the just-created first user to admin (one-time bootstrap).
- *
- * Returns `true` if this call promoted the user, `false` otherwise.
- */
-async function promoteToAdminAtomic(userId: string): Promise<boolean> {
-  try {
-    const updated = await db
-      .update(better_auth_user)
-      .set({ role: "admin" })
-      .where(
-        and(
-          eq(better_auth_user.id, userId),
-          sql`not exists (select 1 from ${better_auth_user} where ${better_auth_user.role} = 'admin')`,
-        ),
-      )
-      .returning({ id: better_auth_user.id })
-
-    return updated.length > 0
-  } catch (err) {
-    if (isUniqueViolation(err)) return false
-    throw err
-  }
-}
-
-/** Postgres unique_violation error code. */
-function isUniqueViolation(err: unknown): boolean {
-  return (
-    typeof err === "object" &&
-    err !== null &&
-    "code" in err &&
-    (err as { code?: unknown }).code === "23505"
-  )
 }
