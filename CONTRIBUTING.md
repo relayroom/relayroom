@@ -4,6 +4,9 @@ Thanks for your interest in RelayRoom. This repository is the **Community Editio
 
 Enterprise features are developed and licensed separately. PRs that add Enterprise-only functionality are out of scope for this repository.
 
+Found a security vulnerability? Do not open a public issue - follow the private
+disclosure process in [SECURITY.md](./SECURITY.md) instead.
+
 ## Development setup
 
 RelayRoom is a pnpm monorepo. You need Node.js 20+, pnpm, and Docker (for Postgres).
