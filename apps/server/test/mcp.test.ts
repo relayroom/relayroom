@@ -380,6 +380,16 @@ describe('MCP resource server (/mcp/:connectCode)', () => {
     expect(bad.isError).toBe(true)
     expect((await agentRow()).limitedUntil).toBeNull()
 
+    // 5. Non-string resetAt (e.g. a number) is treated like absent -> clear, not error.
+    await callTool(connectCode, rawToken, 'worker', 'event', {
+      type: 'limited', detail: { resetAt: resetAt.toISOString() },
+    })
+    const nonString = await callTool(connectCode, rawToken, 'worker', 'event', {
+      type: 'limited', detail: { resetAt: 12345 },
+    })
+    expect(nonString.isError).toBeFalsy()
+    expect((await agentRow()).limitedUntil).toBeNull()
+
     // Live badge events fired for park + clamp + clear (in order), pager-invisible kind.
     await new Promise<void>((resolve, reject) => {
       const deadline = setTimeout(() => reject(new Error('missing limited bus events')), 3000)
