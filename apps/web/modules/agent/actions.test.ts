@@ -16,11 +16,15 @@ let actingUserId = "agent-owner"
 let actingEmail: string | null = "agent-owner@test.local"
 let activeOrgId: string | null = "org-agent-web"
 
-vi.mock("@/lib/auth-session", () => ({
-  getServerSession: vi.fn(async () =>
-    actingUserId ? { user: { id: actingUserId, email: actingEmail } } : null,
-  ),
-}))
+vi.mock("@/lib/auth-session", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/auth-session")>()
+  return {
+    ...actual, // keep the REAL requireProjectAccess/isBannedFromProject/isOrgMember (AC-2)
+    getServerSession: vi.fn(async () =>
+      actingUserId ? { user: { id: actingUserId, email: actingEmail } } : null,
+    ),
+  }
+})
 vi.mock("@/lib/active-org", () => ({
   resolveActiveOrgId: vi.fn(async () => activeOrgId),
 }))
@@ -28,6 +32,7 @@ vi.mock("@/lib/active-org", () => ({
 import { db } from "@/lib/db"
 import {
   projects,
+  projectAccess,
   agents,
   agentConnections,
   events,
@@ -41,7 +46,7 @@ import {
   better_auth_member,
   better_auth_oauth_access_token,
 } from "@relayroom/db/auth-schema"
-import { connectAgent, deleteAgent, setMainAgent } from "./actions"
+import { connectAgent, deleteAgent, setMainAgent, updateAgent, disconnectConnection } from "./actions"
 import { listAgents, listMyAgents, getMyMainAgent } from "./queries"
 
 const ORG = "org-agent-web"
@@ -74,7 +79,9 @@ async function seedMember(orgId: string, userId: string, role = "member"): Promi
     .onConflictDoNothing()
 }
 
-async function makeProject(orgId: string, cc: string): Promise<string> {
+// AC-2 gates connectAgent on project_access `write`+, so tests must seed the same
+// grant createProject would give a real caller (owner row for the creator).
+async function makeProject(orgId: string, cc: string, ownerUserId = OWNER): Promise<string> {
   const [p] = await db
     .insert(projects)
     .values({
@@ -82,9 +89,13 @@ async function makeProject(orgId: string, cc: string): Promise<string> {
       slug: `agent-web-${cc}`,
       name: "Agent Web Project",
       connectCode: cc,
-      createdByUserId: OWNER,
+      createdByUserId: ownerUserId,
     })
     .returning({ id: projects.id })
+  await db
+    .insert(projectAccess)
+    .values({ projectId: p!.id, userId: ownerUserId, level: "owner", createdByUserId: ownerUserId })
+    .onConflictDoNothing()
   return p!.id
 }
 
@@ -463,5 +474,125 @@ describe("setMainAgent", () => {
     // Would otherwise raise a Postgres 'invalid input syntax for type uuid'.
     const res = await setMainAgent("not-a-uuid")
     expect(res.result).toBe(false)
+  })
+})
+
+// ── AC-2: connectAgent requires project_access write+, not just org membership ──
+
+describe("connectAgent (AC-2: project write+ required)", () => {
+  it("a readonly project member cannot connect an agent", async () => {
+    await db
+      .insert(projectAccess)
+      .values({ projectId, userId: OWNER2, level: "readonly", createdByUserId: OWNER })
+    actingUserId = OWNER2
+    const res = await connectAgent({ connectCode, part: "backend" })
+    expect(res.result).toBe(false)
+  })
+
+  it("an org member with no project_access row at all cannot connect an agent", async () => {
+    // OWNER2 is an org member of ORG but was never granted project_access here.
+    actingUserId = OWNER2
+    const res = await connectAgent({ connectCode, part: "backend" })
+    expect(res.result).toBe(false)
+  })
+
+  it("a write project member CAN connect an agent", async () => {
+    await db
+      .insert(projectAccess)
+      .values({ projectId, userId: OWNER2, level: "write", createdByUserId: OWNER })
+    actingUserId = OWNER2
+    const res = await connectAgent({ connectCode, part: "backend" })
+    expect(res.result).toBe(true)
+  })
+})
+
+// ── AC-3: agent edit/main/disconnect/delete require agent owner OR project manager ──
+
+describe("agent management gate (AC-3: agent owner or project owner/org manager)", () => {
+  it("a write project member who is NOT the agent owner cannot update the agent", async () => {
+    await db
+      .insert(projectAccess)
+      .values({ projectId, userId: OWNER2, level: "write", createdByUserId: OWNER })
+    const [agent] = await db
+      .insert(agents)
+      .values({ projectId, part: "backend", ownerUserId: OWNER })
+      .returning({ id: agents.id })
+
+    actingUserId = OWNER2
+    const res = await updateAgent({ agentId: agent!.id, nickname: "Hijacked" })
+    expect(res.result).toBe(false)
+    expect((await agentRow(agent!.id))!.nickname).not.toBe("Hijacked")
+  })
+
+  it("the agent's own owner CAN update it, even with no project_access grant", async () => {
+    // OWNER2 owns the agent part but has no project_access row on this project -
+    // agent ownership alone is sufficient authority over the agent's own fields.
+    const [agent] = await db
+      .insert(agents)
+      .values({ projectId, part: "backend", ownerUserId: OWNER2 })
+      .returning({ id: agents.id })
+
+    actingUserId = OWNER2
+    const res = await updateAgent({ agentId: agent!.id, nickname: "MyOwnPart" })
+    expect(res.result).toBe(true)
+    expect((await agentRow(agent!.id))!.nickname).toBe("MyOwnPart")
+  })
+
+  it("a project owner (manager) CAN update an agent they do not own", async () => {
+    const [agent] = await db
+      .insert(agents)
+      .values({ projectId, part: "backend", ownerUserId: OWNER2 })
+      .returning({ id: agents.id })
+
+    actingUserId = OWNER // has project_access level=owner via makeProject
+    const res = await updateAgent({ agentId: agent!.id, nickname: "ManagedByOwner" })
+    expect(res.result).toBe(true)
+  })
+
+  it("an org admin (manager) CAN disconnect a connection they do not own", async () => {
+    const conn = await connectAgent({ connectCode, part: "backend" })
+    expect(conn.result).toBe(true)
+    if (!conn.result) return
+    const [dbConn] = await db
+      .insert(agentConnections)
+      .values({ agentId: conn.item.agentId, status: "connected" })
+      .returning({ id: agentConnections.id })
+
+    const ADMIN = "agent-org-admin"
+    await seedUser(ADMIN)
+    await seedMember(ORG, ADMIN, "admin")
+    actingUserId = ADMIN
+    const res = await disconnectConnection(dbConn!.id)
+    expect(res.result).toBe(true)
+  })
+
+  it("a write project member who is NOT the agent owner cannot delete the agent", async () => {
+    await db
+      .insert(projectAccess)
+      .values({ projectId, userId: OWNER2, level: "write", createdByUserId: OWNER })
+    const [agent] = await db
+      .insert(agents)
+      .values({ projectId, part: "backend", ownerUserId: OWNER })
+      .returning({ id: agents.id })
+
+    actingUserId = OWNER2
+    const res = await deleteAgent(agent!.id)
+    expect(res.result).toBe(false)
+    expect((await agentRow(agent!.id))!.deletedAt).toBeNull()
+  })
+
+  it("a write project member who is NOT the agent owner cannot set it as main", async () => {
+    await db
+      .insert(projectAccess)
+      .values({ projectId, userId: OWNER2, level: "write", createdByUserId: OWNER })
+    const [agent] = await db
+      .insert(agents)
+      .values({ projectId, part: "backend", role: "default", ownerUserId: OWNER })
+      .returning({ id: agents.id })
+
+    actingUserId = OWNER2
+    const res = await setMainAgent(agent!.id)
+    expect(res.result).toBe(false)
+    expect((await agentRow(agent!.id))!.role).toBe("default")
   })
 })

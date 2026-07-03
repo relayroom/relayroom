@@ -25,10 +25,11 @@ import {
   better_auth_oauth_access_token,
   better_auth_user,
 } from "@relayroom/db/auth-schema"
-import { getServerSession } from "@/lib/auth-session"
+import { getServerSession, requireProjectAccess } from "@/lib/auth-session"
 import { resolveActiveOrgId } from "@/lib/active-org"
 import { getErrorTranslations } from "@/lib/action-i18n"
 import { isUuid } from "@/lib/uuid"
+import { requireProjectManage } from "@/modules/project/member-actions"
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -106,6 +107,39 @@ async function requireAgentInOrg(
   return { ok: true, agent: row }
 }
 
+/**
+ * Resolve + authorize an agent-management action (AC-3): edit / set-main /
+ * disconnect / delete. Beyond org membership (IDOR guard), the caller must be
+ * either the agent's own owner (ownerUserId) OR a project manager (project
+ * owner / org owner-admin, via `requireProjectManage`). This stops any org
+ * member from renaming, disconnecting, or deleting a part they neither own nor
+ * administer.
+ */
+async function requireAgentManage(
+  agentId: string,
+  orgId: string,
+): Promise<
+  | { ok: true; agent: { id: string; projectId: string; part: string; role: string; ownerUserId: string | null } }
+  | { ok: false; message: string }
+> {
+  const t = await getErrorTranslations()
+  const agentCheck = await requireAgentInOrg(agentId, orgId)
+  if (!agentCheck.ok) return agentCheck
+  const { agent } = agentCheck
+
+  const session = await getServerSession()
+  if (!session) return { ok: false, message: t("auth.loginRequired") }
+
+  if (agent.ownerUserId === session.user.id) {
+    return { ok: true, agent }
+  }
+
+  const manage = await requireProjectManage(agent.projectId)
+  if (!manage.ok) return { ok: false, message: t("agent.manageDenied") }
+
+  return { ok: true, agent }
+}
+
 // ── updateAgent ───────────────────────────────────────────────────────────────
 
 export async function updateAgent(input: UpdateAgentInput): Promise<ApiResult> {
@@ -122,8 +156,8 @@ export async function updateAgent(input: UpdateAgentInput): Promise<ApiResult> {
 
     const { agentId, nickname, badge } = parsed.data
 
-    // IDOR guard
-    const agentCheck = await requireAgentInOrg(agentId, orgId)
+    // AC-3: IDOR guard + agent owner / project manager gate.
+    const agentCheck = await requireAgentManage(agentId, orgId)
     if (!agentCheck.ok) return { result: false, message: agentCheck.message }
 
     const updateFields: Partial<{ nickname: string | null; badge: string | null; updatedAt: Date }> = {
@@ -161,8 +195,8 @@ export async function setMainAgent(agentId: string): Promise<ApiResult> {
     if (!access.ok) return { result: false, message: access.message }
     const { session, orgId } = access
 
-    // IDOR guard + resolve agent
-    const agentCheck = await requireAgentInOrg(agentId, orgId)
+    // AC-3: IDOR guard + agent owner / project manager gate.
+    const agentCheck = await requireAgentManage(agentId, orgId)
     if (!agentCheck.ok) return { result: false, message: agentCheck.message }
 
     const { agent } = agentCheck
@@ -390,6 +424,13 @@ export async function connectAgent(
       return { result: false, message: t("agent.invalidConnectCode") }
     }
 
+    // AC-2: connecting an agent must be gated on project_access, not just org
+    // membership - a `readonly` grant can view the connect_code (it's shown in
+    // the project settings UI to anyone who can see the project) but must not be
+    // able to mint a live agent token from it.
+    const projectAccessCheck = await requireProjectAccess(session.user.id, project.id, "write")
+    if (!projectAccessCheck.ok) return { result: false, message: projectAccessCheck.message }
+
     // Ownership gate: an existing (project, part) agent belongs to its owner. A
     // connect code is project-shared, so we must NOT let a different member seize
     // that part (and have a fresh token minted for them). Only the owner may
@@ -512,6 +553,10 @@ export async function disconnectConnection(connectionId: string): Promise<ApiRes
 
     if (!conn) return { result: false, message: t("agent.connectionNotFound") }
 
+    // AC-3: agent owner / project manager gate.
+    const manage = await requireAgentManage(conn.agentId, orgId)
+    if (!manage.ok) return { result: false, message: manage.message }
+
     // Revoke the OAuth access token (delete row -> Hono immediately rejects it)
     if (conn.accessTokenId) {
       await db
@@ -545,7 +590,8 @@ export async function deleteAgent(agentId: string): Promise<ApiResult> {
     if (!access.ok) return { result: false, message: access.message }
     const { orgId } = access
 
-    const agentCheck = await requireAgentInOrg(agentId, orgId)
+    // AC-3: IDOR guard + agent owner / project manager gate.
+    const agentCheck = await requireAgentManage(agentId, orgId)
     if (!agentCheck.ok) return { result: false, message: agentCheck.message }
 
     const conns = await db
@@ -583,8 +629,8 @@ export async function disconnectAgent(agentId: string): Promise<ApiResult> {
     if (!access.ok) return { result: false, message: access.message }
     const { orgId } = access
 
-    // Verify the agent belongs to the caller's org
-    const agentCheck = await requireAgentInOrg(agentId, orgId)
+    // AC-3: IDOR guard + agent owner / project manager gate.
+    const agentCheck = await requireAgentManage(agentId, orgId)
     if (!agentCheck.ok) return { result: false, message: agentCheck.message }
 
     // Get the latest active connection for this agent
