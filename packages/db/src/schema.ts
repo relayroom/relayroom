@@ -102,6 +102,11 @@ export const agents = pgTable('agent', {
   relayroomMdSyncedAt: timestamp('relayroom_md_synced_at', { withTimezone: true }),
   activationEpoch: integer('activation_epoch').notNull().default(0), // 턴 시작마다 증가
   wakeWatermarkAt: timestamp('wake_watermark_at', { withTimezone: true }), // 마지막 catch-up 지점
+  // Provider rate-limit park window (self-reported via the `event` MCP tool,
+  // type:'limited'). While set and in the future, wake issuance is suppressed
+  // (reason 'limited'); message delivery is unaffected. The eligibility sweep
+  // naturally re-wakes the part on its first tick after this passes ("resume").
+  limitedUntil: timestamp('limited_until', { withTimezone: true }),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 }, t => [
@@ -306,7 +311,7 @@ export const wakeEvents = pgTable('wake_event', {
   phantom: boolean('phantom').notNull().default(false),       // true = real turn seen w/o matching issued wake
   // Provenance tag for governance detection (phase 08). Free-form, nullable for
   // legacy rows. Known values: 'message' | 'reply' | 'direct_cooldown' |
-  // 'loop_breaker'. loop_breaker rows are suppressed=true control rows written by
+  // 'loop_breaker' | 'limited'. loop_breaker rows are suppressed=true control rows written by
   // the pipeline when the in-memory loop-breaker trips, so 08 can aggregate trips
   // on the STABLE principal (senderUserId) without a separate table.
   reason: text('reason'),

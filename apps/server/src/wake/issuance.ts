@@ -31,6 +31,7 @@ export type WakeSuppressReason =
   | 'not_idle'
   | 'no_owner'
   | 'unknown_agent'
+  | 'limited'
 
 export type WakeDecision =
   | { action: 'issue'; wakeId: string; epoch: number; reason: string }
@@ -92,6 +93,7 @@ export async function shouldWake(
         projectId: agents.projectId,
         ownerUserId: agents.ownerUserId,
         activationEpoch: agents.activationEpoch,
+        limitedUntil: agents.limitedUntil,
       })
       .from(agents)
       .where(eq(agents.id, agentId))
@@ -119,6 +121,36 @@ export async function shouldWake(
     // 2. banned gate (placeholder; projectAccess.bannedAt always null until 09).
     //    The column exists (01) so we hold the gate position now. When 09 lands,
     //    a banned (project, ownerUser) suppresses here with an audit suppress row.
+
+    // 2.5 provider rate-limit park (self-reported via event type:'limited').
+    //     While limitedUntil is in the future, waking is pointless - the agent's
+    //     provider would reject the turn - so suppress WITHOUT reserving budget
+    //     (a parked wake must not consume the owner's window). Delivery (message
+    //     row + SSE emit) is untouched by design: this gates only the nudge.
+    //     Resume is free: the 30s eligibility sweep re-runs shouldWake for
+    //     idle+unread parts, and the first tick after limitedUntil passes issues.
+    //     Deliberately NOT gated on `enforce` - this is availability, not policy:
+    //     with the enforcement flag OFF a wake into a limited agent still fails.
+    //     An audit suppress row (reason 'limited') is recorded on sender-attributed
+    //     paths (message/reply) so the ledger explains the silence, but NOT on
+    //     sweep re-checks - the 30s sweep re-evaluates every parked part each tick
+    //     and would otherwise write an unbounded stream of identical rows.
+    if (agent.limitedUntil && agent.limitedUntil.getTime() > Date.now()) {
+      if (input.reason !== 'sweep') {
+        await tx.insert(wakeEvents).values({
+          ownerUserId,
+          agentId,
+          projectId: agent.projectId,
+          urgent,
+          suppressed: true,
+          phantom: false,
+          senderPart: input.senderPart ?? null,
+          senderUserId: input.senderUserId ?? null,
+          reason: 'limited',
+        })
+      }
+      return { action: 'suppress', reason: 'limited' } as const
+    }
 
     // 3. budget reserve (03). Decision only; the actual hold is the wakeIntent row.
     //    Feature-flag gate (12): only enforce the budget when enforce=true. When

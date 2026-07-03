@@ -10,6 +10,7 @@ import { AgentStatusBadge } from "@/components/agent/agent-status-badge"
 import { AgentDisconnectButton } from "@/components/agent/agent-disconnect-button"
 import { AgentAvatar } from "@/components/agent/agent-appearance"
 import { PagerStatusIcon } from "@/components/agent/pager-status-icon"
+import { LimitedBadge } from "@/components/agent/limited-badge"
 import { timeAgo } from "@/lib/format"
 import { cn } from "@/lib/utils"
 
@@ -46,6 +47,8 @@ export interface AgentListItem {
   connectionLastSeenAt?: Date | null
   /** Pager liveness (only present for project agents). */
   pagerOnline?: boolean
+  /** Provider rate-limit expiry, or null if not limited. */
+  limitedUntil?: Date | null
 }
 
 interface Props {
@@ -140,6 +143,9 @@ export function AgentList({ items, showProject = false, showOwner = false, showA
                   )}
                   {agent.pagerOnline !== undefined && (
                     <PagerStatusIcon agentId={agent.id} status={agent.pagerOnline} />
+                  )}
+                  {agent.limitedUntil !== undefined && (
+                    <LimitedBadge part={agent.part} limitedUntil={agent.limitedUntil ? agent.limitedUntil.toISOString() : null} />
                   )}
                   {showProject && agent.projectName && (
                     <Link

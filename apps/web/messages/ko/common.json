@@ -63,5 +63,8 @@
     "offline": "Pager 오프라인",
     "offlineHint": "Pager가 응답하지 않습니다 (메시지 수신 안 될 수 있음)",
     "lastBeat": "마지막 신호 {time}"
+  },
+  "limited": {
+    "badge": "{time}까지 제한됨"
   }
 }

@@ -162,4 +162,19 @@ export type HubComposingEvent = {
   threadId: string
 }
 
-export type HubBusEvent = HubMessageEvent | HubPagerEvent | HubReadEvent | HubComposingEvent
+/** An agent reported a provider rate-limit (or cleared one) - drives the live
+ *  "limited until HH:MM" badge. A dedicated kind (not `message`) so pagers do NOT
+ *  treat it as a wake. */
+export type HubLimitedEvent = {
+  kind: 'limited'
+  /** Authoritative project id (used for tenant-safe SSE filtering). */
+  projectId: string
+  /** Project slug (display only; not unique across orgs). */
+  project: string
+  /** The part that is (or is no longer) rate-limited. */
+  part: string
+  /** ISO timestamp the limit lifts, or null when the limit was cleared. */
+  limitedUntil: string | null
+}
+
+export type HubBusEvent = HubMessageEvent | HubPagerEvent | HubReadEvent | HubComposingEvent | HubLimitedEvent
