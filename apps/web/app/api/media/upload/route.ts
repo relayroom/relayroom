@@ -6,13 +6,18 @@ import type { ApiResultWithItem } from "@relayroom/shared"
 // resolution issue with moduleResolution:bundler. The type cast retains full
 // type safety without triggering the TS7016 "can't resolve via exports" error.
 // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
-const sharp: (input: Buffer) => any = require("sharp")
+const sharp: any = require("sharp")
 import { and, eq } from "drizzle-orm"
 import { getServerSession } from "@/lib/auth-session"
 import { getStorage } from "@/lib/storage"
 import { db } from "@/modules/drizzle/db"
 import { projects } from "@relayroom/db/schema"
 import { better_auth_member } from "@relayroom/db/auth-schema"
+
+// Cap decode concurrency at 1 so a burst of concurrent uploads can't fan out
+// into N parallel libvips decodes (each one is CPU/memory-heavy on its own —
+// uncapped concurrency turns a pixel-flood attempt into a multiplied DoS).
+sharp.concurrency(1)
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -43,6 +48,27 @@ export async function POST(req: NextRequest) {
       { result: false, message: "로그인이 필요합니다." },
       { status: 401 },
     )
+  }
+
+  // ── Content-Length pre-check ─────────────────────────────────────────────────
+  // req.formData() buffers the entire body into memory before we get a chance to
+  // reject it. Check the declared Content-Length FIRST so an oversized upload is
+  // rejected with 413 before any buffering happens, instead of after. This is a
+  // cheap header check, not a substitute for the post-parse file.size check below
+  // (a client can lie about Content-Length, or omit it) — it only short-circuits
+  // the common/adversarial case where the header itself already declares more than
+  // we'll ever accept, so we don't pay the buffering cost for nothing.
+  const contentLength = req.headers.get("content-length")
+  if (contentLength !== null) {
+    const declared = Number(contentLength)
+    // Multipart form-data has framing overhead (boundaries, headers) beyond the
+    // raw file bytes, so allow generous headroom above MAX_BYTES.
+    if (Number.isFinite(declared) && declared > MAX_BYTES + 64 * 1024) {
+      return NextResponse.json<ApiResultWithItem<never>>(
+        { result: false, message: "파일 크기가 5MB를 초과합니다." },
+        { status: 413 },
+      )
+    }
   }
 
   let formData: FormData
@@ -148,7 +174,15 @@ export async function POST(req: NextRequest) {
   // Process: resize, convert to WebP, strip EXIF metadata
   let outputBytes: Buffer
   try {
-    outputBytes = await sharp(inputBytes)
+    outputBytes = await sharp(inputBytes, {
+      // Pixel-flood DoS guard: a tiny, well-formed file can declare an enormous
+      // decoded pixel count (e.g. a 40000x40000 PNG), which blows up memory/CPU
+      // during decode long before our post-resize size checks ever run. Cap at
+      // 50M pixels (e.g. ~7000x7000) — comfortably above any real upload.
+      limitInputPixels: 50_000_000,
+      // Refuse truncated/corrupt input instead of best-effort decoding it.
+      failOn: "truncated",
+    })
       .resize(maxPx, maxPx, { fit: "inside", withoutEnlargement: true })
       .webp({ quality: 85 })
       // withMetadata(false) is the default — metadata (incl. EXIF/GPS) is stripped
