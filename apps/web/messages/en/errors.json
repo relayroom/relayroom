@@ -18,11 +18,13 @@
     "invalidConnectCode": "That connect code is invalid or does not belong to this organization.",
     "connectionNotFound": "This connection does not exist or you do not have access to it.",
     "disconnectFailed": "We could not revoke the connection.",
-    "ownedByAnother": "This agent part is already owned by another user. Ask its owner to transfer it."
+    "ownedByAnother": "This agent part is already owned by another user. Ask its owner to transfer it.",
+    "manageDenied": "Only this agent's owner, a project owner, or an org manager can do this."
   },
   "project": {
     "notFound": "This project does not exist or you do not have access to it.",
     "banned": "You are banned from this project.",
+    "accessDenied": "You do not have sufficient access to this project.",
     "slugTaken": "The slug \"{slug}\" is already in use.",
     "createFailed": "We could not create the project.",
     "updateFailed": "We could not update the project.",
