@@ -9,8 +9,9 @@ import {
   better_auth_member,
   better_auth_invitation,
 } from "@relayroom/db/auth-schema"
-import { projectAccess } from "@relayroom/db/schema"
+import { projects, projectAccess } from "@relayroom/db/schema"
 import { SIGN_IN_PATH, PENDING_PATH } from "@/constants/service"
+import { getErrorTranslations } from "./action-i18n"
 
 export type Session = Awaited<ReturnType<typeof auth.api.getSession>>
 
@@ -209,6 +210,90 @@ export const isBannedFromProject = cache(
     return row?.bannedAt != null
   },
 )
+
+/** Ranking for project_access.level comparisons (AC-1). Higher = more authority. */
+const PROJECT_ACCESS_RANK: Record<"readonly" | "write" | "owner", number> = {
+  readonly: 0,
+  write: 1,
+  owner: 2,
+}
+
+type ProjectAccessLevel = keyof typeof PROJECT_ACCESS_RANK
+
+/**
+ * Authorize a project MUTATION by `project_access.level`, not merely org
+ * membership (AC-1/AC-2). `requireOrgAccess`-style helpers only proved the caller
+ * belonged to the active org, so any member - including a `readonly` grant - could
+ * call updateProject/archiveProject/regenerateConnectCode/connectAgent. This
+ * resolves the project's OWN organization (not the caller's "active org" tab),
+ * confirms org membership there, rejects a project-scope ban, then requires the
+ * caller's `project_access.level` to be at least `minLevel`.
+ *
+ * Org owners/admins are treated as effective project owners (mirrors
+ * `requireProjectManage` in modules/project/member-actions.ts) so an org
+ * owner/admin is never locked out of a project they administer just because
+ * nobody granted them an explicit project_access row.
+ *
+ * Takes `userId` rather than resolving the session itself: callers already
+ * hold a verified session (they call `getServerSession()` beforehand), and
+ * keeping session resolution out of this function means it depends only on
+ * its (mockable, cross-module) inputs in tests.
+ */
+export async function requireProjectAccess(
+  userId: string,
+  projectId: string,
+  minLevel: ProjectAccessLevel,
+): Promise<
+  | { ok: true; orgId: string; level: ProjectAccessLevel }
+  | { ok: false; message: string }
+> {
+  const t = await getErrorTranslations()
+
+  const [project] = await db
+    .select({ id: projects.id, organizationId: projects.organizationId })
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1)
+  if (!project) return { ok: false, message: t("project.notFound") }
+
+  const [member] = await db
+    .select({ role: better_auth_member.role })
+    .from(better_auth_member)
+    .where(
+      and(
+        eq(better_auth_member.organizationId, project.organizationId),
+        eq(better_auth_member.userId, userId),
+      ),
+    )
+    .limit(1)
+  if (!member) return { ok: false, message: t("auth.noOrgAccess") }
+
+  // A member banned from THIS project has no authority, regardless of role/level.
+  if (await isBannedFromProject(projectId, userId)) {
+    return { ok: false, message: t("project.banned") }
+  }
+
+  let level: ProjectAccessLevel
+  if (member.role === "owner" || member.role === "admin") {
+    level = "owner"
+  } else {
+    const [pa] = await db
+      .select({ level: projectAccess.level })
+      .from(projectAccess)
+      .where(and(eq(projectAccess.projectId, projectId), eq(projectAccess.userId, userId)))
+      .limit(1)
+    if (!pa || !(pa.level in PROJECT_ACCESS_RANK)) {
+      return { ok: false, message: t("project.accessDenied") }
+    }
+    level = pa.level as ProjectAccessLevel
+  }
+
+  if (PROJECT_ACCESS_RANK[level] < PROJECT_ACCESS_RANK[minLevel]) {
+    return { ok: false, message: t("project.accessDenied") }
+  }
+
+  return { ok: true, orgId: project.organizationId, level }
+}
 
 /**
  * List pending invitations for a SPECIFIC organization (the one being viewed).
