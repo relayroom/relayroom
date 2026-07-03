@@ -4,6 +4,42 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.3.27] - 2026-07-04
+
+Security hardening release (Wave 1 access control + media pipeline). Self-hosters should update.
+
+### Security
+- **Project mutations are now gated by project-level access, not just org membership.**
+  Previously any organization member could rename a project, edit its `RELAYROOM.md`,
+  archive it, or regenerate its connect code (rotating every agent's credentials).
+  Updating a project now requires a `write` grant and archive/connect-code rotation
+  require `owner`; connecting an agent requires `write`; editing, promoting,
+  disconnecting, or deleting an agent requires being its owner or a project/org manager;
+  and the project read path re-verifies org membership so a removed member no longer
+  sees project pages through a stale session.
+- **Media downloads now require authorization.** `/api/media/*` served any stored object
+  to anyone who knew (or guessed) a key. It now requires a session - project media
+  requires membership of the owning org, upload staging requires being the uploader -
+  and responses carry `X-Content-Type-Options: nosniff`, `Content-Disposition`, and
+  `Cache-Control: private`.
+- **Image uploads can no longer pixel-bomb the server.** The upload route decoded
+  attacker-supplied images with no pixel limit, so a small highly-compressed image could
+  exhaust memory. Decoding is now capped (`limitInputPixels`, single-threaded sharp) and
+  oversized bodies are rejected by `Content-Length` before buffering.
+- **The dev bootstrap seed no longer runs in production.** `bootstrap-dev` seeded an
+  admin with a known password regardless of environment; it now refuses under
+  `NODE_ENV=production` (explicit `--force` to override) and generates a random password.
+- **Security disclosures now have a real channel.** Added `SECURITY.md` (GitHub private
+  vulnerability reporting, 72h initial response) and fixed the dangling README pointer.
+- The dev `docker-compose.yml` now binds Postgres to `127.0.0.1` instead of all
+  interfaces.
+
+### Fixed
+- **Phantom wake events no longer consume the wake budget.** Wakes that were recorded
+  but never actually issued (`phantom`) were still counted against a person's rolling
+  hourly wake ceiling, so a burst of phantoms could starve real wakes. The budget window
+  now counts settled non-phantom wakes only, matching the reconciler.
+
 ## [0.3.26] - 2026-07-02
 
 ### Added
