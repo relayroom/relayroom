@@ -1,6 +1,6 @@
 import type { ReactNode } from "react"
 import { notFound } from "next/navigation"
-import { requireDashboardAccess } from "@/lib/auth-session"
+import { requireDashboardAccess, isOrgMember } from "@/lib/auth-session"
 import { resolveActiveOrgId } from "@/lib/active-org"
 import { getProjectBySlug, listProjects } from "@/modules/project/queries"
 import { RealtimeProvider } from "@/components/realtime/realtime-provider"
@@ -21,6 +21,14 @@ export default async function ProjectLayout({ children, params }: Props) {
   const { slug } = await params
   const orgId = await resolveActiveOrgId()
   if (!orgId) notFound()
+
+  // AC-4: re-confirm the caller is STILL a member of orgId before serving project
+  // data. resolveActiveOrgId's session-stored `activeOrganizationId` path returns
+  // whatever org tab was active when the session cookie was minted, without
+  // proving current membership - if the member is later removed from the org (or
+  // never belonged to it), a stale/forged activeOrganizationId must not leak read
+  // access to that org's project. A removed member gets a 404, not the project.
+  if (!(await isOrgMember(orgId))) notFound()
 
   const result = await getProjectBySlug(orgId, slug)
   if (!result.result) notFound()
