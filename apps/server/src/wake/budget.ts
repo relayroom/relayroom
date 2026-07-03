@@ -61,12 +61,14 @@ export async function countWindow(
       ),
     )
 
-  // (2) 정산됨: wakeEvents, suppressed=false, createdAt >= since. EXCLUDE events whose
-  // intent is still in-flight - that wake is already counted in (1). Each issued wake
-  // writes both a pending intent AND a ledger event in the same tx, so without this
-  // filter a fresh wake counts TWICE against the budget (it does not stop wakes - it
+  // (2) 정산됨: wakeEvents, suppressed=false, phantom=false, createdAt >= since. EXCLUDE
+  // events whose intent is still in-flight - that wake is already counted in (1). Each
+  // issued wake writes both a pending intent AND a ledger event in the same tx, so without
+  // this filter a fresh wake counts TWICE against the budget (it does not stop wakes - it
   // just suppresses ~2x early). A settled/expired intent is no longer in (1), so its
-  // event correctly counts here.
+  // event correctly counts here. phantom=false matches reconcile.ts's settled-wake filter -
+  // phantom wake_events are reconciliation bookkeeping (never actually delivered) and must
+  // not consume the owner's real budget.
   const inFlightIntentIds = new Set(intents.map(r => r.id))
   const settledRaw = await dbx
     .select({ wakeIntentId: wakeEvents.wakeIntentId, urgent: wakeEvents.urgent, projectId: wakeEvents.projectId })
@@ -75,6 +77,7 @@ export async function countWindow(
       and(
         eq(wakeEvents.ownerUserId, ownerUserId),
         eq(wakeEvents.suppressed, false),
+        eq(wakeEvents.phantom, false),
         gte(wakeEvents.createdAt, since),
       ),
     )
