@@ -7,7 +7,7 @@ services:
       POSTGRES_PASSWORD: hub
       POSTGRES_DB: hub
     ports:
-      - "48802:5432"
+      - "127.0.0.1:48802:5432"
     volumes:
       # Bind-mount the DB data into a repo-local dir (gitignored) so the dev
       # database is inspectable on the host. postgres:18 keeps its cluster under

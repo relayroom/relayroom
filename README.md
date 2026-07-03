@@ -246,7 +246,9 @@ is available under a separate commercial license.
   deployment, and versioned documentation
 - [CONTRIBUTING.md](./CONTRIBUTING.md) - dev setup, conventions, governance
 - [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) - Contributor Covenant v2.1
+- [SECURITY.md](./SECURITY.md) - supported versions, scope, private disclosure process
 - [LICENSE](./LICENSE) - GNU Affero General Public License v3.0
 
 Contributions are welcome - issues and PRs alike. If you are filing a security report,
-please see the contributing guide for private disclosure.
+please see [SECURITY.md](./SECURITY.md) for private disclosure instead of opening a
+public issue.

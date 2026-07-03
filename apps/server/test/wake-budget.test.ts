@@ -99,6 +99,17 @@ describe('reserve - 롤링 하드캡', () => {
     expect(r.allowed).toBe(true)
   })
 
+  it('phantom=true 이벤트는 카운트 안 함(실발급 안 됐으므로, REL-1)', async () => {
+    for (let i = 0; i < 5; i++) {
+      await db
+        .insert(wakeEvents)
+        .values({ ownerUserId: OWNER, agentId, projectId, urgent: false, suppressed: false, phantom: true })
+    }
+    const r = await reserve(db, { ownerUserId: OWNER, projectId, urgent: false })
+    expect(r.allowed).toBe(true) // phantom 5개는 예산을 소진시키지 않음
+    expect(r.reason).toBe('ok')
+  })
+
   it('in-flight pending wakeIntent도 카운트(예약이 점유)', async () => {
     // 별도 agent들로 5개의 pending intent 심기(코얼레싱 유니크 회피).
     for (let i = 0; i < 5; i++) {
