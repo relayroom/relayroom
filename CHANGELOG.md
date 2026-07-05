@@ -4,6 +4,20 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.4.0] - 2026-07-05
+
+Includes a database migration (`0013_add_limited_until`); it applies automatically on
+`docker compose up` for self-hosters.
+
+### Added
+- **Limit-aware wake (park & resume).** When an agent hits its provider's rate limit it
+  reports `event type:"limited"` with `detail.resetAt`; RelayRoom then *parks* that agent's
+  wakes - incoming messages still queue, but no nudge fires while it is limited - and the
+  eligibility sweep automatically re-wakes it right after the reset window passes. The
+  dashboard shows a live "limited until" badge on the agent, so an operator can see at a
+  glance who is throttled and when they will resume, instead of the agent silently missing
+  wakes or burning retries against a limit.
+
 ## [0.3.27] - 2026-07-04
 
 Security hardening release (Wave 1 access control + media pipeline). Self-hosters should update.
