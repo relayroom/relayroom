@@ -63,5 +63,8 @@
     "offline": "Pager offline",
     "offlineHint": "Pager is not responding (may miss messages)",
     "lastBeat": "Last beat {time}"
+  },
+  "limited": {
+    "badge": "Limited until {time}"
   }
 }

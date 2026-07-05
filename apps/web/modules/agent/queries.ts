@@ -29,6 +29,8 @@ export interface AgentRow {
   pagerLastSeenAt: Date | null
   /** Whether the pager has beaten recently (process is alive). */
   pagerOnline: boolean
+  /** Timestamp the provider rate-limit lifts, or null if not limited. */
+  limitedUntil: Date | null
   createdAt: Date
   // From latest connection
   model: string | null
@@ -106,6 +108,8 @@ export interface AgentDetail {
   /** Last pager heartbeat + derived liveness (pager process alive). */
   pagerLastSeenAt: Date | null
   pagerOnline: boolean
+  /** Timestamp the provider rate-limit lifts, or null if not limited. */
+  limitedUntil: Date | null
   createdAt: Date
   updatedAt: Date
   connections: AgentConnectionDetail[]
@@ -140,6 +144,7 @@ export async function listAgents(
         ownerName: sql<string | null>`coalesce(nullif(${better_auth_user.nickname}, ''), ${better_auth_user.name})`,
         lastSeenAt: agents.lastSeenAt,
         pagerLastSeenAt: agents.pagerLastSeenAt,
+        limitedUntil: agents.limitedUntil,
         createdAt: agents.createdAt,
       })
       .from(agents)
@@ -653,6 +658,7 @@ export async function getAgent(
         lastSeenAt: agent.lastSeenAt,
         pagerLastSeenAt: agent.pagerLastSeenAt,
         pagerOnline: isPagerOnline(agent.pagerLastSeenAt),
+        limitedUntil: agent.limitedUntil,
         createdAt: agent.createdAt,
         updatedAt: agent.updatedAt,
         connections,

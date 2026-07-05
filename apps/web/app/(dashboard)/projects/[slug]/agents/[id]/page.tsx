@@ -22,6 +22,7 @@ import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { MainAgentBadge } from "@/components/agent/main-agent-badge"
 import { PagerStatusBadge } from "@/components/agent/pager-status-icon"
+import { LimitedBadge } from "@/components/agent/limited-badge"
 import { AgentAvatar } from "@/components/agent/agent-appearance"
 import { AgentModelUsageChart } from "@/components/agent/agent-model-usage-chart"
 import { getOwnerWakeBudget, listOwnerWakeAudit } from "@/modules/wake/queries"
@@ -158,6 +159,7 @@ export default async function AgentDetailPage({ params, searchParams }: Props) {
                 status={agent.pagerOnline}
                 lastSeenAt={agent.pagerLastSeenAt ? agent.pagerLastSeenAt.toISOString() : null}
               />
+              <LimitedBadge part={agent.part} limitedUntil={agent.limitedUntil ? agent.limitedUntil.toISOString() : null} />
             </div>
             {agent.models.length > 0 && (
               <div className="flex items-center gap-2 flex-wrap text-xs text-muted-foreground">

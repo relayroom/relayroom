@@ -750,7 +750,7 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
     'event',
     'Record a work event for this agent (progress, complete, error, etc.).',
     {
-      type: z.string().describe('Event type: spawn | progress | complete | error | message'),
+      type: z.string().describe('Event type: spawn | progress | complete | error | message | composing | limited (rate-limit park: set detail.resetAt to the ISO time your provider limit lifts; omit/null to clear)'),
       detail: z.record(z.string(), z.unknown()).optional().describe('Structured detail payload'),
       usage: z.object({
         input_tokens: z.number().optional(),
@@ -806,6 +806,43 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
           project: ctx.projectSlug,
           part: ctx.part,
           threadId: args.detail.threadId,
+        })
+      }
+
+      // Provider rate-limit park (limit-aware wake). An agent that hits (or is
+      // about to hit) its provider's usage limit reports type:'limited' with
+      // detail.resetAt (ISO timestamp the limit lifts). While parked, wake
+      // issuance is suppressed for this agent (issuance.ts gate 2.5); the 30s
+      // eligibility sweep resumes it on its first tick past resetAt. Delivery is
+      // unaffected - messages queue in the inbox. detail.resetAt null/absent (or
+      // a past timestamp) CLEARS the park ("I'm back early"). An agent can only
+      // park ITSELF (ctx.part), and the window is clamped to 24h so a bogus
+      // report cannot silence a part indefinitely.
+      if (args.type === 'limited') {
+        const raw = args.detail?.resetAt
+        let limitedUntil: Date | null = null
+        if (typeof raw === 'string') {
+          const parsed = new Date(raw)
+          if (Number.isNaN(parsed.getTime())) {
+            return { content: [{ type: 'text' as const, text: 'error: detail.resetAt is not a valid ISO timestamp' }], isError: true }
+          }
+          const maxUntil = Date.now() + 24 * 60 * 60 * 1000
+          if (parsed.getTime() > Date.now()) {
+            limitedUntil = parsed.getTime() > maxUntil ? new Date(maxUntil) : parsed
+          }
+          // past timestamp -> treated as a clear (limitedUntil stays null)
+        }
+        await db.update(agents)
+          .set({ limitedUntil })
+          .where(eq(agents.id, agent.id))
+        // Live badge for the dashboard. A 'limited' kind (NOT 'message') so pagers
+        // ignore it (they only wake on kind:'message').
+        bus.emit('message', {
+          kind: 'limited',
+          projectId: ctx.projectId,
+          project: ctx.projectSlug,
+          part: ctx.part,
+          limitedUntil: limitedUntil ? limitedUntil.toISOString() : null,
         })
       }
 

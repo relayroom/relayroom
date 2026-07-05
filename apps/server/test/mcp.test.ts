@@ -339,6 +339,72 @@ describe('MCP resource server (/mcp/:connectCode)', () => {
     bus.off('message', listener)
   })
 
+  it('event type=limited parks the agent, clamps to 24h, clears, and rejects garbage', async () => {
+    const { projectId, connectCode, rawToken } = await setupCaller()
+    await ensureAgents(projectId, 'worker')
+
+    const limitedEvents: Array<{ part: string; limitedUntil: string | null }> = []
+    const listener = (e: HubBusEvent) => {
+      if (e.kind === 'limited') limitedEvents.push({ part: e.part, limitedUntil: e.limitedUntil })
+    }
+    bus.on('message', listener)
+
+    const agentRow = async () => (await db.select().from(agents)
+      .where(and(eq(agents.projectId, projectId), eq(agents.part, 'worker'))).limit(1))[0]!
+
+    // 1. Park: a future resetAt sets limitedUntil to exactly that instant.
+    const resetAt = new Date(Date.now() + 2 * 60 * 60 * 1000)
+    const parked = await callTool(connectCode, rawToken, 'worker', 'event', {
+      type: 'limited', detail: { resetAt: resetAt.toISOString() },
+    })
+    expect(parked.isError).toBeFalsy()
+    expect((await agentRow()).limitedUntil?.getTime()).toBe(resetAt.getTime())
+
+    // 2. Clamp: a resetAt >24h out is clamped to ~now+24h (bogus report guard).
+    const farOut = new Date(Date.now() + 48 * 60 * 60 * 1000)
+    await callTool(connectCode, rawToken, 'worker', 'event', {
+      type: 'limited', detail: { resetAt: farOut.toISOString() },
+    })
+    const clamped = (await agentRow()).limitedUntil!.getTime()
+    expect(clamped).toBeLessThanOrEqual(Date.now() + 24 * 60 * 60 * 1000 + 5000)
+    expect(clamped).toBeGreaterThan(Date.now() + 23 * 60 * 60 * 1000)
+
+    // 3. Clear: type=limited with no resetAt lifts the park ("back early").
+    await callTool(connectCode, rawToken, 'worker', 'event', { type: 'limited' })
+    expect((await agentRow()).limitedUntil).toBeNull()
+
+    // 4. Garbage resetAt -> tool error, park state untouched (still null).
+    const bad = await callTool(connectCode, rawToken, 'worker', 'event', {
+      type: 'limited', detail: { resetAt: 'not-a-timestamp' },
+    })
+    expect(bad.isError).toBe(true)
+    expect((await agentRow()).limitedUntil).toBeNull()
+
+    // 5. Non-string resetAt (e.g. a number) is treated like absent -> clear, not error.
+    await callTool(connectCode, rawToken, 'worker', 'event', {
+      type: 'limited', detail: { resetAt: resetAt.toISOString() },
+    })
+    const nonString = await callTool(connectCode, rawToken, 'worker', 'event', {
+      type: 'limited', detail: { resetAt: 12345 },
+    })
+    expect(nonString.isError).toBeFalsy()
+    expect((await agentRow()).limitedUntil).toBeNull()
+
+    // Live badge events fired for park + clamp + clear (in order), pager-invisible kind.
+    await new Promise<void>((resolve, reject) => {
+      const deadline = setTimeout(() => reject(new Error('missing limited bus events')), 3000)
+      const poll = setInterval(() => {
+        if (limitedEvents.filter(e => e.part === 'worker').length >= 3) {
+          clearInterval(poll); clearTimeout(deadline); resolve()
+        }
+      }, 10)
+    })
+    bus.off('message', listener)
+    const mine = limitedEvents.filter(e => e.part === 'worker')
+    expect(mine[0]!.limitedUntil).toBe(resetAt.toISOString())
+    expect(mine[2]!.limitedUntil).toBeNull()
+  })
+
   it('ownership: a member with the connect code cannot seize another user\'s agent (403)', async () => {
     const orgId = `mcp-org-own-${randomBytes(4).toString('hex')}`
     const alice = await insertTestUser()

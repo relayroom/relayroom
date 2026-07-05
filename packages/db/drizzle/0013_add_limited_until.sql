@@ -1,0 +1,1 @@
+ALTER TABLE "agent" ADD COLUMN "limited_until" timestamp with time zone;
