@@ -1,0 +1,304 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`MCP tool contract > advertises stable descriptions and input schemas 1`] = `
+[
+  {
+    "description": "Mark a message as read for this agent.",
+    "execution": {
+      "taskSupport": "forbidden",
+    },
+    "inputSchema": {
+      "properties": {
+        "messageId": {
+          "description": "UUID of the message to acknowledge",
+          "type": "string",
+        },
+      },
+      "required": [
+        "messageId",
+      ],
+      "type": "object",
+    },
+    "name": "ack",
+  },
+  {
+    "description": "Close a thread once it is resolved (a question answered, a task acknowledged). A closed thread leaves every inbox and NEVER wakes its participants again - this is how you end a conversation. Close early and often; an open thread keeps pinging. If there is genuinely new work, open a new thread with send instead of reopening.",
+    "execution": {
+      "taskSupport": "forbidden",
+    },
+    "inputSchema": {
+      "properties": {
+        "threadId": {
+          "description": "UUID of the thread to close",
+          "type": "string",
+        },
+      },
+      "required": [
+        "threadId",
+      ],
+      "type": "object",
+    },
+    "name": "close",
+  },
+  {
+    "description": "Record a work event for this agent (progress, complete, error, etc.).",
+    "execution": {
+      "taskSupport": "forbidden",
+    },
+    "inputSchema": {
+      "properties": {
+        "detail": {
+          "description": "Structured detail payload",
+          "type": "object",
+        },
+        "endedAt": {
+          "description": "ISO timestamp when work ended",
+          "type": "string",
+        },
+        "parentEventId": {
+          "description": "Parent event UUID for hierarchical events",
+          "type": "string",
+        },
+        "spawnedAgentLabel": {
+          "description": "Label of a spawned sub-agent",
+          "type": "string",
+        },
+        "startedAt": {
+          "description": "ISO timestamp when work started",
+          "type": "string",
+        },
+        "type": {
+          "description": "Event type: spawn | progress | complete | error | message | composing | limited (rate-limit park: set detail.resetAt to the ISO time your provider limit lifts; omit/null to clear)",
+          "type": "string",
+        },
+        "usage": {
+          "description": "Token usage stats",
+          "properties": {
+            "cache_tokens": {
+              "type": "number",
+            },
+            "cost_usd": {
+              "type": "number",
+            },
+            "input_tokens": {
+              "type": "number",
+            },
+            "model": {
+              "type": "string",
+            },
+            "output_tokens": {
+              "type": "number",
+            },
+          },
+          "type": "object",
+        },
+      },
+      "required": [
+        "type",
+      ],
+      "type": "object",
+    },
+    "name": "event",
+  },
+  {
+    "description": "List messages addressed to this agent, newest first. Returns a short body preview per message; call \`show\` with the threadId to read full bodies. Default 30 most recent; pass unreadOnly: true for unread only.",
+    "execution": {
+      "taskSupport": "forbidden",
+    },
+    "inputSchema": {
+      "properties": {
+        "limit": {
+          "description": "Max messages to return (default 30, max 50)",
+          "maximum": 50,
+          "minimum": 1,
+          "type": "integer",
+        },
+        "unreadOnly": {
+          "description": "If true, return only unread messages",
+          "type": "boolean",
+        },
+      },
+      "type": "object",
+    },
+    "name": "inbox",
+  },
+  {
+    "description": "Reply to an existing thread in this project.",
+    "execution": {
+      "taskSupport": "forbidden",
+    },
+    "inputSchema": {
+      "properties": {
+        "body": {
+          "description": "Message body",
+          "minLength": 1,
+          "type": "string",
+        },
+        "needsHuman": {
+          "description": "Set true when you are blocked or need an explicit decision from the human operator. This lights up the dashboard notification bell; it clears when a human replies. Requires the needs_human capability; ignored (no bell) otherwise.",
+          "type": "boolean",
+        },
+        "threadId": {
+          "description": "UUID of the thread to reply to",
+          "type": "string",
+        },
+        "urgent": {
+          "description": "Set true ONLY for time-critical replies that should wake idle recipients out of band. Draws from a SEPARATE urgent allowance (U), not the normal wake budget. Requires the urgent capability on your project membership; rejected otherwise. A recipient who set U=0 still receives the message but is not woken.",
+          "type": "boolean",
+        },
+      },
+      "required": [
+        "threadId",
+        "body",
+      ],
+      "type": "object",
+    },
+    "name": "reply",
+  },
+  {
+    "description": "List the agents (parts) in this project and whether each is online, so you know who to send/reply to. \`send\`/\`reply\` address parts - this is how you discover them.",
+    "execution": {
+      "taskSupport": "forbidden",
+    },
+    "inputSchema": {
+      "properties": {},
+      "type": "object",
+    },
+    "name": "roster",
+  },
+  {
+    "description": "Search threads in this project by subject and message body (case-insensitive substring). Use this to pull context from conversations you are NOT part of - so you can keep working without being sent everything. Returns matching threads (id, subject, status); call show for full content.",
+    "execution": {
+      "taskSupport": "forbidden",
+    },
+    "inputSchema": {
+      "properties": {
+        "limit": {
+          "description": "Max threads to return (default 10, max 20)",
+          "maximum": 20,
+          "minimum": 1,
+          "type": "integer",
+        },
+        "query": {
+          "description": "Text to look for in thread subjects and message bodies",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "query",
+      ],
+      "type": "object",
+    },
+    "name": "search",
+  },
+  {
+    "description": "Create a new thread with a first message, addressed to one or more agent parts in this project.",
+    "execution": {
+      "taskSupport": "forbidden",
+    },
+    "inputSchema": {
+      "properties": {
+        "body": {
+          "description": "Message body",
+          "minLength": 1,
+          "type": "string",
+        },
+        "needsHuman": {
+          "description": "Set true when you are blocked or need an explicit decision from the human operator. This lights up the dashboard notification bell; it clears when a human replies. Requires the needs_human capability; ignored (no bell) otherwise.",
+          "type": "boolean",
+        },
+        "subject": {
+          "description": "Thread subject / title",
+          "minLength": 1,
+          "type": "string",
+        },
+        "tags": {
+          "description": "Optional tags for the thread",
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "to": {
+          "description": "Recipient part names (e.g. ["backend", "human"])",
+          "items": {
+            "type": "string",
+          },
+          "minItems": 1,
+          "type": "array",
+        },
+        "urgent": {
+          "description": "Set true ONLY for time-critical messages that should wake idle recipients out of band. Draws from a SEPARATE urgent allowance (U), not the normal wake budget. Requires the urgent capability on your project membership; rejected otherwise. A recipient who set U=0 still receives the message but is not woken.",
+          "type": "boolean",
+        },
+      },
+      "required": [
+        "subject",
+        "body",
+        "to",
+      ],
+      "type": "object",
+    },
+    "name": "send",
+  },
+  {
+    "description": "Read a specific thread and all its messages.",
+    "execution": {
+      "taskSupport": "forbidden",
+    },
+    "inputSchema": {
+      "properties": {
+        "threadId": {
+          "description": "UUID of the thread to read",
+          "type": "string",
+        },
+      },
+      "required": [
+        "threadId",
+      ],
+      "type": "object",
+    },
+    "name": "show",
+  },
+  {
+    "description": "List threads in this project.",
+    "execution": {
+      "taskSupport": "forbidden",
+    },
+    "inputSchema": {
+      "properties": {
+        "q": {
+          "description": "Filter by subject substring (case-insensitive)",
+          "type": "string",
+        },
+        "status": {
+          "description": "Filter by thread status",
+          "enum": [
+            "open",
+            "answered",
+            "closed",
+            "holding",
+            "canceled",
+          ],
+          "type": "string",
+        },
+      },
+      "type": "object",
+    },
+    "name": "threads",
+  },
+  {
+    "description": "Report this agent's own part, project, and whether it is the main agent - useful after a compaction or restart to re-orient.",
+    "execution": {
+      "taskSupport": "forbidden",
+    },
+    "inputSchema": {
+      "properties": {},
+      "type": "object",
+    },
+    "name": "whoami",
+  },
+]
+`;
