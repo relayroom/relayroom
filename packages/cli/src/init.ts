@@ -290,6 +290,24 @@ sl() {
 }
 
 # ── tmux ─────────────────────────────────────────────────────────────────────
+# config.target is read as a SESSION NAME here, but the pager reads the same field as
+# a full tmux target and accepts session:window.pane. tmux does not reject a session
+# name containing ':' or '.' - it silently rewrites them to '_', so a target of
+# "rr-core:0.1" creates a session called "rr-core_0_1" while the pager keeps sending
+# keys to "rr-core:0.1". Both sides exit 0, nothing logs an error, and the agent
+# simply never wakes. Refuse the ambiguous value instead of half-honouring it.
+session_name_ok() { case "$SESSION" in *:*|*.*) return 1 ;; *) return 0 ;; esac; }
+assert_session_name() {
+  session_name_ok && return 0
+  echo "rr.sh: config.target is '$SESSION', which tmux cannot use as a session name." >&2
+  echo "       ':' and '.' are window/pane separators. tmux would quietly create a session" >&2
+  echo "       named '$(printf '%s' "$SESSION" | tr ':.' '__')' while the pager keeps waking" >&2
+  echo "       '$SESSION', so nobody delivers and nothing reports an error." >&2
+  echo "       Window/pane targets are not supported yet. Set a plain session name:" >&2
+  echo "         $CLI init --part $PART --target <session-name>" >&2
+  exit 1
+}
+
 tx_exists() { tmux has-session -t "=$SESSION" 2>/dev/null; }
 tx_start() {
   if tx_exists; then echo "session '$SESSION' exists - attaching"; tmux attach -t "=$SESSION";
@@ -442,7 +460,15 @@ doctor() {
   [ -n "$global" ] && echo "       note: $PRIMARY MCP config is GLOBAL - worktrees can't hold separate identities here (use claude for that)."
   if mcp_online; then echo "$OKM server reachable ($SERVER)"; else echo "$ERR server UNREACHABLE ($SERVER) - is the hub up?"; fi
   pg_running && echo "$OKM pager running (pid $(cat "$PIDFILE"))" || echo "$WRN pager stopped - start with: ./rr.sh up"
-  tx_exists && echo "$OKM tmux session '$SESSION' running" || echo "$WRN no tmux session '$SESSION' - run: ./rr.sh up"
+  if session_name_ok; then
+    tx_exists && echo "$OKM tmux session '$SESSION' running" || echo "$WRN no tmux session '$SESSION' - run: ./rr.sh up"
+  else
+    # Diagnose rather than exit: doctor is what you run when this has already bitten.
+    echo "$ERR config.target ('$SESSION') contains ':' or '.', which tmux treats as a"
+    echo "       window/pane separator. rr.sh would create '$(printf '%s' "$SESSION" | tr ':.' '__')'"
+    echo "       while the pager wakes '$SESSION' - nobody delivers. Re-init with a plain"
+    echo "       session name: $CLI init --part $PART --target <session-name>"
+  fi
 }
 
 usage() {
@@ -469,6 +495,7 @@ EOF
 
 case "\${1:-help}" in
   up)
+    assert_session_name
     self_update_if_pending "$@"   # auto-update first if the hub flagged a newer CLI (may re-exec)
     migrate_session_name          # rename a still-running old-named session to the standard name
     if ! tx_exists; then prepare_launch; echo "starting session '$SESSION' running '$LAUNCH'"; tmux new-session -d -s "$SESSION" "$LAUNCH"; fi
@@ -487,8 +514,8 @@ case "\${1:-help}" in
   # RESTART the pager (not just start): prepare_launch may have CHANGED delivery
   # (channel<->pager), but the pager only reads delivery at startup, so a stale
   # running pager would deliver in the wrong mode.
-  launch) prepare_launch; pg_stop >/dev/null 2>&1 || true; pg_start; exec sh -c "$LAUNCH" ;;
-  down) pg_stop; tmux kill-session -t "$SESSION" 2>/dev/null && echo "killed session '$SESSION'" || echo "no session to kill" ;;
+  launch) assert_session_name; prepare_launch; pg_stop >/dev/null 2>&1 || true; pg_start; exec sh -c "$LAUNCH" ;;
+  down) assert_session_name; pg_stop; tmux kill-session -t "$SESSION" 2>/dev/null && echo "killed session '$SESSION'" || echo "no session to kill" ;;
   status)
     tx_status
     if mcp_online; then echo "mcp: server reachable ($SERVER)"; else echo "mcp: server UNREACHABLE ($SERVER) - is the hub up?"; fi
@@ -498,7 +525,7 @@ case "\${1:-help}" in
   # Print the RelayRoom CLI version (delegates to the installed CLI, so it reflects
   # the current install - run \`./rr.sh update --self\` to regenerate rr.sh after upgrading).
   --version|-v|version) $CLI --version ;;
-  tmux) case "\${2:-}" in
+  tmux) assert_session_name; case "\${2:-}" in
       start) tx_start ;; continue|attach) tmux attach -t "$SESSION" ;;
       exit|stop|kill) tmux kill-session -t "$SESSION" && echo "killed '$SESSION'" ;;
       status) tx_status ;; *) usage; exit 1 ;; esac ;;
