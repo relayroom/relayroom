@@ -92,7 +92,9 @@ const RETRY_MAX = (() => {
   const n = Math.floor(Number(arg("retries", "3")))
   return Number.isFinite(n) ? Math.min(8, Math.max(0, n)) : 3
 })()
-const RETRY_BASE_MS = 500                      // backoff base
+// Backoff base for the tmux send-keys retries below. The wake retry curve is not
+// this constant: it comes from the shared client, so both consumers wait alike.
+const RETRY_BASE_MS = 500
 // Settle delay between the literal text and the submitting Enter. codex/gemini TUIs run
 // paste/burst detection: an Enter that arrives in the SAME fast keystroke burst as the
 // text is folded into the composer as a newline, NOT treated as a submit - so the nudge
@@ -376,7 +378,6 @@ let pending = [] // collected events in the current burst
 let timer = null
 let flushing = false // single-flight guard: only one flush() runs at a time
 let retries = 0      // consecutive transient-failure count -> backoff level
-const RETRY_MAX_MS = 30_000 // backoff cap; keep retrying for the session, never drop a live wake
 
 // Headless de-dup: wakeIds we have already spawned a CLI for, so a sweep-re-issued
 // (un-acked) wake never triggers a second expensive model run. See makeWakeDedup.
@@ -395,7 +396,7 @@ function enqueue(evt) {
 // outcomes (noWake / lease held by another pager) are dropped by the caller instead.
 function requeue(batch, reason) {
   pending.unshift(...batch)
-  const delay = backoff(retries, { baseMs: RETRY_BASE_MS, capMs: RETRY_MAX_MS, maxExponent: 6 })
+  const delay = backoff(retries)
   retries++
   if (!timer) timer = setTimeout(flush, delay)
   log(`nudge deferred: ${reason} (retry #${retries} in ${delay}ms)`)

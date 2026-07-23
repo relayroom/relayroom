@@ -190,8 +190,6 @@ let pending = []
 let timer = null
 let flushing = false
 let transientRetries = 0
-const RETRY_BASE_MS = 2000
-const RETRY_MAX_MS = 30_000 // backoff cap; we keep retrying for the session's lifetime
 
 function enqueue(evt) {
   pending.push(evt)
@@ -213,14 +211,14 @@ async function flush() {
       // turn boundary itself), so the claim and the notify are effectively atomic.
       const decision = wake.leaseDecision(await wake.claimLease())
       if (!decision.go) {
-        // Transient (server unreachable / claim errored): re-queue and retry with
-        // exponential backoff (cap RETRY_MAX_MS) for the session's lifetime - never
-        // drop, since the server sweep EXCLUDES agents that already have an active
-        // wake, so a dropped transient would strand the wake until it stale-expires.
+        // Transient (server unreachable / claim errored): re-queue and retry on the
+        // shared backoff curve for the session's lifetime - never drop, since the
+        // server sweep EXCLUDES agents that already have an active wake, so a dropped
+        // transient would strand the wake until it stale-expires.
         // The counter only sets the backoff level (a merged batch inheriting it just
         // waits a bit longer); a successful push or a definitive skip resets it.
         if (decision.transient) {
-          const delay = backoff(transientRetries, { baseMs: RETRY_BASE_MS, capMs: RETRY_MAX_MS, maxExponent: 4 })
+          const delay = backoff(transientRetries)
           transientRetries++
           pending.unshift(...batch)
           if (!timer) timer = setTimeout(flush, delay)

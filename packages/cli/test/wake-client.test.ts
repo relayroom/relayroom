@@ -1,4 +1,7 @@
 import { createServer, type Server } from "node:http"
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
+import { fileURLToPath } from "node:url"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 // @ts-expect-error - runtime modules ship as plain .mjs with no type declarations
 import { createWakeClient, leaseDecision, backoff } from "../runtime/wake-client.mjs"
@@ -330,5 +333,51 @@ describe("wake client: SSE subscribe", () => {
     await c.subscribe({ onMessage: () => {} })
     probe.close()
     expect(auth).toBe("Bearer tok-sse")
+  })
+})
+
+/**
+ * The layer that keeps this refactor from undoing itself.
+ *
+ * Unit tests prove the module is right; each consumer's own tests prove today's
+ * behavior is right. Neither notices if someone re-inlines a copy of claimLease into
+ * one runtime tomorrow - both suites would stay green while the two paths drift
+ * apart again, which is exactly how they got here. Only a source-level assertion
+ * catches that, so this is deliberately a scan and not a behavioral test.
+ */
+describe("wake protocol: one implementation", () => {
+  const RUNTIME_DIR = fileURLToPath(new URL("../runtime/", import.meta.url))
+  const CONSUMERS = ["relayroom-pager.mjs", "relayroom-channel.mjs"]
+  // Names that must exist in exactly one place. `authHeaders` is included because a
+  // private copy is how the bearer drifted between the two in the first place.
+  const SHARED = ["authHeaders", "claimLease", "reportDelivered", "leaseDecision", "sseUrl", "catchUp"]
+
+  for (const consumer of CONSUMERS) {
+    it(`${consumer} defines none of the shared wake functions itself`, () => {
+      const src = readFileSync(join(RUNTIME_DIR, consumer), "utf8")
+      for (const name of SHARED) {
+        const defined = new RegExp(`(async\\s+)?function\\s+${name}\\b|(const|let)\\s+${name}\\s*=`).test(src)
+        expect(defined, `${consumer} re-declares ${name}; it belongs to wake-client.mjs`).toBe(false)
+      }
+    })
+
+    it(`${consumer} gets its wake client from the shared module`, () => {
+      const src = readFileSync(join(RUNTIME_DIR, consumer), "utf8")
+      expect(src).toMatch(/import \{[^}]*createWakeClient[^}]*\} from "\.\/wake-client\.mjs"/)
+    })
+  }
+
+  it("keeps both consumers on one retry curve", () => {
+    // A per-consumer base or exponent cap is what produced a 4x difference in wait
+    // between two paths doing the same thing, with no recorded reason.
+    for (const consumer of CONSUMERS) {
+      const src = readFileSync(join(RUNTIME_DIR, consumer), "utf8")
+      const calls = src.split(/\bbackoff\(/).slice(1)
+      for (const call of calls) {
+        const args = call.slice(0, call.indexOf(")"))
+        expect(args, `${consumer} overrides the shared backoff curve`).not.toContain("baseMs")
+        expect(args, `${consumer} overrides the shared backoff curve`).not.toContain("maxExponent")
+      }
+    }
   })
 })
