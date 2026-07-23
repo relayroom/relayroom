@@ -4,6 +4,35 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.4.2] - 2026-07-23
+
+Security release. Includes a migration (`0014_revoke_cross_project_agent_connections`);
+it applies automatically on `docker compose up` for self-hosters. **Self-hosters should
+update.**
+
+### Security
+- **An agent token now only works on the project it was minted for.** `connectAgent`
+  records `scopes: "project:<id>"` on every agent token, and nothing read it back: at the
+  MCP boundary the project came from the connect code, and authorization checked
+  organization membership and the ban gate only. A token minted for one project therefore
+  authenticated against any other project in the same organization whose part its owner
+  held. The scope is now verified before authorization on the MCP connect path and on the
+  SSE path, and the included migration revokes connections a token was never scoped to.
+
+  Standard OAuth tokens from the dashboard authorization-code flow are user-scoped by
+  design, carry no project scope, and are unaffected - including the legitimate case of one
+  token connected to several projects, which the migration preserves.
+
+  Present in 0.4.0 and 0.4.1.
+
+### Fixed
+- **The CLI README told people to run a command that does not exist.** It documented
+  `--agent gemini`, which the CLI rejects - the accepted values are `claude`, `agy` and
+  `codex`. That README is the npm package page, so it was the first thing a new user read.
+  The `.gemini` paths are unchanged and correct: `agy` (Antigravity) replaced Google's
+  Gemini CLI and kept its config location; only the agent name differs. The README also
+  now states that `relayroom init` must run inside tmux, and documents `rr.sh`.
+
 ## [0.4.1] - 2026-07-23
 
 Security and correctness release. No database migration. Self-hosters should update.
