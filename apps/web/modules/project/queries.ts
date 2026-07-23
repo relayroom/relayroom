@@ -1,6 +1,7 @@
 import { and, count, desc, eq, isNull, ne, sql } from "drizzle-orm"
 import type { ApiResultWithItem, ApiResultWithItems } from "@relayroom/shared"
 import { db } from "@/modules/drizzle/db"
+import { notBannedFromProject } from "@/lib/auth-session"
 import { projects, agents, projectAccess, threads, events } from "@relayroom/db/schema"
 
 // The virtual 'human' participant (server HUMAN_PART) is not a connectable agent,
@@ -56,9 +57,16 @@ export interface ProjectDetail {
  * List all non-archived projects for the given org.
  * Includes agent count and org member count (as proxy for member count since
  * project_access is an additional grant layer; v1 uses org member count).
+ *
+ * Pass `viewerUserId` to drop projects that viewer is banned from. It is optional
+ * only so that callers with no viewer in hand (and the org-scoping unit tests)
+ * keep the unfiltered listing; any caller rendering the list TO a person should
+ * pass it, or a banned member keeps seeing the project's name, activity, and
+ * usage sparkline in the list.
  */
 export async function listProjects(
   orgId: string,
+  viewerUserId?: string,
 ): Promise<ApiResultWithItems<ProjectCard>> {
   try {
     // Agent counts per project
@@ -122,7 +130,13 @@ export async function listProjects(
       .leftJoin(memberCountSq, eq(projects.id, memberCountSq.projectId))
       .leftJoin(threadStatsSq, eq(projects.id, threadStatsSq.projectId))
       .leftJoin(eventStatsSq, eq(projects.id, eventStatsSq.projectId))
-      .where(and(eq(projects.organizationId, orgId), isNull(projects.archivedAt)))
+      .where(
+        and(
+          eq(projects.organizationId, orgId),
+          isNull(projects.archivedAt),
+          ...(viewerUserId ? [notBannedFromProject(projects.id, viewerUserId)] : []),
+        ),
+      )
       .orderBy(desc(projects.createdAt))
 
     // Daily token totals per project for the last N days (one query → sparklines).

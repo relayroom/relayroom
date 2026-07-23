@@ -1,6 +1,6 @@
 "use server"
 
-import { and, eq, isNull, sql } from "drizzle-orm"
+import { and, eq, isNull, ne, sql } from "drizzle-orm"
 import type { ApiResult, ApiResultWithItem } from "@relayroom/shared"
 import { NEEDS_HUMAN_TAG } from "@relayroom/shared"
 import {
@@ -145,12 +145,21 @@ export async function postMessage(
     if (targetAgentIds && targetAgentIds.length > 0) {
       // Verify each agent belongs to the same project (security); grab the part
       // so we can wake each recipient over the bus.
+      //
+      // targetAgentIds is client input and this filter is the only server-side
+      // check on it, so it has to match what listAgentTargets offers: a project's
+      // LIVE, addressable parts. It previously scoped to the project alone, which
+      // let a crafted request address a soft-deleted part (recipient rows plus a
+      // pager wake for an agent whose tokens deleteAgent already revoked) or the
+      // virtual 'human' participant, which is not an agent anyone can wake.
       const validAgents = await db
         .select({ id: agents.id, part: agents.part })
         .from(agents)
         .where(
           and(
             eq(agents.projectId, thread.projectId),
+            isNull(agents.deletedAt),
+            ne(agents.part, HUMAN_PART),
           ),
         )
       const partById = new Map(validAgents.map((a) => [a.id, a.part]))
@@ -241,10 +250,17 @@ export async function createThread(
     }
 
     // Verify recipients belong to the project (security) and resolve their parts.
+    // Same addressability rule as postMessage and listAgentTargets.
     const validAgents = await db
       .select({ id: agents.id, part: agents.part })
       .from(agents)
-      .where(and(eq(agents.projectId, projectId), isNull(agents.deletedAt)))
+      .where(
+        and(
+          eq(agents.projectId, projectId),
+          isNull(agents.deletedAt),
+          ne(agents.part, HUMAN_PART),
+        ),
+      )
     const partById = new Map(validAgents.map((a) => [a.id, a.part]))
     const safeTargets = targetAgentIds.filter((id) => partById.has(id))
     if (safeTargets.length === 0) {

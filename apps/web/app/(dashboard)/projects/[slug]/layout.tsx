@@ -1,6 +1,6 @@
 import type { ReactNode } from "react"
 import { notFound } from "next/navigation"
-import { requireDashboardAccess, isOrgMember } from "@/lib/auth-session"
+import { requireDashboardAccess, isOrgMember, isBannedFromProject } from "@/lib/auth-session"
 import { resolveActiveOrgId } from "@/lib/active-org"
 import { getProjectBySlug, listProjects } from "@/modules/project/queries"
 import { RealtimeProvider } from "@/components/realtime/realtime-provider"
@@ -16,7 +16,7 @@ interface Props {
 }
 
 export default async function ProjectLayout({ children, params }: Props) {
-  await requireDashboardAccess()
+  const session = await requireDashboardAccess()
 
   const { slug } = await params
   const orgId = await resolveActiveOrgId()
@@ -35,8 +35,17 @@ export default async function ProjectLayout({ children, params }: Props) {
 
   const project = result.item
 
+  // A project-scope ban has to cut READS too, not just writes and the live SSE
+  // stream. Those two were already gated (modules/thread/actions.ts,
+  // app/api/realtime/route.ts) while every server-rendered read under this
+  // layout was not, so a banned member who simply reloaded the page kept seeing
+  // the whole project - threads and their bodies, events, agents, usage, and the
+  // connect_code that the overview hands to AgentRegisterDialog. Gating here
+  // covers every tab at once, because they all render inside this layout.
+  if (await isBannedFromProject(project.id, session.user.id)) notFound()
+
   // Sibling projects for the topbar breadcrumb switcher.
-  const listResult = await listProjects(orgId)
+  const listResult = await listProjects(orgId, session.user.id)
   const projects = listResult.result ? listResult.items : []
 
   return (

@@ -278,10 +278,19 @@ async function resolveConnection(
   // call. So a connect whose part has no registered agent is rejected here - the
   // MCP path never conjures an agent (that previously let a stray `--part X`
   // command auto-create a phantom agent).
+  //
+  // A soft-deleted part is treated the same as an unregistered one. Deleting a part
+  // does not revoke its token, so without this filter a removed agent kept
+  // connecting with the token it already had, and every tool call went on to
+  // touchAgent it. Re-adding the part from the dashboard is the way back.
   const [agent] = await db
     .select()
     .from(agents)
-    .where(and(eq(agents.projectId, project.id), eq(agents.part, part)))
+    .where(and(
+      eq(agents.projectId, project.id),
+      eq(agents.part, part),
+      isNull(agents.deletedAt),
+    ))
     .limit(1)
 
   if (!agent) {
@@ -394,6 +403,18 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
     version: '0.1.0',
   })
 
+  /**
+   * touchAgent no longer matches a soft-deleted row, so it can return undefined.
+   * resolveConnection already rejected a removed part for THIS request, leaving
+   * only the narrow window where the part is deleted between that check and the
+   * tool body. Report it as a tool error rather than dereferencing undefined and
+   * turning a race into a 500.
+   */
+  const partGone = () => ({
+    content: [{ type: 'text' as const, text: 'error: this part is no longer registered in this project' }],
+    isError: true,
+  })
+
   // ── send: create thread + first message ──────────────────────────────────
 
   mcp.tool(
@@ -439,6 +460,7 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
       const humanIgnored = args.needsHuman === true && !canFlagHuman
 
       const fromAgent = await touchAgent(db, ctx.projectId, ctx.part)
+      if (!fromAgent) return partGone()
       const tags = [...new Set([...(args.tags ?? []), ...(canFlagHuman ? [NEEDS_HUMAN_TAG] : [])])]
       const [thread] = await db.insert(threads)
         .values({
@@ -576,6 +598,7 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
       }
 
       const fromAgent = await touchAgent(db, ctx.projectId, ctx.part)
+      if (!fromAgent) return partGone()
       const [proj] = await db.select({ cap: projects.maxBroadcastRecipients })
         .from(projects).where(eq(projects.id, ctx.projectId)).limit(1)
 
@@ -639,6 +662,7 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
     },
     async (args) => {
       const me = await touchAgent(db, ctx.projectId, ctx.part)
+      if (!me) return partGone()
       const fromAgentsAlias = alias(agents, 'from_agents')
       // Closed/canceled threads are done - keep them out of the actionable inbox so
       // they are not re-read or re-acted. History is still reachable via show/threads.
@@ -701,6 +725,7 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
         return { content: [{ type: 'text' as const, text: 'error: invalid messageId' }], isError: true }
       }
       const me = await touchAgent(db, ctx.projectId, ctx.part)
+      if (!me) return partGone()
       const [updated] = await db.update(messageRecipients)
         .set({ readAt: new Date() })
         .where(
@@ -783,6 +808,7 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
       }
 
       const agent = await touchAgent(db, ctx.projectId, ctx.part)
+      if (!agent) return partGone()
       const [event] = await db.insert(events).values({
         projectId: ctx.projectId,
         agentId: agent.id,

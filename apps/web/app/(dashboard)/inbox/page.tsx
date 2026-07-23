@@ -20,8 +20,8 @@ export default async function InboxPage() {
 
   const [openResult, attentionResult, governanceResult] = orgId
     ? await Promise.all([
-        getOpenThreadsForOrg(orgId),
-        getAttentionThreadsForOrg(orgId),
+        getOpenThreadsForOrg(orgId, session.user.id),
+        getAttentionThreadsForOrg(orgId, session.user.id),
         getGovernanceAlertsForManager(orgId, session.user.id),
       ])
     : [null, null, null]

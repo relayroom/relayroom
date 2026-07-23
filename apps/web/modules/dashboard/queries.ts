@@ -5,6 +5,7 @@ import { and, count, desc, eq, isNull, ne, sql } from "drizzle-orm"
 const HUMAN_PART = "human"
 import type { ApiResultWithItem } from "@relayroom/shared"
 import { db } from "@/modules/drizzle/db"
+import { notBannedFromProject } from "@/lib/auth-session"
 import { projects, agents } from "@relayroom/db/schema"
 import { better_auth_member } from "@relayroom/db/auth-schema"
 import type { OrgCard } from "@/modules/organization/queries"
@@ -72,7 +73,14 @@ export async function getDashboardSummary(
       .from(projects)
       .leftJoin(agentCountSq, eq(projects.id, agentCountSq.projectId))
       .where(
-        sql`${projects.organizationId} = ${orgId} and ${projects.archivedAt} is null`,
+        and(
+          sql`${projects.organizationId} = ${orgId} and ${projects.archivedAt} is null`,
+          // Everything downstream - projectCount, the recent-4 cards, and the
+          // agent status summary, which is keyed off these project ids - inherits
+          // this scope, so a banned member's dashboard drops the project entirely
+          // rather than showing its name and agent count.
+          notBannedFromProject(projects.id, userId),
+        ),
       )
       .orderBy(desc(projects.createdAt))
 

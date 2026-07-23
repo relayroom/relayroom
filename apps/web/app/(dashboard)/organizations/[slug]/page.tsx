@@ -42,7 +42,7 @@ interface Props {
 
 export default async function OrganizationDetailPage({ params }: Props) {
   const { slug } = await params
-  const [, t] = await Promise.all([
+  const [session, t] = await Promise.all([
     requireDashboardAccess(),
     getTranslations("org"),
   ])
@@ -76,7 +76,7 @@ export default async function OrganizationDetailPage({ params }: Props) {
     .where(eq(better_auth_member.organizationId, org.id))
 
   // Projects for this org
-  const projectsResult = await listProjects(org.id)
+  const projectsResult = await listProjects(org.id, session.user.id)
   const orgProjects = projectsResult.result ? projectsResult.items : []
 
   // Org-wide token/cost usage (last 14 days)
