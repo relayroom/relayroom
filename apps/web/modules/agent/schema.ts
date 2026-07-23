@@ -1,4 +1,5 @@
 import { z } from "zod"
+import type { ErrorTranslator } from "@/lib/action-i18n"
 
 export const updateAgentSchema = z.object({
   agentId: z.string().uuid(),
@@ -26,18 +27,26 @@ export function toPartSlug(input: string): string {
   return toPartSlugLive(input).replace(/^[-_]+|[-_]+$/g, "")
 }
 
-export const connectAgentSchema = z.object({
-  connectCode: z.string().min(1, "연결 코드가 필요합니다."),
-  machineLabel: z.string().max(200).optional(),
-  // part is an identifier baked into tmux/URL/CLI commands, so it must be a slug.
-  part: z
-    .string()
-    .min(1, "파트 이름을 입력하세요.")
-    .max(32, "파트 이름이 너무 깁니다. (최대 32자)")
-    .regex(/^[a-z0-9_-]+$/, "영문 소문자, 숫자, -, _ 만 사용할 수 있어요."),
-  nickname: z.string().max(100).optional(),
-  color: z.string().max(20).optional(),
-  icon: z.string().max(20).optional(),
-})
+/**
+ * Built from the `errors` translator - see the note in modules/thread/schema.ts
+ * for why a schema carrying user-facing copy is a factory rather than a
+ * constant. Server callers pass `await getErrorTranslations()`; the connect
+ * dialog passes `useTranslations("errors")`.
+ */
+export function connectAgentSchema(t: ErrorTranslator) {
+  return z.object({
+    connectCode: z.string().min(1, t("agent.connectCodeRequired")),
+    machineLabel: z.string().max(200).optional(),
+    // part is an identifier baked into tmux/URL/CLI commands, so it must be a slug.
+    part: z
+      .string()
+      .min(1, t("agent.partRequired"))
+      .max(32, t("agent.partTooLong"))
+      .regex(/^[a-z0-9_-]+$/, t("agent.partInvalidChars")),
+    nickname: z.string().max(100).optional(),
+    color: z.string().max(20).optional(),
+    icon: z.string().max(20).optional(),
+  })
+}
 
-export type ConnectAgentInput = z.infer<typeof connectAgentSchema>
+export type ConnectAgentInput = z.infer<ReturnType<typeof connectAgentSchema>>

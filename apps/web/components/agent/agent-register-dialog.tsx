@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useRouter } from "next/navigation"
@@ -50,6 +50,11 @@ interface Props {
  */
 export function AgentRegisterDialog({ connectCode, projectName, projects, triggerLabel }: Props) {
   const t = useTranslations("project")
+  // The schema carries user-facing validation copy, so it is built from the
+  // `errors` translator (see modules/thread/schema.ts). Memoized because a new
+  // schema object on every render would rebuild the resolver each time.
+  const tErrors = useTranslations("errors")
+  const schema = useMemo(() => connectAgentSchema(tErrors), [tErrors])
   const router = useRouter()
   const [open, setOpen] = useState(false)
   const [color, setColor] = useState<string | null>(null)
@@ -64,7 +69,7 @@ export function AgentRegisterDialog({ connectCode, projectName, projects, trigge
   const effectiveName = (isPicker ? activeProject?.name : projectName) ?? ""
 
   const form = useForm<ConnectAgentInput>({
-    resolver: zodResolver(connectAgentSchema),
+    resolver: zodResolver(schema),
     defaultValues: { connectCode: effectiveCode, part: "", nickname: "" },
   })
   const partValue = form.watch("part")

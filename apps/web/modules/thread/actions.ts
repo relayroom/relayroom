@@ -105,7 +105,7 @@ export async function postMessage(
     if (!access.ok) return { result: false, message: access.message }
     const { session, orgId } = access
 
-    const parsed = postMessageSchema.safeParse(input)
+    const parsed = postMessageSchema(t).safeParse(input)
     if (!parsed.success) {
       return { result: false, message: parsed.error.issues[0]?.message ?? t("common.invalidInput") }
     }
@@ -229,7 +229,7 @@ export async function createThread(
     if (!access.ok) return { result: false, message: access.message }
     const { session, orgId } = access
 
-    const parsed = createThreadSchema.safeParse(input)
+    const parsed = createThreadSchema(t).safeParse(input)
     if (!parsed.success) {
       return { result: false, message: parsed.error.issues[0]?.message ?? t("thread.createFailed") }
     }

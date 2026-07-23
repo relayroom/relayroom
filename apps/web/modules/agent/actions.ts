@@ -396,7 +396,7 @@ export async function connectAgent(
     if (!access.ok) return { result: false, message: access.message }
     const { session, orgId } = access
 
-    const parsed = connectAgentSchema.safeParse(input)
+    const parsed = connectAgentSchema(t).safeParse(input)
     if (!parsed.success) {
       return { result: false, message: parsed.error.issues[0]?.message ?? t("common.invalidInput") }
     }

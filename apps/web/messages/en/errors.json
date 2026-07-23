@@ -21,7 +21,11 @@
     "ownedByAnother": "This agent part is already owned by another user. Ask its owner to transfer it.",
     "manageDenied": "Only this agent's owner, a project owner, or an org manager can do this.",
     "listFailed": "We could not load the agents.",
-    "loadFailed": "We could not load this agent."
+    "loadFailed": "We could not load this agent.",
+    "connectCodeRequired": "A connect code is required.",
+    "partRequired": "Enter a part name.",
+    "partTooLong": "That part name is too long. (32 characters max)",
+    "partInvalidChars": "Only lowercase letters, numbers, - and _ are allowed."
   },
   "project": {
     "notFound": "This project does not exist or you do not have access to it.",
@@ -34,7 +38,10 @@
     "relayroomMdFailed": "We could not save RELAYROOM.md.",
     "regenerateCodeFailed": "We could not regenerate the connect code.",
     "listFailed": "We could not load the projects.",
-    "loadFailed": "We could not load this project."
+    "loadFailed": "We could not load this project.",
+    "nameRequired": "Enter a project name.",
+    "slugRequired": "Enter a slug.",
+    "slugInvalidChars": "A slug may only contain lowercase letters, numbers, and hyphens."
   },
   "member": {
     "manageDenied": "You do not have permission to manage this project's members.",
@@ -61,7 +68,10 @@
     "addTagsFailed": "We could not add the tags.",
     "dismissFailed": "We could not clear the attention flag.",
     "listFailed": "We could not load the threads.",
-    "loadFailed": "We could not load this thread."
+    "loadFailed": "We could not load this thread.",
+    "subjectRequired": "Enter a subject.",
+    "bodyRequired": "Enter the content.",
+    "recipientRequired": "Select the agents to address."
   },
   "event": {
     "notFound": "This event does not exist or you do not have access to it.",
