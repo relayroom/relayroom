@@ -203,6 +203,54 @@ describe("channel server: end-to-end wake delivery", () => {
   })
 })
 
+describe("channel server: peer-controlled fields", () => {
+  let server: Server
+  let url: string
+
+  // A subject a peer can actually send: control bytes (the pager's RCE vector, and a
+  // notification breaker here), a quote that could escape an attribute, and length
+  // well past any sane cap - `sendMessageInput` puts no maximum on subject.
+  const NASTY = `\r\u001b[2Jbreak" out ${"A".repeat(300)}`
+
+  beforeEach(async () => {
+    server = createServer((req, res) => {
+      const u = req.url ?? ""
+      if (u.startsWith("/api/sse")) {
+        res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" })
+        res.write(`data: ${JSON.stringify({ kind: "message", part: "pm", subject: NASTY, fromPart: `bad\rpart` })}\n\n`)
+        return
+      }
+      if (u.includes("/pending-wake")) { res.writeHead(200); res.end(JSON.stringify({ wake: false })); return }
+      if (u.includes("/wake/claim")) {
+        res.writeHead(200); res.end(JSON.stringify({ ok: true, wakeId: "wake-abc123def" })); return
+      }
+      res.writeHead(200); res.end("{}")
+    })
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r))
+    const addr = server.address()
+    url = typeof addr === "object" && addr ? `http://127.0.0.1:${addr.port}` : ""
+  })
+  afterEach(() => new Promise<void>((r) => server.close(() => r())))
+
+  it("never puts a control byte or an unbounded subject into the pushed event", async () => {
+    const { stdout } = await runChannel(
+      ["--code", "c1", "--part", "pm", "--delivery", "channel", "--debounce", "100"],
+      INIT + "\n" + INITIALIZED + "\n",
+      1200,
+      url,
+    )
+    const push = rpcResponses(stdout).find((m) => m.method === "notifications/claude/channel")
+    expect(push, "the wake should still be delivered, just cleaned").toBeTruthy()
+    const rendered = push.params.content + JSON.stringify(push.params.meta)
+    // eslint-disable-next-line no-control-regex
+    expect(rendered).not.toMatch(/[\u0000-\u001f\u007f]/)
+    // Clamped to the same 80/32 the pager uses, so a 300-char subject cannot flood
+    // the agent's context through a notification.
+    expect(push.params.meta.subject.length).toBeLessThanOrEqual(80)
+    expect(push.params.meta.from.length).toBeLessThanOrEqual(32)
+  })
+})
+
 describe("ensureChannelMcp: .mcp.json merge", () => {
   let dir: string
   beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "rr-mcp-")) })

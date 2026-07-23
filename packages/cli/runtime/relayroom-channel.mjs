@@ -25,6 +25,9 @@
 import { readFileSync } from "node:fs"
 import { hostname } from "node:os"
 import { join } from "node:path"
+// The wake protocol (lease claim, fencing, SSE, catch-up) is shared with the pager;
+// only the delivery step below is specific to Claude Channels. See wake-client.mjs.
+import { createWakeClient, backoff, sanitizeField } from "./wake-client.mjs"
 
 // ── Args + config ─────────────────────────────────────────────────────────────
 function arg(name, fallback) {
@@ -64,11 +67,16 @@ if (!CODE || !PART) {
 // holds the active wake's lease uncontested.
 const HOLDER = `channel:${hostname()}:${process.pid}:${Math.random().toString(36).slice(2, 8)}`
 
-function authHeaders(extra) {
-  const h = { ...(extra ?? {}) }
-  if (TOKEN) h.authorization = `Bearer ${TOKEN}`
-  return h
-}
+const wake = createWakeClient({
+  server: SERVER,
+  code: CODE,
+  project: PROJECT,
+  part: PART,
+  holder: HOLDER,
+  token: TOKEN,
+  fetchTimeoutMs: FETCH_TIMEOUT_MS,
+  log,
+})
 
 // ── MCP stdio transport (raw JSON-RPC, newline-delimited) ─────────────────────
 // Zero-dep: the only MCP surface we need is the initialize handshake + a single
@@ -162,60 +170,23 @@ function readStdin() {
   process.stdin.on("end", () => process.exit(0))
 }
 
-// ── Wake state machine (mirrors the pager; no tmux / defer) ───────────────────
-async function claimLease() {
-  if (!CODE) return null
-  try {
-    const res = await fetch(`${SERVER}/mcp/${encodeURIComponent(CODE)}/wake/claim`, {
-      method: "POST",
-      headers: authHeaders({ "content-type": "application/json" }),
-      body: JSON.stringify({ part: PART, holder: HOLDER }),
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    })
-    if (!res.ok) return null
-    return await res.json()
-  } catch { return null }
-}
-
-async function reportDelivered(wakeId) {
-  if (!CODE || !wakeId) return
-  try {
-    await fetch(`${SERVER}/mcp/${encodeURIComponent(CODE)}/wake/delivered`, {
-      method: "POST",
-      headers: authHeaders({ "content-type": "application/json" }),
-      body: JSON.stringify({ part: PART, holder: HOLDER, wakeId }),
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    })
-  } catch { /* best-effort; server ignores stale wakeIds */ }
-}
-
-// FAIL-CLOSED: only deliver when we hold the lease AND the server returned a concrete
-// wakeId. `transient:true` marks a TEMPORARY failure (server unreachable) worth a
-// bounded retry — unlike the pager, a live channel session may not get an SSE
-// reconnect to re-trigger catch-up, so dropping a transient claim could strand the
-// wake until it stale-expires. Definitive outcomes (noWake / held-by-other / ok but
-// no wakeId) are dropped: nothing to deliver, someone else delivers, or fail-closed.
-function leaseDecision(lease) {
-  if (!lease) return { go: false, reason: "claim unreachable", transient: true }
-  if (lease.noWake) return { go: false, reason: "no active wake" }
-  if (lease.held && lease.holder !== HOLDER) return { go: false, reason: `lease held by ${lease.holder}` }
-  if (!lease.ok) return { go: false, reason: "lease not held" }
-  if (!lease.wakeId) return { go: false, reason: "claim ok but no wakeId" }
-  return { go: true, wakeId: lease.wakeId }
-}
-
 function buildContent(batch) {
   const guidance =
     "Use the RelayRoom `inbox` MCP tool to read (NOT curl/shell - the HTTP API 404s and " +
     "won't mark anything read). Reply ONLY if it needs an answer; otherwise just ack it. " +
     "Do NOT reply to acknowledge or confirm. Close the thread when it's resolved."
+  // subject and fromPart are chosen by whoever sent the message, so they are cleaned
+  // and clamped before going anywhere near the rendered notification - same treatment,
+  // and the same limits, as the pager's nudge text. See sanitizeField.
   if (batch.length === 1) {
     const e = batch[0]
-    const subj = e.subject ? ` "${e.subject}"` : ""
-    const who = e.fromPart ? ` from ${e.fromPart}` : ""
+    const subjText = sanitizeField(e.subject, 80)
+    const whoText = sanitizeField(e.fromPart, 32)
+    const subj = subjText ? ` "${subjText}"` : ""
+    const who = whoText ? ` from ${whoText}` : ""
     return `New RelayRoom message${subj}${who} for part "${PART}". ${guidance}`
   }
-  const froms = [...new Set(batch.map((e) => e.fromPart).filter(Boolean))].join(", ")
+  const froms = [...new Set(batch.map((e) => sanitizeField(e.fromPart, 32)).filter(Boolean))].join(", ")
   return `${batch.length} new RelayRoom messages for part "${PART}"${froms ? ` (from ${froms})` : ""}. ${guidance}`
 }
 
@@ -224,8 +195,6 @@ let pending = []
 let timer = null
 let flushing = false
 let transientRetries = 0
-const RETRY_BASE_MS = 2000
-const RETRY_MAX_MS = 30_000 // backoff cap; we keep retrying for the session's lifetime
 
 function enqueue(evt) {
   pending.push(evt)
@@ -245,16 +214,16 @@ async function flush() {
       // Claim the lease for the part's active wake. No defer/re-claim is needed:
       // there is no long wait between claim and delivery (Channels queues at the
       // turn boundary itself), so the claim and the notify are effectively atomic.
-      const decision = leaseDecision(await claimLease())
+      const decision = wake.leaseDecision(await wake.claimLease())
       if (!decision.go) {
-        // Transient (server unreachable / claim errored): re-queue and retry with
-        // exponential backoff (cap RETRY_MAX_MS) for the session's lifetime - never
-        // drop, since the server sweep EXCLUDES agents that already have an active
-        // wake, so a dropped transient would strand the wake until it stale-expires.
+        // Transient (server unreachable / claim errored): re-queue and retry on the
+        // shared backoff curve for the session's lifetime - never drop, since the
+        // server sweep EXCLUDES agents that already have an active wake, so a dropped
+        // transient would strand the wake until it stale-expires.
         // The counter only sets the backoff level (a merged batch inheriting it just
         // waits a bit longer); a successful push or a definitive skip resets it.
         if (decision.transient) {
-          const delay = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** Math.min(transientRetries, 4))
+          const delay = backoff(transientRetries)
           transientRetries++
           pending.unshift(...batch)
           if (!timer) timer = setTimeout(flush, delay)
@@ -266,102 +235,18 @@ async function flush() {
         continue
       }
       transientRetries = 0
-      const subj = batch.find((e) => e.subject)?.subject
-      const from = [...new Set(batch.map((e) => e.fromPart).filter(Boolean))].join(", ")
+      // meta values become attributes on the rendered channel event, so they are
+      // sanitized and clamped too - an unbounded subject with a quote in it is the
+      // one thing a peer fully controls here.
+      const subj = sanitizeField(batch.find((e) => e.subject)?.subject, 80)
+      const from = [...new Set(batch.map((e) => sanitizeField(e.fromPart, 32)).filter(Boolean))].join(", ")
       sendChannel(buildContent(batch), { from, subject: subj, wake: String(decision.wakeId).slice(0, 8) })
       log(`channel push: ${batch.length} msg (wake ${String(decision.wakeId).slice(0, 8)})`)
-      await reportDelivered(decision.wakeId) // fence pending -> delivered
+      await wake.reportDelivered(decision.wakeId) // fence pending -> delivered
     }
   } finally {
     flushing = false
   }
-}
-
-// ── SSE subscription + reconnect catch-up (copied from the pager) ─────────────
-function sseUrl() {
-  const u = new URL(`${SERVER}/api/sse`)
-  if (CODE) u.searchParams.set("code", CODE)
-  else u.searchParams.set("project", PROJECT)
-  u.searchParams.set("part", PART)
-  return u.toString()
-}
-
-// Idle watchdog: server pings ~15s; no bytes for this long => half-open => reconnect.
-const SSE_IDLE_MS = 45_000
-
-async function subscribe() {
-  const headers = { accept: "text/event-stream" }
-  if (TOKEN) headers.authorization = `Bearer ${TOKEN}`
-  const ctrl = new AbortController()
-  const res = await fetch(sseUrl(), { headers, signal: ctrl.signal })
-  if (!res.ok || !res.body) throw new Error(`SSE ${res.status} ${res.statusText}`)
-  log(`connected → ${sseUrl()}`)
-  void catchUp()
-
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder()
-  let buf = ""
-  let eventName = "message"
-  let dataLines = [] // SSE: an event may span multiple data: lines, joined by \n
-
-  const dispatchEvent = () => {
-    if (dataLines.length && eventName === "message") {
-      try {
-        const evt = JSON.parse(dataLines.join("\n"))
-        // Only real messages, not presence events (kind:'pager' from heartbeats),
-        // which share this stream but carry no message and would spuriously wake.
-        if (evt.part === PART && evt.kind === "message") { log(`event: "${evt.subject ?? ""}" from ${evt.fromPart ?? "?"}`); enqueue(evt) }
-      } catch { /* non-JSON keepalive — ignore */ }
-    }
-    eventName = "message"
-    dataLines = []
-  }
-
-  let idle = setTimeout(() => ctrl.abort(), SSE_IDLE_MS)
-  const bump = () => { clearTimeout(idle); idle = setTimeout(() => ctrl.abort(), SSE_IDLE_MS) }
-  try {
-    while (true) {
-      const { value, done } = await reader.read()
-      if (done) break
-      bump()
-      buf += decoder.decode(value, { stream: true })
-      let idx
-      while ((idx = buf.indexOf("\n")) !== -1) {
-        const line = buf.slice(0, idx).replace(/\r$/, "")
-        buf = buf.slice(idx + 1)
-        if (line === "") { dispatchEvent(); continue }
-        if (line.startsWith(":")) continue
-        if (line.startsWith("event:")) { eventName = line.slice(6).trim(); continue }
-        if (line.startsWith("data:")) dataLines.push(line.slice(5).replace(/^ /, ""))
-      }
-    }
-  } finally {
-    clearTimeout(idle)
-  }
-}
-
-// Coalesce repeated catch-ups for the SAME wake across reconnect bursts.
-let lastCatchupWakeId = null
-let lastCatchupAt = 0
-const CATCHUP_COOLDOWN_MS = 30_000
-
-async function catchUp() {
-  if (!CODE) return
-  try {
-    const u = new URL(`${SERVER}/mcp/${encodeURIComponent(CODE)}/pending-wake`)
-    u.searchParams.set("part", PART)
-    u.searchParams.set("holder", HOLDER)
-    const res = await fetch(u, { headers: authHeaders(), signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) })
-    if (!res.ok) return
-    const d = await res.json()
-    if (!d.wake) { if (d.suppressed) log("catch-up: budget-suppressed, sweep will recover"); return }
-    const nowTs = Date.now()
-    if (d.wakeId === lastCatchupWakeId && nowTs - lastCatchupAt < CATCHUP_COOLDOWN_MS) return
-    lastCatchupWakeId = d.wakeId
-    lastCatchupAt = nowTs
-    enqueue({ subject: d.subject, fromPart: d.fromPart, messageId: d.wakeId, count: d.count })
-    log(`catch-up: 1 coalesced wake (${d.count ?? "?"} unread)`)
-  } catch (err) { log("catch-up failed:", err.message) }
 }
 
 // ── Run ───────────────────────────────────────────────────────────────────────
@@ -378,11 +263,16 @@ function startWakePipeline() {
     log(`dormant (delivery=${DELIVERY}); the pager owns wakes for part=${PART}`)
     return
   }
-  log(`channel ready for ${CODE ? `code=${CODE}` : `project=${PROJECT}`} part=${PART} (server ${SERVER})`)
+  // No connect code here either: it identifies the project to the hub as a secret.
+  log(`channel ready for part=${PART}${CODE ? "" : ` project=${PROJECT}`} (server ${SERVER})`)
   ;(async () => {
     for (;;) {
-      try { await subscribe(); log("stream ended; reconnecting in 2s") }
-      catch (err) { log("stream error:", err.message, "— retry in 2s") }
+      try {
+        // The live stream only carries what arrives while connected, so catch-up runs
+        // on every (re)connect to pick up anything missed in the gap.
+        await wake.subscribe({ onMessage: enqueue, onConnect: () => void wake.catchUp({ enqueue }) })
+        log("stream ended; reconnecting in 2s")
+      } catch (err) { log("stream error:", err.message, "- retry in 2s") }
       await new Promise((r) => setTimeout(r, 2000))
     }
   })()
