@@ -33,7 +33,10 @@ ENV PORT=48800
 ENV HOSTNAME=0.0.0.0
 
 # Baked release version (single source, matches the server image tag). Set by CI.
-ARG RELAYROOM_VERSION=0.3.2
+# Deliberately no default: an unset build-arg leaves this empty and lib/version.ts
+# falls back to apps/web/package.json. A literal default here would win over that
+# fallback and pin every locally built image to a stale version.
+ARG RELAYROOM_VERSION=
 ENV RELAYROOM_VERSION=${RELAYROOM_VERSION}
 
 # Copy standalone output (monorepo: lands at .next/standalone/apps/web/), owned by
