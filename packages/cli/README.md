@@ -30,8 +30,9 @@ npx @relayroom/cli connect --code <connect_code> --part <part> --agent claude
 npx @relayroom/cli connect --code <connect_code> --part <part> --agent agy
 npx @relayroom/cli connect --code <connect_code> --part <part> --agent codex
 
-# Write RELAYROOM.md (the coordination playbook) into this worktree
-npx @relayroom/cli init --code <connect_code>
+# Set up this worktree: RELAYROOM.md, .relayroom/config.json, rr.sh
+# Run it INSIDE the tmux session the agent will live in (see below)
+npx @relayroom/cli init --code <connect_code> --part <part>
 
 # Run the pager: wakes this part's idle tmux session on new messages (any agent)
 npx @relayroom/cli pager --code <connect_code> --part <part> --target <tmux-target>
@@ -65,6 +66,32 @@ The excerpts are what let a dashboard event show the exchange instead of just "a
 The hook command itself carries no connect code. Identity is read from the worktree's `.relayroom/config.json`, so the agent settings file this writes (`.claude/settings.json`, `.gemini/settings.json`) holds no secret and is safe to commit.
 
 This is separate from `@relayroom/telemetry`, the hub's own instance beacon, which is content-free and never sees a prompt or an answer.
+
+## `init` runs inside tmux
+
+The pager wakes an idle agent by typing into its tmux pane, so the agent - and `init` - must run inside a tmux session:
+
+```bash
+tmux new -s relayroom-<part>
+# then, inside that session:
+npx @relayroom/cli init --code <connect_code> --part <part>
+```
+
+`init` refuses to run outside tmux rather than leaving you with a setup that can never be woken. Pass `--no-tmux-check` if you know you want that (for example when regenerating files from a plain shell).
+
+## `./rr.sh` - the per-worktree console
+
+`init` writes `rr.sh` next to `RELAYROOM.md`. It reads `.relayroom/config.json`, so a machine reboot - which takes the tmux session and the pager with it - is one command to recover:
+
+```bash
+./rr.sh up          # rebuild the tmux session, start the pager, attach
+./rr.sh status      # tmux + server reachability + pager, at a glance
+./rr.sh doctor      # diagnose identity/token/server problems and print the fix
+./rr.sh setup       # mcp add + usage hook for every configured agent
+./rr.sh update      # re-pull RELAYROOM.md from the hub
+```
+
+Reach for `doctor` first when several worktrees post as the same part: it reports which part each agent's MCP config is actually registered as, which is the usual cause.
 
 ## Where the rest lives
 
