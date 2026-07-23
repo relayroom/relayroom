@@ -15,7 +15,7 @@
   "scripts": {
     "test": "vitest run",
     "generate": "drizzle-kit generate",
-    "migrate": "tsx -e \"import('./src/index.ts').then(async m => { const db = m.createDb(); await m.runMigrations(db); await db.$client.end(); })\""
+    "migrate": "tsx scripts/migrate.ts"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.2",

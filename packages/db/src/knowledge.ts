@@ -40,6 +40,16 @@ export const PROMOTION_K_DEFAULT = 2
 /**
  * How far back a contradiction still blocks promotion, in days. Overridable per
  * project through `projects.knowledgeConfig.windowDays`.
+ *
+ * **This number was picked, not derived.** No design document specifies it. It is
+ * also inert at L0: nothing here creates a contradiction yet (`error_event` comes
+ * with L1, and there is no human demotion path), so 30 and 90 behave identically
+ * today. Do not read it as a tuned value.
+ *
+ * **Revisit it when the demotion path lands.** Promotion requires
+ * `contradictions === 0` and that applies to the human owner override too, so a
+ * single stale contradiction blocks a person from promoting an entry until the
+ * window expires, and no UI clears it. That is where this number starts to hurt.
  */
 export const CONTRADICTION_WINDOW_DAYS_DEFAULT = 30
 
@@ -74,7 +84,17 @@ export interface RecordKnowledgeSignalInput {
    * that it was verified, and it is recorded in the audit row.
    */
   humanOwnerOverride?: boolean
-  /** Written on promotion when given. The verifier owns this number, not us. */
+  /**
+   * Written on promotion when given, left untouched when not. The verifier owns
+   * this number: no document defines how it is computed, and a formula invented
+   * here would be displayed on the dashboard as if it meant something.
+   *
+   * **The consequence is intended, not an oversight.** With no caller supplying
+   * it, confidence stays 0, and recall's `similarity * (0.5 + confidence)`
+   * ranking collapses to `similarity * 0.5` - a constant factor, so ordering is
+   * pure similarity. That is the honest behaviour while nothing computes
+   * confidence. It is not a bug where recall "ignores confidence".
+   */
   confidence?: number
   /** Overrides for the project's configured thresholds. */
   k?: number
