@@ -46,7 +46,7 @@ import { Hono } from 'hono'
 import type { Context } from 'hono'
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
-import { DEFAULT_RELAYROOM_MD, NEEDS_HUMAN_TAG, resolveAgentColorHex } from '@relayroom/shared'
+import { DEFAULT_RELAYROOM_MD, NEEDS_HUMAN_TAG, decideProjectAccess, resolveAgentColorHex } from '@relayroom/shared'
 import type { Bus } from '../bus'
 import { BroadcastCapError, dispatch, LoopBreakerError } from '../wake/pipeline'
 import { runEligibilitySweep } from '../wake/sweep'
@@ -486,27 +486,51 @@ function recallQueryHash(query: string): string {
 /**
  * May this connection write knowledge?
  *
- * INTERIM. The real check belongs in the shared project-access rank helper being
- * extracted from the dashboard's requireProjectAccess, which also encodes "an org
- * owner/admin is an effective owner even with no project_access row". This does
- * NOT encode that rule, so it is STRICTER than the final behaviour: an org owner
- * without an explicit row is refused here and will be allowed once the helper
- * lands. Deliberately the strict direction - an interim gate that is too permissive
- * grants access nobody reviewed, and the failure is invisible.
+ * The rule itself is `decideProjectAccess` in @relayroom/shared - the same function
+ * the dashboard asks, so a level that means one thing in the UI cannot come to mean
+ * another here. This only gathers the three facts it decides from.
  *
- * Replace this body with the shared helper; do not extend it.
+ * The org role is read from the PROJECT's org, not the caller's active one: an
+ * org manager administers every project in their org without needing a grant row
+ * in each. The ban is checked by the helper rather than here, because a ban has to
+ * outrank the role - a banned org owner is denied, not promoted by the next rule.
  */
 async function canWriteKnowledge(db: Db, ctx: McpConnectionContext): Promise<boolean> {
-  const [row] = await db
-    .select({ level: projectAccess.level })
-    .from(projectAccess)
-    .where(and(
-      eq(projectAccess.projectId, ctx.projectId),
-      eq(projectAccess.userId, ctx.userId),
-      isNull(projectAccess.bannedAt),
-    ))
-    .limit(1)
-  return row?.level === 'write' || row?.level === 'owner'
+  const [orgRole, access] = await Promise.all([
+    orgRoleOf(db, ctx.orgId, ctx.userId),
+    db
+      .select({ level: projectAccess.level, bannedAt: projectAccess.bannedAt })
+      .from(projectAccess)
+      .where(and(
+        eq(projectAccess.projectId, ctx.projectId),
+        eq(projectAccess.userId, ctx.userId),
+      ))
+      .limit(1)
+      .then(rows => rows[0]),
+  ])
+
+  return decideProjectAccess({
+    orgRole,
+    bannedAt: access?.bannedAt ?? null,
+    grantLevel: access?.level ?? null,
+  }, 'write').ok
+}
+
+/** The caller's role in an org, or null when they are not a member of it. */
+async function orgRoleOf(db: Db, orgId: string, userId: string): Promise<string | null> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pgClient = (db as any).$client
+    const rows: Array<{ role: string | null }> = await pgClient`
+      SELECT role FROM better_auth_member
+      WHERE organization_id = ${orgId} AND user_id = ${userId}
+      LIMIT 1
+    `
+    return rows[0]?.role ?? null
+  }
+  catch {
+    return null
+  }
 }
 
 /**
