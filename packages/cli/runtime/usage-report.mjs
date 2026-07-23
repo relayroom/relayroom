@@ -11,6 +11,15 @@
  *   --agent claude|gemini|codex   which transcript format to parse
  *   --code <connect_code> --part <part> [--server <url>]
  *
+ * WHAT IS SENT. Always: token counts, the model name, and a rough cost estimate.
+ * Additionally, for Claude only, the turn's CONTENT in excerpt - the first 80
+ * characters of the prompt (`detail.title`) and the last 500 of the answer
+ * (`detail.summary`) - so a dashboard event shows the exchange rather than "a
+ * turn happened". It goes to YOUR hub (`--server`), not to relayroom.dev; the
+ * separate @relayroom/telemetry beacon is content-free and unrelated. Turn the
+ * excerpts off for a worktree with `"usageContent": false` in
+ * `.relayroom/config.json`.
+ *
  * The Claude parser is exact. The Codex and Gemini parsers follow each tool's
  * documented transcript format but are best-effort - verify against real output
  * for your tool version; on any mismatch they report nothing rather than guess.
@@ -254,8 +263,13 @@ async function main() {
 
   const body = { part: PART, type: "complete", usage }
   // title = the prompt that opened the turn; summary = the agent's answer. Both let
-  // the dashboard event show the full exchange, not just "a turn happened".
-  if (title || summary) body.detail = { ...(title ? { title } : {}), ...(summary ? { summary } : {}) }
+  // the dashboard event show the full exchange, not just "a turn happened". These are
+  // the only fields carrying conversation content, so they are also the only thing the
+  // opt-out drops - token counts keep flowing, since the charts are the point of the hook.
+  const noContent = cfg.usageContent === false
+  if (!noContent && (title || summary)) {
+    body.detail = { ...(title ? { title } : {}), ...(summary ? { summary } : {}) }
+  }
   if (startedAt) body.startedAt = startedAt
   if (endedAt) body.endedAt = endedAt
 

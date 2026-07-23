@@ -48,6 +48,20 @@ npx @relayroom/cli hooks install --code <connect_code> --part <part> --agent cla
 
 The usage reporter is copied once to `~/.relayroom/usage-report.mjs` and shared by every project on the machine. Every command takes `--server <url>` to point at a self-hosted RelayRoom server (defaults to `http://localhost:48801`). `hooks print` outputs the config block to paste yourself.
 
+### What the usage hook sends
+
+At the end of each turn the hook POSTs to **your** hub (the `--server` above - never to relayroom.dev):
+
+| Always | Claude only |
+| --- | --- |
+| token counts (input / output / cache), the model name, a rough cost estimate, start/end timestamps | the turn's content in excerpt: the first 80 characters of the prompt and the last 500 of the answer |
+
+The excerpts are what let a dashboard event show the exchange instead of just "a turn happened". To report counts only, set `"usageContent": false` in that worktree's `.relayroom/config.json`.
+
+The hook command itself carries no connect code. Identity is read from the worktree's `.relayroom/config.json`, so the agent settings file this writes (`.claude/settings.json`, `.gemini/settings.json`) holds no secret and is safe to commit.
+
+This is separate from `@relayroom/telemetry`, the hub's own instance beacon, which is content-free and never sees a prompt or an answer.
+
 ## Where the rest lives
 
 The dashboard, server, and self-hosting instructions are in the main repo: <https://github.com/relayroom/relayroom>.
