@@ -1,11 +1,11 @@
 import { spawn, type ChildProcess } from "node:child_process"
 import { createServer, type Server } from "node:http"
-import { readFileSync } from "node:fs"
+import { readdirSync, readFileSync } from "node:fs"
+import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { afterEach, describe, expect, it } from "vitest"
 
 const PAGER = fileURLToPath(new URL("../runtime/relayroom-pager.mjs", import.meta.url))
-const CHANNEL = fileURLToPath(new URL("../runtime/relayroom-channel.mjs", import.meta.url))
 
 /**
  * The runtime endpoints are moving from connect-code trust to a required bearer.
@@ -71,16 +71,26 @@ describe("pager: bearer on every runtime call", () => {
  * asserting no `fetch(` in either runtime is built without auth. The channel
  * server is a near-copy of the pager, so it is held to the same rule.
  */
-describe("pager/channel: no unauthenticated fetch", () => {
-  for (const [name, file] of [["pager", PAGER], ["channel", CHANNEL]] as const) {
+describe("runtime: no unauthenticated fetch", () => {
+  // Scan every shipped runtime rather than a fixed pair: the wake calls moved into
+  // wake-client.mjs when the pager and channel server were de-duplicated, and a list
+  // of filenames would have silently stopped covering them.
+  const RUNTIME_DIR = fileURLToPath(new URL("../runtime/", import.meta.url))
+  const withFetch = readdirSync(RUNTIME_DIR)
+    .filter((f) => f.endsWith(".mjs"))
+    .filter((f) => readFileSync(join(RUNTIME_DIR, f), "utf8").includes("fetch("))
+
+  it("finds runtimes that call the hub at all", () => {
+    expect(withFetch.length).toBeGreaterThan(0)
+  })
+
+  for (const name of withFetch) {
     it(`${name} passes a bearer on every fetch`, () => {
-      const src = readFileSync(file, "utf8")
-      const calls = src.split(/\bfetch\(/).slice(1)
-      expect(calls.length).toBeGreaterThan(0)
-      for (const call of calls) {
+      const src = readFileSync(join(RUNTIME_DIR, name), "utf8")
+      for (const call of src.split(/\bfetch\(/).slice(1)) {
         const head = call.slice(0, 400)
-        // Either the shared helper, or the SSE path which assembles its own headers.
-        expect(head).toMatch(/authHeaders\(|headers,/)
+        // The shared helper, or a call that assembles its own headers object.
+        expect(head, `unauthenticated fetch in ${name}`).toMatch(/authHeaders\(|headers[,:]/)
       }
     })
   }
