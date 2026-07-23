@@ -19,7 +19,13 @@
     "connectionNotFound": "연결을 찾을 수 없거나 권한이 없습니다.",
     "disconnectFailed": "연결 해제 중 오류가 발생했습니다.",
     "ownedByAnother": "이 에이전트 파트는 다른 사용자가 소유하고 있습니다. 소유자에게 이관을 요청하세요.",
-    "manageDenied": "이 에이전트의 소유자, 프로젝트 owner, 또는 조직 관리자만 이 작업을 할 수 있습니다."
+    "manageDenied": "이 에이전트의 소유자, 프로젝트 owner, 또는 조직 관리자만 이 작업을 할 수 있습니다.",
+    "listFailed": "에이전트 목록을 불러오는 데 실패했습니다.",
+    "loadFailed": "에이전트 정보를 불러오는 데 실패했습니다.",
+    "connectCodeRequired": "연결 코드가 필요합니다.",
+    "partRequired": "파트 이름을 입력하세요.",
+    "partTooLong": "파트 이름이 너무 깁니다. (최대 32자)",
+    "partInvalidChars": "영문 소문자, 숫자, -, _ 만 사용할 수 있어요."
   },
   "project": {
     "notFound": "프로젝트를 찾을 수 없거나 권한이 없습니다.",
@@ -30,7 +36,12 @@
     "updateFailed": "프로젝트 수정 중 오류가 발생했습니다.",
     "archiveFailed": "프로젝트 아카이브 중 오류가 발생했습니다.",
     "relayroomMdFailed": "RELAYROOM.md 저장 중 오류가 발생했습니다.",
-    "regenerateCodeFailed": "연결 코드 재발급 중 오류가 발생했습니다."
+    "regenerateCodeFailed": "연결 코드 재발급 중 오류가 발생했습니다.",
+    "listFailed": "프로젝트 목록을 불러오는 데 실패했습니다.",
+    "loadFailed": "프로젝트 정보를 불러오는 데 실패했습니다.",
+    "nameRequired": "프로젝트 이름을 입력하세요.",
+    "slugRequired": "슬러그를 입력하세요.",
+    "slugInvalidChars": "슬러그는 소문자, 숫자, 하이픈만 사용 가능합니다."
   },
   "member": {
     "manageDenied": "이 프로젝트의 멤버를 관리할 권한이 없습니다.",
@@ -43,7 +54,9 @@
     "updateFailed": "권한 변경 중 오류가 발생했습니다.",
     "removeFailed": "멤버 제거 중 오류가 발생했습니다.",
     "banFailed": "ban 처리 중 오류가 발생했습니다.",
-    "unbanFailed": "unban 처리 중 오류가 발생했습니다."
+    "unbanFailed": "unban 처리 중 오류가 발생했습니다.",
+    "listFailed": "멤버 목록을 불러오는 데 실패했습니다.",
+    "orgListFailed": "조직 멤버를 불러오는 데 실패했습니다."
   },
   "thread": {
     "notFound": "스레드를 찾을 수 없거나 권한이 없습니다.",
@@ -53,11 +66,36 @@
     "messageFailed": "메시지 전송에 실패했습니다.",
     "closeFailed": "스레드 상태 변경 중 오류가 발생했습니다.",
     "addTagsFailed": "태그 추가 중 오류가 발생했습니다.",
-    "dismissFailed": "확인 처리 중 오류가 발생했습니다."
+    "dismissFailed": "확인 처리 중 오류가 발생했습니다.",
+    "listFailed": "스레드 목록을 불러오는 데 실패했습니다.",
+    "loadFailed": "스레드 정보를 불러오는 데 실패했습니다.",
+    "subjectRequired": "제목을 입력하세요.",
+    "bodyRequired": "내용을 입력하세요.",
+    "recipientRequired": "받는 에이전트를 선택하세요."
+  },
+  "event": {
+    "notFound": "이벤트를 찾을 수 없습니다.",
+    "listFailed": "이벤트 목록을 불러오는 데 실패했습니다.",
+    "loadFailed": "이벤트 정보를 불러오는 데 실패했습니다."
+  },
+  "usage": {
+    "loadFailed": "사용량 정보를 불러오는 데 실패했습니다."
+  },
+  "organization": {
+    "listFailed": "조직 목록을 불러오는 데 실패했습니다."
+  },
+  "dashboard": {
+    "loadFailed": "대시보드 정보를 불러오는 데 실패했습니다."
+  },
+  "inbox": {
+    "loadFailed": "수신함을 불러오는 데 실패했습니다.",
+    "governanceLoadFailed": "거버넌스 알림을 불러오는 데 실패했습니다."
   },
   "wake": {
     "budgetFailed": "Wake 예산 저장에 실패했습니다.",
-    "broadcastCapFailed": "브로드캐스트 캡 저장에 실패했습니다."
+    "broadcastCapFailed": "브로드캐스트 캡 저장에 실패했습니다.",
+    "budgetLoadFailed": "Wake 예산을 불러오지 못했습니다.",
+    "auditLoadFailed": "감사 기록을 불러오지 못했습니다."
   },
   "admin": {
     "superuserOnly": "이 설정은 인스턴스 최고 관리자만 변경할 수 있습니다.",
@@ -69,5 +107,33 @@
     "statusFailed": "텔레메트리 상태를 불러오지 못했습니다.",
     "saveFailed": "텔레메트리 설정을 저장하지 못했습니다.",
     "feedbackFailed": "피드백을 전송하지 못했습니다. 다시 시도해 주세요."
+  },
+  "validation": {
+    "nameRequired": "이름을 입력해주세요.",
+    "passwordMin": "비밀번호는 8자 이상이어야 합니다."
+  },
+  "media": {
+    "fileTooLarge": "파일 크기가 5MB를 초과합니다.",
+    "parseFailed": "multipart/form-data 파싱 실패.",
+    "missingFile": "file 필드가 없습니다.",
+    "unsupportedType": "지원하지 않는 이미지 형식입니다. (PNG, JPEG, WebP만 허용)",
+    "unsupportedKind": "지원하지 않는 이미지 종류입니다.",
+    "invalidProjectId": "잘못된 프로젝트 ID입니다.",
+    "projectNotFound": "프로젝트를 찾을 수 없습니다.",
+    "uploadDenied": "이 프로젝트에 업로드할 권한이 없습니다.",
+    "processFailed": "이미지 처리에 실패했습니다.",
+    "storeFailed": "파일 저장에 실패했습니다."
+  },
+  "invitation": {
+    "invalid": "유효하지 않은 초대입니다.",
+    "expired": "만료된 초대입니다.",
+    "emailTaken": "이미 해당 이메일로 가입된 계정이 있습니다. 로그인 후 초대를 수락하세요.",
+    "accountCreateFailed": "계정 생성에 실패했습니다."
+  },
+  "setup": {
+    "invalidEmail": "올바른 이메일 형식을 입력해주세요.",
+    "adminExists": "관리자 계정이 이미 존재합니다.",
+    "userCreateFailed": "사용자 생성에 실패했습니다.",
+    "promoteFailed": "관리자 권한을 부여하지 못했습니다. 이미 다른 관리자가 존재할 수 있습니다."
   }
 }

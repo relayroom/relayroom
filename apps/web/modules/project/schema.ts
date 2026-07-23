@@ -1,23 +1,32 @@
 import { z } from "zod"
+import type { ErrorTranslator } from "@/lib/action-i18n"
 
-export const createProjectSchema = z.object({
-  name: z.string().min(1, "프로젝트 이름을 입력하세요.").max(100),
-  slug: z
-    .string()
-    .min(1, "슬러그를 입력하세요.")
-    .max(60)
-    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "슬러그는 소문자, 숫자, 하이픈만 사용 가능합니다."),
-  summary: z.string().max(200).optional(),
-  description: z.string().optional(),
-  thumbnailColor: z.string().optional(),
-  backgroundColor: z.string().optional(),
-  /** Storage key from /api/media/upload — relative path, e.g. upload/<userId>/thumbnail-<hash>.webp */
-  thumbnailUrl: z.string().optional().nullable(),
-  /** Storage key from /api/media/upload for the background image */
-  backgroundUrl: z.string().optional().nullable(),
-})
+/**
+ * Built from the `errors` translator - see the note in modules/thread/schema.ts
+ * for why a schema carrying user-facing copy is a factory rather than a
+ * constant. Server callers pass `await getErrorTranslations()`; the new-project
+ * form passes `useTranslations("errors")`.
+ */
+export function createProjectSchema(t: ErrorTranslator) {
+  return z.object({
+    name: z.string().min(1, t("project.nameRequired")).max(100),
+    slug: z
+      .string()
+      .min(1, t("project.slugRequired"))
+      .max(60)
+      .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, t("project.slugInvalidChars")),
+    summary: z.string().max(200).optional(),
+    description: z.string().optional(),
+    thumbnailColor: z.string().optional(),
+    backgroundColor: z.string().optional(),
+    /** Storage key from /api/media/upload — relative path, e.g. upload/<userId>/thumbnail-<hash>.webp */
+    thumbnailUrl: z.string().optional().nullable(),
+    /** Storage key from /api/media/upload for the background image */
+    backgroundUrl: z.string().optional().nullable(),
+  })
+}
 
-export type CreateProjectInput = z.infer<typeof createProjectSchema>
+export type CreateProjectInput = z.infer<ReturnType<typeof createProjectSchema>>
 
 export const updateProjectSchema = z.object({
   projectId: z.string().uuid(),

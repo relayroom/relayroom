@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useTransition } from "react"
+import { useEffect, useMemo, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { useTranslations } from "next-intl"
 import { useForm } from "react-hook-form"
@@ -20,6 +20,11 @@ import { MarkdownEditor } from "@/components/markdown-editor"
 export function NewProjectForm() {
   const router = useRouter()
   const t = useTranslations("project")
+  // The schema carries user-facing validation copy, so it is built from the
+  // `errors` translator (see modules/thread/schema.ts). Memoized because a new
+  // schema object on every render would rebuild the resolver each time.
+  const tErrors = useTranslations("errors")
+  const schema = useMemo(() => createProjectSchema(tErrors), [tErrors])
   const [isPending, startTransition] = useTransition()
   const [description, setDescription] = useState("")
 
@@ -30,7 +35,7 @@ export function NewProjectForm() {
     watch,
     formState: { errors },
   } = useForm<CreateProjectInput>({
-    resolver: zodResolver(createProjectSchema),
+    resolver: zodResolver(schema),
     defaultValues: {
       name: "",
       slug: "",

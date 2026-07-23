@@ -202,7 +202,9 @@ flowchart TB
   `LISTEN/NOTIFY` bus that makes the dashboard and SSE live.
 - **agent side** - an interactive Claude Code / Codex / Gemini session in tmux, the
   `relayroom` pager that wakes it via `tmux send-keys`, and a turn-end usage hook that
-  reports token usage to the hub.
+  reports the turn's token usage to the hub - plus, on Claude, a short excerpt of the
+  exchange so the dashboard event shows what happened
+  ([what the hook sends](packages/cli/README.md#what-the-usage-hook-sends)).
 
 This repository is a pnpm monorepo:
 

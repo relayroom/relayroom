@@ -4,7 +4,8 @@ import { eq, and } from "drizzle-orm"
 import { auth } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { better_auth_invitation, better_auth_user } from "@relayroom/db/auth-schema"
-import { credentialSchema } from "@/lib/validation"
+import { credentialSchema, credentialIssueMessage } from "@/lib/validation"
+import { getErrorTranslations } from "@/lib/action-i18n"
 
 export interface CreateInvitedAccountResult {
   ok: boolean
@@ -32,15 +33,15 @@ export async function createInvitedAccount(
   invitationId: string,
   params: { name: string; password: string },
 ): Promise<CreateInvitedAccountResult> {
+  // `error` is thrown straight into a toast by accept-form, so it is localized here.
+  const t = await getErrorTranslations()
+
   // 0. SERVER-SIDE credential validation: the action bypasses client zod, and an
   // empty password would create an unusable user for the invited email, making the
   // email "taken" so the invite can never be completed without manual cleanup.
   const parsed = credentialSchema.safeParse(params)
   if (!parsed.success) {
-    return {
-      ok: false,
-      error: parsed.error.issues[0]?.message ?? "입력값이 올바르지 않습니다.",
-    }
+    return { ok: false, error: credentialIssueMessage(parsed.error.issues, t) }
   }
   const { name, password } = parsed.data
 
@@ -56,10 +57,10 @@ export async function createInvitedAccount(
     )
 
   if (!invitation) {
-    return { ok: false, error: "유효하지 않은 초대입니다." }
+    return { ok: false, error: t("invitation.invalid") }
   }
   if (invitation.expiresAt < new Date()) {
-    return { ok: false, error: "만료된 초대입니다." }
+    return { ok: false, error: t("invitation.expired") }
   }
 
   // 2. Reject if the email already has an account
@@ -68,10 +69,7 @@ export async function createInvitedAccount(
     .from(better_auth_user)
     .where(eq(better_auth_user.email, invitation.email))
   if (existingUser.length > 0) {
-    return {
-      ok: false,
-      error: "이미 해당 이메일로 가입된 계정이 있습니다. 로그인 후 초대를 수락하세요.",
-    }
+    return { ok: false, error: t("invitation.emailTaken") }
   }
 
   // 3. Create the user (server-internal, bypasses disableSignUp)
@@ -84,9 +82,11 @@ export async function createInvitedAccount(
       },
     })
     const id = (result as { user?: { id?: string } }).user?.id
-    if (!id) return { ok: false, error: "계정 생성에 실패했습니다." }
+    if (!id) return { ok: false, error: t("invitation.accountCreateFailed") }
   } catch (err) {
-    const msg = err instanceof Error ? err.message : "계정 생성에 실패했습니다."
+    // better-auth's own message (already localized by it, or English) is kept when
+    // there is one - it is more specific than our generic copy.
+    const msg = err instanceof Error ? err.message : t("invitation.accountCreateFailed")
     return { ok: false, error: msg }
   }
 

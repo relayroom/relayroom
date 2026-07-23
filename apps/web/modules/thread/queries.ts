@@ -5,6 +5,7 @@ import { threads, messages, agents, messageRecipients } from "@relayroom/db/sche
 import { better_auth_user } from "@relayroom/db/auth-schema"
 import { stripMarkdown } from "@/lib/format"
 import { isPagerOnline } from "@/modules/agent/queries"
+import { getErrorTranslations } from "@/lib/action-i18n"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -91,6 +92,7 @@ export async function listThreads(
   projectId: string,
   filter: ThreadFilter = {},
 ): Promise<ApiResultWithItems<ThreadRow>> {
+  const t = await getErrorTranslations()
   try {
     const page = Math.max(1, filter.page ?? 1)
     const limit = Math.max(1, Math.min(100, filter.limit ?? 30))
@@ -210,7 +212,7 @@ export async function listThreads(
     return { result: true, totalCount: Number(totalCount), items }
   } catch (err) {
     console.error("[listThreads]", err)
-    return { result: false, message: "스레드 목록을 불러오는 데 실패했습니다." }
+    return { result: false, message: t("thread.listFailed") }
   }
 }
 
@@ -220,6 +222,7 @@ export async function getThread(
   projectId: string,
   threadId: string,
 ): Promise<ApiResultWithItem<ThreadDetail>> {
+  const t = await getErrorTranslations()
   try {
     // Fetch thread, scoped to projectId for security
     const [thread] = await db
@@ -228,7 +231,7 @@ export async function getThread(
       .where(and(eq(threads.id, threadId), eq(threads.projectId, projectId)))
       .limit(1)
 
-    if (!thread) return { result: false, message: "스레드를 찾을 수 없습니다." }
+    if (!thread) return { result: false, message: t("thread.notFound") }
 
     // Fetch messages in chronological order
     const msgs = await db
@@ -392,6 +395,6 @@ export async function getThread(
     }
   } catch (err) {
     console.error("[getThread]", err)
-    return { result: false, message: "스레드 정보를 불러오는 데 실패했습니다." }
+    return { result: false, message: t("thread.loadFailed") }
   }
 }

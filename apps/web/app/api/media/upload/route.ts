@@ -9,6 +9,7 @@ import type { ApiResultWithItem } from "@relayroom/shared"
 const sharp: any = require("sharp")
 import { and, eq } from "drizzle-orm"
 import { getServerSession } from "@/lib/auth-session"
+import { getErrorTranslations } from "@/lib/action-i18n"
 import { getStorage } from "@/lib/storage"
 import { db } from "@/modules/drizzle/db"
 import { projects } from "@relayroom/db/schema"
@@ -41,11 +42,15 @@ function hasPathChars(s: string): boolean {
 // ── Handler ───────────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
+  // Every `message` below is shown to the user, so it comes from the `errors`
+  // namespace in the caller's locale - same contract as the Server Actions.
+  const t = await getErrorTranslations()
+
   // Auth guard
   const session = await getServerSession()
   if (!session) {
     return NextResponse.json<ApiResultWithItem<never>>(
-      { result: false, message: "로그인이 필요합니다." },
+      { result: false, message: t("auth.loginRequired") },
       { status: 401 },
     )
   }
@@ -65,7 +70,7 @@ export async function POST(req: NextRequest) {
     // raw file bytes, so allow generous headroom above MAX_BYTES.
     if (Number.isFinite(declared) && declared > MAX_BYTES + 64 * 1024) {
       return NextResponse.json<ApiResultWithItem<never>>(
-        { result: false, message: "파일 크기가 5MB를 초과합니다." },
+        { result: false, message: t("media.fileTooLarge") },
         { status: 413 },
       )
     }
@@ -76,7 +81,7 @@ export async function POST(req: NextRequest) {
     formData = await req.formData()
   } catch {
     return NextResponse.json<ApiResultWithItem<never>>(
-      { result: false, message: "multipart/form-data 파싱 실패." },
+      { result: false, message: t("media.parseFailed") },
       { status: 400 },
     )
   }
@@ -84,7 +89,7 @@ export async function POST(req: NextRequest) {
   const file = formData.get("file")
   if (!(file instanceof File)) {
     return NextResponse.json<ApiResultWithItem<never>>(
-      { result: false, message: "file 필드가 없습니다." },
+      { result: false, message: t("media.missingFile") },
       { status: 400 },
     )
   }
@@ -92,7 +97,7 @@ export async function POST(req: NextRequest) {
   // Validate MIME
   if (!ALLOWED_MIME.has(file.type)) {
     return NextResponse.json<ApiResultWithItem<never>>(
-      { result: false, message: "지원하지 않는 이미지 형식입니다. (PNG, JPEG, WebP만 허용)" },
+      { result: false, message: t("media.unsupportedType") },
       { status: 415 },
     )
   }
@@ -100,7 +105,7 @@ export async function POST(req: NextRequest) {
   // Validate size
   if (file.size > MAX_BYTES) {
     return NextResponse.json<ApiResultWithItem<never>>(
-      { result: false, message: "파일 크기가 5MB를 초과합니다." },
+      { result: false, message: t("media.fileTooLarge") },
       { status: 413 },
     )
   }
@@ -114,7 +119,7 @@ export async function POST(req: NextRequest) {
   // suspenders against path traversal even though the allowlist already excludes it.
   if (!ALLOWED_KINDS.has(kind) || hasPathChars(kind)) {
     return NextResponse.json<ApiResultWithItem<never>>(
-      { result: false, message: "지원하지 않는 이미지 종류입니다." },
+      { result: false, message: t("media.unsupportedKind") },
       { status: 400 },
     )
   }
@@ -125,7 +130,7 @@ export async function POST(req: NextRequest) {
   if (projectId !== null) {
     if (!/^[0-9a-f-]{36}$/i.test(projectId) || hasPathChars(projectId)) {
       return NextResponse.json<ApiResultWithItem<never>>(
-        { result: false, message: "잘못된 프로젝트 ID입니다." },
+        { result: false, message: t("media.invalidProjectId") },
         { status: 400 },
       )
     }
@@ -142,7 +147,7 @@ export async function POST(req: NextRequest) {
 
     if (!project) {
       return NextResponse.json<ApiResultWithItem<never>>(
-        { result: false, message: "프로젝트를 찾을 수 없습니다." },
+        { result: false, message: t("media.projectNotFound") },
         { status: 404 },
       )
     }
@@ -160,7 +165,7 @@ export async function POST(req: NextRequest) {
 
     if (!member) {
       return NextResponse.json<ApiResultWithItem<never>>(
-        { result: false, message: "이 프로젝트에 업로드할 권한이 없습니다." },
+        { result: false, message: t("media.uploadDenied") },
         { status: 403 },
       )
     }
@@ -190,7 +195,7 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     console.error("[media/upload] sharp processing failed", err)
     return NextResponse.json<ApiResultWithItem<never>>(
-      { result: false, message: "이미지 처리에 실패했습니다." },
+      { result: false, message: t("media.processFailed") },
       { status: 422 },
     )
   }
@@ -211,7 +216,7 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     console.error("[media/upload] storage.put failed", err)
     return NextResponse.json<ApiResultWithItem<never>>(
-      { result: false, message: "파일 저장에 실패했습니다." },
+      { result: false, message: t("media.storeFailed") },
       { status: 500 },
     )
   }

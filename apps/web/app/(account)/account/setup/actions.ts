@@ -3,7 +3,8 @@
 import { z } from "zod"
 import { auth } from "@/lib/auth"
 import { adminExists } from "@/lib/auth-session"
-import { credentialSchema } from "@/lib/validation"
+import { credentialSchema, credentialIssueMessage } from "@/lib/validation"
+import { getErrorTranslations } from "@/lib/action-i18n"
 import { promoteToAdminAtomic } from "@/lib/promote-admin"
 
 /**
@@ -31,18 +32,29 @@ export async function createFirstAdmin(params: {
   email: string
   password: string
 }): Promise<string> {
+  // Every message thrown from here is rendered by setup-form's toast, so it is
+  // localized rather than raw.
+  const t = await getErrorTranslations()
+
   // SERVER-SIDE validation: server actions bypass the client zod, and an empty
   // password would create a user with no credential account that we then promote
   // to admin — bricking the install (adminExists() closes setup, nobody can sign in).
-  const { name, password } = credentialSchema.parse({
+  // safeParse (not parse) so the failure surfaces as a translated Error rather than
+  // a raw ZodError, whose message is a `validation.*` key.
+  const parsed = credentialSchema.safeParse({
     name: params.name,
     password: params.password,
   })
-  const email = z.string().email("올바른 이메일 형식을 입력해주세요.").parse(params.email)
+  if (!parsed.success) throw new Error(credentialIssueMessage(parsed.error.issues, t))
+  const { name, password } = parsed.data
+
+  const parsedEmail = z.string().email().safeParse(params.email)
+  if (!parsedEmail.success) throw new Error(t("setup.invalidEmail"))
+  const email = parsedEmail.data
 
   // Gate: abort if an admin already exists (prevents abuse after bootstrap).
   if (await adminExists()) {
-    throw new Error("관리자 계정이 이미 존재합니다.")
+    throw new Error(t("setup.adminExists"))
   }
 
   // Create user via admin plugin server-side path (no session/headers = no auth check).
@@ -51,14 +63,12 @@ export async function createFirstAdmin(params: {
   })
 
   const userId = (result as { user?: { id?: string } }).user?.id
-  if (!userId) throw new Error("사용자 생성에 실패했습니다.")
+  if (!userId) throw new Error(t("setup.userCreateFailed"))
 
   // Promote to admin (atomic, race-safe).
   const promoted = await promoteToAdminAtomic(userId)
   if (!promoted) {
-    throw new Error(
-      "관리자 권한을 부여하지 못했습니다. 이미 다른 관리자가 존재할 수 있습니다.",
-    )
+    throw new Error(t("setup.promoteFailed"))
   }
 
   return userId

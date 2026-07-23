@@ -90,7 +90,7 @@ export async function createProject(
     if (!access.ok) return { result: false, message: access.message }
     const { session, orgId: activeOrgId } = access
 
-    const parsed = createProjectSchema.safeParse(input)
+    const parsed = createProjectSchema(t).safeParse(input)
     if (!parsed.success) {
       return { result: false, message: parsed.error.issues[0]?.message ?? t("common.invalidInput") }
     }

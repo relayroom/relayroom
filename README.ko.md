@@ -186,7 +186,9 @@ flowchart TB
 - **postgres** (48802) - 모든 메시지·이벤트·사용량 기록, 그리고 대시보드와 SSE를 실시간으로 만드는
   `LISTEN/NOTIFY` 버스.
 - **에이전트 측** - tmux 안의 대화형 Claude Code / Codex / Gemini 세션, `tmux send-keys`로 깨우는
-  `relayroom` Pager, 턴 종료 시 토큰 사용량을 허브로 보고하는 사용량 훅.
+  `relayroom` Pager, 턴 종료 시 토큰 사용량을 허브로 보고하는 사용량 훅. Claude에서는 대시보드
+  이벤트가 오간 내용을 보여줄 수 있도록 대화 발췌도 함께 보냅니다
+  ([훅이 보내는 것](packages/cli/README.md#what-the-usage-hook-sends)).
 
 이 저장소는 pnpm 모노레포입니다:
 

@@ -3,6 +3,7 @@ import type { ApiResultWithItem, ApiResultWithItems } from "@relayroom/shared"
 import { db } from "@/modules/drizzle/db"
 import { notBannedFromProject } from "@/lib/auth-session"
 import { projects, agents, projectAccess, threads, events } from "@relayroom/db/schema"
+import { getErrorTranslations } from "@/lib/action-i18n"
 
 // The virtual 'human' participant (server HUMAN_PART) is not a connectable agent,
 // so it is excluded from the project agent counts (matching the agent list).
@@ -68,6 +69,7 @@ export async function listProjects(
   orgId: string,
   viewerUserId?: string,
 ): Promise<ApiResultWithItems<ProjectCard>> {
+  const t = await getErrorTranslations()
   try {
     // Agent counts per project
     const agentCountSq = db
@@ -181,7 +183,7 @@ export async function listProjects(
     return { result: true, totalCount: items.length, items }
   } catch (err) {
     console.error("[listProjects]", err)
-    return { result: false, message: "프로젝트 목록을 불러오는 데 실패했습니다." }
+    return { result: false, message: t("project.listFailed") }
   }
 }
 
@@ -191,6 +193,7 @@ export async function getProjectBySlug(
   orgId: string,
   slug: string,
 ): Promise<ApiResultWithItem<ProjectDetail>> {
+  const t = await getErrorTranslations()
   try {
     const [row] = await db
       .select()
@@ -205,7 +208,7 @@ export async function getProjectBySlug(
       .limit(1)
 
     if (!row) {
-      return { result: false, message: "프로젝트를 찾을 수 없습니다." }
+      return { result: false, message: t("project.notFound") }
     }
 
     const [agentRow] = await db
@@ -243,6 +246,6 @@ export async function getProjectBySlug(
     return { result: true, item }
   } catch (err) {
     console.error("[getProjectBySlug]", err)
-    return { result: false, message: "프로젝트 정보를 불러오는 데 실패했습니다." }
+    return { result: false, message: t("project.loadFailed") }
   }
 }
