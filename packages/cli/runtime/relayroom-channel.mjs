@@ -263,7 +263,8 @@ function startWakePipeline() {
     log(`dormant (delivery=${DELIVERY}); the pager owns wakes for part=${PART}`)
     return
   }
-  log(`channel ready for ${CODE ? `code=${CODE}` : `project=${PROJECT}`} part=${PART} (server ${SERVER})`)
+  // No connect code here either: it identifies the project to the hub as a secret.
+  log(`channel ready for part=${PART}${CODE ? "" : ` project=${PROJECT}`} (server ${SERVER})`)
   ;(async () => {
     for (;;) {
       try {

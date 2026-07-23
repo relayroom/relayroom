@@ -609,7 +609,7 @@ async function main() {
   if (HEADLESS) {
     log(`delivery=headless for part=${PART} → wakes spawn \`${AGENT_CLI}\` (server ${SERVER}); no tmux/send-keys`)
   } else {
-    log(`watching ${CODE ? `code=${CODE}` : `project=${PROJECT}`} part=${PART} → tmux ${TARGET} (server ${SERVER})`)
+    log(`watching part=${PART}${CODE ? "" : ` project=${PROJECT}`} -> tmux ${TARGET} (server ${SERVER})`)
   }
   for (;;) {
     try {

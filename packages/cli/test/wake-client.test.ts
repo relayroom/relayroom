@@ -381,3 +381,21 @@ describe("wake protocol: one implementation", () => {
     }
   })
 })
+
+describe("wake protocol: the connect code stays out of logs", () => {
+  const RUNTIME_DIR = fileURLToPath(new URL("../runtime/", import.meta.url))
+
+  it("never logs the SSE url or the code itself", () => {
+    // The connect code is a capability key - the hub authenticates /usage, /unread,
+    // /relayroom-md and the wake endpoints with it alone - and these logs land in
+    // pager.log and in Claude's MCP log, both of which get pasted into bug reports.
+    for (const name of ["wake-client.mjs", "relayroom-pager.mjs", "relayroom-channel.mjs"]) {
+      const src = readFileSync(join(RUNTIME_DIR, name), "utf8")
+      for (const line of src.split("\n")) {
+        if (!/\blog\(|console\.(log|error)\(/.test(line)) continue
+        expect(line, `${name} logs the connect code`).not.toMatch(/code=\$\{\s*CODE/)
+        expect(line, `${name} logs the SSE url, which carries the code`).not.toMatch(/\$\{\s*sseUrl\(\)/)
+      }
+    }
+  })
+})

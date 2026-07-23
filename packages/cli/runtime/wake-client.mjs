@@ -216,7 +216,10 @@ export function createWakeClient({
     const ctrl = new AbortController()
     const res = await fetch(sseUrl(), { headers, signal: ctrl.signal })
     if (!res.ok || !res.body) throw new Error(`SSE ${res.status} ${res.statusText}`)
-    log(`connected -> ${sseUrl()}`)
+    // Deliberately not the URL: it carries ?code=<connect code>, and the connect code
+    // is a capability key (the hub authenticates /usage, /unread, /relayroom-md and
+    // the wake endpoints with it alone). Logs get pasted into issues.
+    log(`connected -> ${server}/api/sse (part=${part})`)
     onConnect?.()
 
     // Arm/re-arm on every byte: a half-open connection delivers nothing and never
