@@ -77,13 +77,43 @@ const AGENT = arg("agent", "claude")
 const CACHE_READ_RATE = 0.1
 const CACHE_WRITE_RATE = 1.25
 
-// Rough $/MTok by model family (input, output) - approximate, for an at-a-glance
-// cost estimate. Token counts are exact; this is only the $ conversion.
+/**
+ * $/MTok [input, output] per Claude model, matched by ID PREFIX.
+ *
+ * Prefix, not family: `includes("opus")` priced every Opus generation at the 4.1
+ * rate, which is 3x the current one - and matching on the family name is what let
+ * that stay invisible. A prefix still covers the two suffixes a transcript really
+ * carries: a dated snapshot (`-20251001`) and a context tag (`[1m]`, which bills at
+ * the standard rate on these models).
+ *
+ * Only rates that have been checked belong here. A model that is not listed gets no
+ * dollar figure at all (see priceFor) - the token counts still report, and the gap
+ * is visible. An unlisted model showing tokens with no cost is a prompt to add a
+ * verified rate; a wrong number looks exactly like a right one.
+ */
+const CLAUDE_PRICES = [
+  ["claude-opus-4-8", [5, 25]],
+  ["claude-opus-4-7", [5, 25]],
+  ["claude-opus-4-6", [5, 25]],
+  ["claude-sonnet-5", [3, 15]],
+  ["claude-sonnet-4-6", [3, 15]],
+  ["claude-haiku-4-5", [1, 5]],
+  // Deliberately absent: Opus 4.5 and older, Sonnet 4.5 and older, Haiku 3.x. Their
+  // current rates have not been verified here, and guessing is what produced the bug
+  // this table replaces. Sonnet 5's promotional rate is also absent on purpose - a
+  // date-dependent price would go stale silently, and the list rate errs high.
+]
+
+/**
+ * The $/MTok pair for a model, or null when it is not one we have a verified rate
+ * for. Token counts are exact; this is only the dollar conversion, and the caller
+ * omits cost_usd entirely when this returns null.
+ */
 function priceFor(model = "") {
   const m = model.toLowerCase()
-  if (m.includes("opus")) return [15, 75]
-  if (m.includes("sonnet")) return [3, 15]
-  if (m.includes("haiku")) return [1, 5]
+  for (const [id, price] of CLAUDE_PRICES) if (m.startsWith(id)) return price
+  // Non-Claude agents: left as they were. These have not been re-verified, and the
+  // Claude rates are the ones this hook actually reports today.
   if (m.includes("codex") || m.includes("gpt-5") || m.startsWith("o3") || m.startsWith("o4")) return [1.25, 10]
   if (m.includes("gpt-4")) return [2.5, 10]
   if (m.includes("gemini") && m.includes("flash")) return [0.3, 2.5]
