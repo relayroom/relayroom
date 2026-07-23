@@ -6,6 +6,7 @@ import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { init } from "../src/init"
+import { SUBPROCESS_TIMEOUT_MS } from "./timeouts"
 
 const GUARD = fileURLToPath(new URL("../runtime/relayroom-ask-guard.mjs", import.meta.url))
 
@@ -84,7 +85,7 @@ describe("relayroom init: RELAYROOM.md fetch", () => {
 /** Run a command, resolving with its exit code and output (never rejects). */
 function run(cmd: string, args: string[], opts: { cwd?: string } = {}): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    execFile(cmd, args, { cwd: opts.cwd, timeout: 20_000 }, (err, stdout, stderr) => {
+    execFile(cmd, args, { cwd: opts.cwd, timeout: SUBPROCESS_TIMEOUT_MS }, (err, stdout, stderr) => {
       const code = err && typeof (err as { code?: unknown }).code === "number" ? (err as { code: number }).code : err ? 1 : 0
       resolve({ code, stdout: String(stdout), stderr: String(stderr) })
     })
@@ -226,7 +227,7 @@ describe("generated rr.sh: update --self", () => {
       execFile(
         "bash",
         [join(dir, "rr.sh"), "update", "--self"],
-        { cwd: dir, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` }, timeout: 20_000 },
+        { cwd: dir, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` }, timeout: SUBPROCESS_TIMEOUT_MS },
         () => resolve(),
       )
     })
@@ -277,7 +278,7 @@ describe("generated rr.sh: global MCP config takeover warning", () => {
       execFile(
         "bash",
         [join(dir, "rr.sh"), "codex", "mcp-add"],
-        { cwd: dir, env: { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`, ...extraEnv }, timeout: 20_000 },
+        { cwd: dir, env: { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`, ...extraEnv }, timeout: SUBPROCESS_TIMEOUT_MS },
         (_err, stdout, stderr) => resolve({ stdout: String(stdout), stderr: String(stderr) }),
       )
     })
@@ -362,22 +363,31 @@ describe("ask guard: role lookup", () => {
 
 describe("generated rr.sh: session name guard", () => {
   let dir: string
+  let bin: string
   let hub: ReturnType<typeof recordingHub>
   let url: string
   let savedTmux: string | undefined
 
   beforeEach(async () => {
     dir = mkdtempSync(join(tmpdir(), "relayroom-target-"))
+    bin = mkdtempSync(join(tmpdir(), "relayroom-target-bin-"))
     hub = recordingHub(MD_HANDLER)
     url = `http://127.0.0.1:${await hub.port}`
     savedTmux = process.env.TMUX
     delete process.env.TMUX
+    // rr.sh resolves `$CLI` as `relayroom`, falling back to `npx -y @relayroom/cli`
+    // when it is not on PATH - and `doctor` runs `$CLI --version`. On a developer
+    // machine relayroom is installed, so that costs nothing; on CI it is not, so
+    // the fallback fires and npx downloads the PUBLISHED package from the npm
+    // registry mid-test. That is seconds of network inside a unit test, and it
+    // exercises whatever is on npm rather than the code under test. Stub it.
+    writeFileSync(join(bin, "relayroom"), "#!/bin/sh\necho 0.0.0-test\n", { mode: 0o755 })
   })
 
   afterEach(() => {
     hub.server.close()
     if (savedTmux !== undefined) process.env.TMUX = savedTmux
-    rmSync(dir, { recursive: true, force: true })
+    for (const d of [dir, bin]) rmSync(d, { recursive: true, force: true })
   })
 
   const runRr = (args: string[]) =>
@@ -385,7 +395,7 @@ describe("generated rr.sh: session name guard", () => {
       execFile(
         "bash",
         [join(dir, "rr.sh"), ...args],
-        { cwd: dir, timeout: 20_000 },
+        { cwd: dir, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` }, timeout: SUBPROCESS_TIMEOUT_MS },
         (err, stdout, stderr) => {
           const code = err && typeof (err as { code?: unknown }).code === "number" ? (err as { code: number }).code : err ? 1 : 0
           resolve({ code, stdout: String(stdout), stderr: String(stderr) })
