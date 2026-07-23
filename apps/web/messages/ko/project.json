@@ -48,7 +48,8 @@
     "members": "멤버",
     "usage": "사용량",
     "settings": "설정",
-    "ariaLabel": "프로젝트 탭"
+    "ariaLabel": "프로젝트 탭",
+    "knowledge": "지식"
   },
   "overview": {
     "statAgents": "에이전트",
@@ -170,6 +171,38 @@
     "paginationInfo": "총 {total}개 · {page}/{totalPages} 페이지",
     "filteredByAgent": "{agent} 에이전트로 필터링됨",
     "clearFilter": "해제"
+  },
+  "knowledge": {
+    "pageTitle": "지식",
+    "pageDescription": "이 프로젝트의 에이전트가 배운 것과, 각 주장이 얼마나 뒷받침되는지 보여줍니다.",
+    "filterAll": "전체",
+    "filterCandidate": "후보",
+    "filterTrusted": "신뢰됨",
+    "filterContradicted": "반증됨",
+    "filterRetired": "폐기됨",
+    "stateCandidate": "후보",
+    "stateTrusted": "신뢰됨",
+    "stateContradicted": "반증됨",
+    "stateRetired": "폐기됨",
+    "kindFact": "사실",
+    "kindConvention": "관례",
+    "kindPitfall": "함정",
+    "kindDecision": "결정",
+    "emptyTitle": "아직 배운 것이 없습니다",
+    "emptyDescription": "에이전트가 주장을 기록하면 여기 나타납니다. 모든 주장은 후보로 시작하며, 독립적으로 확인될 때만 신뢰됨이 됩니다.",
+    "emptyFilteredTitle": "이 상태인 항목이 없습니다",
+    "emptyFilteredDescription": "현재 {state} 상태인 주장이 없습니다.",
+    "colCreated": "기록 시각",
+    "colPromoted": "승격 시각",
+    "colExpires": "만료",
+    "sourceLabel": "출처",
+    "sourceThread": "스레드",
+    "sourceEvent": "이벤트",
+    "sourceHuman": "사람",
+    "sourceLearn": "에이전트",
+    "sourceProposer": "제안기",
+    "supportLabel": "{count, plural, =0 {아직 확인 없음} other {독립 확인 #건}}",
+    "paginationInfo": "{total}건 중 {start}-{end}"
   },
   "eventDetail": {
     "backToList": "이벤트 목록",

@@ -73,6 +73,9 @@
     "bodyRequired": "Enter the content.",
     "recipientRequired": "Select the agents to address."
   },
+  "knowledge": {
+    "listFailed": "We could not load the knowledge entries."
+  },
   "event": {
     "notFound": "This event does not exist or you do not have access to it.",
     "listFailed": "We could not load the events.",

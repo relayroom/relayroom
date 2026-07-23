@@ -48,7 +48,8 @@
     "members": "Members",
     "usage": "Usage",
     "settings": "Settings",
-    "ariaLabel": "Project tabs"
+    "ariaLabel": "Project tabs",
+    "knowledge": "Knowledge"
   },
   "overview": {
     "statAgents": "Agents",
@@ -170,6 +171,38 @@
     "paginationInfo": "{total} total · Page {page} of {totalPages}",
     "filteredByAgent": "Filtered to agent {agent}",
     "clearFilter": "Clear"
+  },
+  "knowledge": {
+    "pageTitle": "Knowledge",
+    "pageDescription": "What this project's agents have learned, and how well each claim is backed.",
+    "filterAll": "All",
+    "filterCandidate": "Candidate",
+    "filterTrusted": "Trusted",
+    "filterContradicted": "Contradicted",
+    "filterRetired": "Retired",
+    "stateCandidate": "Candidate",
+    "stateTrusted": "Trusted",
+    "stateContradicted": "Contradicted",
+    "stateRetired": "Retired",
+    "kindFact": "Fact",
+    "kindConvention": "Convention",
+    "kindPitfall": "Pitfall",
+    "kindDecision": "Decision",
+    "emptyTitle": "Nothing learned yet",
+    "emptyDescription": "Claims appear here once an agent records one. Each starts as a candidate and becomes trusted only when it is independently confirmed.",
+    "emptyFilteredTitle": "Nothing in this state",
+    "emptyFilteredDescription": "No claims are currently {state}.",
+    "colCreated": "Recorded",
+    "colPromoted": "Promoted",
+    "colExpires": "Expires",
+    "sourceLabel": "From",
+    "sourceThread": "thread",
+    "sourceEvent": "event",
+    "sourceHuman": "a person",
+    "sourceLearn": "an agent",
+    "sourceProposer": "the proposer",
+    "supportLabel": "{count, plural, =0 {No confirmations yet} =1 {1 independent confirmation} other {# independent confirmations}}",
+    "paginationInfo": "{start}-{end} of {total}"
   },
   "eventDetail": {
     "backToList": "Event list",
