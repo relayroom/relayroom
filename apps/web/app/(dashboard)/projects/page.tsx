@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button"
 export const dynamic = "force-dynamic"
 
 export default async function ProjectsPage() {
-  await requireDashboardAccess()
+  const session = await requireDashboardAccess()
   const t = await getTranslations("project")
 
   const orgId = await resolveActiveOrgId()
@@ -22,7 +22,7 @@ export default async function ProjectsPage() {
     redirect("/organizations")
   }
 
-  const result = await listProjects(orgId)
+  const result = await listProjects(orgId, session.user.id)
 
   const projects = result.result ? result.items : []
 
