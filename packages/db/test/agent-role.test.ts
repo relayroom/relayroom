@@ -28,29 +28,43 @@ async function seedUser(id: string): Promise<string> {
   return id
 }
 
-describe('touchAgent revive', () => {
-  it('clears deleted_at and refreshes last_seen_at on activity', async () => {
-    const project = await getOrCreateProject(db, `role-revive-${Date.now()}`)
-    const part = 'reviver'
+describe('touchAgent', () => {
+  it('refreshes last_seen_at on a live part', async () => {
+    const project = await getOrCreateProject(db, `role-touch-${Date.now()}`)
+    const part = 'toucher'
 
-    // touchAgent no longer creates (agents are born via the web UI / getOrCreateAgent);
-    // it only bumps + revives an existing row. Register the part first.
+    // touchAgent does not create (agents are born via the web UI / getOrCreateAgent);
+    // it only bumps an existing row. Register the part first.
     const created = await getOrCreateAgent(db, project.id, part)
     expect(created.deletedAt).toBeNull()
 
-    // Soft-delete the part and roll last_seen_at back.
+    const past = new Date(Date.now() - 60 * 60 * 1000)
+    await db.update(agents).set({ lastSeenAt: past }).where(eq(agents.id, created.id))
+
+    const touched = await touchAgent(db, project.id, part)
+    expect(touched.id).toBe(created.id) // same row, not a new one
+    expect(touched.lastSeenAt!.getTime()).toBeGreaterThan(past.getTime())
+  })
+
+  it('does NOT revive a soft-deleted part', async () => {
+    const project = await getOrCreateProject(db, `role-norevive-${Date.now()}`)
+    const part = 'removed'
+
+    const created = await getOrCreateAgent(db, project.id, part)
     const past = new Date(Date.now() - 60 * 60 * 1000)
     await db
       .update(agents)
       .set({ deletedAt: new Date(), lastSeenAt: past })
       .where(eq(agents.id, created.id))
 
-    // Activity revives it.
-    const revived = await touchAgent(db, project.id, part)
-    expect(revived.id).toBe(created.id) // same row, not a new one
-    expect(revived.deletedAt).toBeNull()
-    expect(revived.lastSeenAt).toBeTruthy()
-    expect(revived.lastSeenAt!.getTime()).toBeGreaterThan(past.getTime())
+    // A removed part's pager keeps beating; that traffic must not undo the removal.
+    // touchAgent used to set deletedAt: null here, which brought the agent back.
+    const touched = await touchAgent(db, project.id, part)
+    expect(touched).toBeUndefined()
+
+    const [after] = await db.select().from(agents).where(eq(agents.id, created.id))
+    expect(after!.deletedAt).not.toBeNull()
+    expect(after!.lastSeenAt!.getTime()).toBe(past.getTime()) // not even touched
   })
 })
 

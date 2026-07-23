@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm'
+import { and, eq, isNull } from 'drizzle-orm'
 import type { Db } from './client'
 import { agents, projects } from './schema'
 
@@ -45,15 +45,30 @@ export async function getOrCreateAgent(db: Db, projectId: string, part: string) 
 }
 
 /**
- * Bump lastSeenAt for an EXISTING agent (reviving it if soft-deleted) and return
- * it. Does NOT create: agents are born only via the web UI (connectAgent), so an
- * activity path that targets an unregistered part must not conjure one - it
- * returns undefined and the caller rejects. Use for activity paths only.
+ * Bump lastSeenAt for an EXISTING, LIVE agent and return it. Does NOT create and
+ * does NOT revive: agents are born and re-added only via the web UI (connectAgent),
+ * so an activity path that targets an unregistered - or removed - part must not
+ * conjure or resurrect one. It returns undefined and the caller rejects.
+ *
+ * This used to also set `deletedAt: null`, which made a delete undoable by
+ * accident rather than by intent: the deleted part's pager is still running on the
+ * agent machine, and its next heartbeat (seconds later) brought the row back, put
+ * it back in the roster, and made it a wake recipient again - while the person who
+ * deleted it believed it was gone. computeRecipients, the eligibility sweep, and
+ * roster all filter `deletedAt`, so activity was the one path that undid a removal.
+ *
+ * Deliberate re-add still works and is unaffected: connectAgent upserts with
+ * `deletedAt: null` when a part is added again from the dashboard. Intent revives;
+ * traffic does not.
  */
 export async function touchAgent(db: Db, projectId: string, part: string) {
   const [agent] = await db.update(agents)
-    .set({ lastSeenAt: new Date(), deletedAt: null })
-    .where(and(eq(agents.projectId, projectId), eq(agents.part, part)))
+    .set({ lastSeenAt: new Date() })
+    .where(and(
+      eq(agents.projectId, projectId),
+      eq(agents.part, part),
+      isNull(agents.deletedAt),
+    ))
     .returning()
   return agent
 }
