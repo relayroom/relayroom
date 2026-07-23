@@ -23,8 +23,7 @@ export interface RelayRoomConfig {
   /** The previous `target` when init last changed it. Lets rr.sh auto-rename a
    *  still-running session from the old name to the new one (e.g. when the naming
    *  convention changes), so the user never recreates the session by hand. */
-  previousTarget?: string
-  machineLabel?: string
+  previousTarget?: string | null
   /** The coding CLI(s) to relaunch in the tmux session (e.g. "claude" or
    *  "claude,codex"); used by rr.sh. The first is launched in the session. */
   agent?: string
@@ -59,14 +58,23 @@ export function readConfig(dir = "."): RelayRoomConfig {
   }
 }
 
-/** Merge non-empty fields into `.relayroom/config.json` (creates the dir). */
+/**
+ * Merge fields into `.relayroom/config.json` (creates the dir).
+ *
+ * `undefined` and `""` mean "leave whatever is there", which is what makes a
+ * partial update possible: every caller passes the whole shape and only fills in
+ * what it knows. `null` means "remove this key" - without it no field could ever
+ * be unset once written, so a stale `previousTarget` lived forever and there was
+ * no way to drop a token short of editing the file by hand.
+ */
 export function writeConfig(dir: string, config: RelayRoomConfig): string {
   const path = configPath(dir)
   const relayroomDir = join(resolve(dir), RELAYROOM_DIR)
   mkdirSync(relayroomDir, { recursive: true })
   const merged: Record<string, unknown> = { ...readConfig(dir) }
   for (const [k, v] of Object.entries(config)) {
-    if (v !== undefined && v !== null && v !== "") merged[k] = v
+    if (v === null) delete merged[k]
+    else if (v !== undefined && v !== "") merged[k] = v
   }
   writeFileSync(path, JSON.stringify(merged, null, 2) + "\n")
   // config.json holds the bearer token, so keep the dir + file owner-only. mkdir/write

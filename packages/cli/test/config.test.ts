@@ -2,7 +2,7 @@ import { chmodSync, mkdtempSync, rmSync, statSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { writeConfig, RELAYROOM_DIR } from "../src/config"
+import { writeConfig, readConfig, RELAYROOM_DIR } from "../src/config"
 
 /**
  * SEC-10: .relayroom/config.json holds the agent's bearer token, so it must not be
@@ -34,4 +34,32 @@ describe("writeConfig file permissions", () => {
       expect(statSync(join(dir, RELAYROOM_DIR)).mode & 0o777).toBe(0o700)
     },
   )
+})
+
+describe("writeConfig merge semantics", () => {
+  let dir: string
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "rr-config-")) })
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }) })
+
+  it("keeps existing values for fields a caller does not know about", () => {
+    writeConfig(dir, { code: "abc", part: "web", token: "t" })
+    writeConfig(dir, { part: "web2" })
+    expect(readConfig(dir)).toMatchObject({ code: "abc", part: "web2", token: "t" })
+  })
+
+  it("treats an empty string as 'leave it alone', not as a value", () => {
+    writeConfig(dir, { code: "abc", token: "t" })
+    writeConfig(dir, { token: "" })
+    expect(readConfig(dir).token).toBe("t")
+  })
+
+  it("removes a key when the value is null (the only way to unset one)", () => {
+    writeConfig(dir, { code: "abc", target: "RR-demo-core", previousTarget: "relayroom-core" })
+    expect(readConfig(dir).previousTarget).toBe("relayroom-core")
+    writeConfig(dir, { previousTarget: null })
+    expect(readConfig(dir).previousTarget).toBeUndefined()
+    expect("previousTarget" in (readConfig(dir) as object)).toBe(false)
+    // Everything else survives the removal.
+    expect(readConfig(dir)).toMatchObject({ code: "abc", target: "RR-demo-core" })
+  })
 })

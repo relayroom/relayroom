@@ -403,8 +403,6 @@ const RETRY_MAX_MS = 30_000 // backoff cap; keep retrying for the session, never
 // Headless de-dup: wakeIds we have already spawned a CLI for, so a sweep-re-issued
 // (un-acked) wake never triggers a second expensive model run. See makeWakeDedup.
 const headlessDedup = makeWakeDedup()
-// messageIds seen on the live SSE stream. Role reduced under 07: the authoritative
-// coalescing is now the server-side wake state machine + per-part lease, and
 
 function enqueue(evt) {
   pending.push(evt)

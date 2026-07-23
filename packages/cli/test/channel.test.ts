@@ -6,6 +6,7 @@ import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { ensureChannelMcp } from "../src/init"
+import pkg from "../package.json"
 
 const CHANNEL = fileURLToPath(new URL("../runtime/relayroom-channel.mjs", import.meta.url))
 
@@ -58,6 +59,8 @@ describe("channel server: MCP handshake", () => {
     expect(res.result.protocolVersion).toBe("2025-06-18")
     expect(res.result.capabilities.experimental).toHaveProperty("claude/channel")
     expect(res.result.serverInfo.name).toBe("relayroom-channel")
+    // The handshake must report the shipped version, not a literal that nothing bumps.
+    expect(res.result.serverInfo.version).toBe(pkg.version)
   })
 
   it("answers ping with an empty result and unknown requests with method-not-found", async () => {
