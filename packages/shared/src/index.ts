@@ -48,6 +48,11 @@ export type AgentRole = z.infer<typeof agentRole>
 export const projectAccessLevel = z.enum(['readonly', 'write', 'owner'])
 export type ProjectAccessLevel = z.infer<typeof projectAccessLevel>
 
+// Project authority as a pure decision (rank, org-manager rule, ban gate), so the
+// dashboard and the MCP server answer "may this user do this?" the same way.
+// Exported after the enum above because it builds on `ProjectAccessLevel`.
+export * from './project-access'
+
 export const connectionStatus = z.enum(['connected', 'expired', 'revoked'])
 export type ConnectionStatus = z.infer<typeof connectionStatus>
 
