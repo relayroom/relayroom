@@ -82,6 +82,9 @@
     "copyError": "Failed to copy to clipboard",
     "cancelSuccess": "Invitation cancelled",
     "cancelError": "Failed to cancel invitation",
-    "empty": "No pending invitations."
+    "empty": "No pending invitations.",
+    "cancelConfirmTitle": "Cancel this invitation?",
+    "cancelConfirmBody": "The invite link stops working immediately. Anyone still holding it will not be able to join, and you would have to send a new invitation.",
+    "cancelling": "Cancelling the invitation..."
   }
 }

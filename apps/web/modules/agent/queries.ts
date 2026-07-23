@@ -5,6 +5,7 @@ import { and, count, desc, eq, isNull, ne, sql } from "drizzle-orm"
 // coding agent, so it is hidden from the agent management list and its counts.
 const HUMAN_PART = "human"
 import type { ApiResultWithItem, ApiResultWithItems } from "@relayroom/shared"
+import { PAGER_ONLINE_WINDOW_MS, isPagerOnline } from "@/lib/pager-liveness"
 import { db } from "@/modules/drizzle/db"
 import { agents, agentConnections, agentSnapshots, events, messages, threads, projects } from "@relayroom/db/schema"
 import { better_auth_user } from "@relayroom/db/auth-schema"
@@ -67,14 +68,10 @@ export function deriveAgentStatus(args: {
   return "offline"
 }
 
-// The pager beats every ~30s; treat it as online within 3 missed beats.
-export const PAGER_ONLINE_WINDOW_MS = 90_000
-
-/** Whether the pager process is alive (heartbeat within the online window). */
-export function isPagerOnline(pagerLastSeenAt: Date | null | undefined): boolean {
-  if (!pagerLastSeenAt) return false
-  return Date.now() - pagerLastSeenAt.getTime() < PAGER_ONLINE_WINDOW_MS
-}
+// Defined in lib/pager-liveness.ts so the realtime provider can share it without
+// importing this module (which would pull the db client into the client bundle).
+// Re-exported here because callers already import them from this module.
+export { PAGER_ONLINE_WINDOW_MS, isPagerOnline }
 
 export interface AgentConnectionDetail {
   id: string
