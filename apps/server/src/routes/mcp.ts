@@ -995,18 +995,27 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
     async (args) => {
       const limit = Math.min(args.limit ?? 10, 20)
       const like = `%${args.query.replace(/[%_\\]/g, (m) => '\\' + m)}%`
-      const rows = await db.selectDistinctOn([threads.id], {
+      // Body matches are an EXISTS, not a join. A join produces one row per matching
+      // message, which needed DISTINCT ON (thread.id) to collapse - and DISTINCT ON
+      // forces ORDER BY to lead with thread.id. Ids are uuidv7, so that ordering is
+      // oldest-first, and the limit then kept the OLDEST matches and dropped every
+      // recent one. A search for something discussed today returned nothing from
+      // today. EXISTS yields at most one row per thread, which frees the ORDER BY to
+      // be what the caller wants: newest first, matching the `threads` tool.
+      const rows = await db.select({
         threadId: threads.id,
         subject: threads.subject,
         status: threads.status,
         createdAt: threads.createdAt,
       }).from(threads)
-        .leftJoin(messages, eq(messages.threadId, threads.id))
         .where(and(
           eq(threads.projectId, ctx.projectId),
-          sql`(${threads.subject} ilike ${like} or ${messages.body} ilike ${like})`,
+          sql`(${threads.subject} ilike ${like} or exists (
+            select 1 from ${messages}
+            where thread_id = ${threads.id} and body ilike ${like}
+          ))`,
         ))
-        .orderBy(threads.id)
+        .orderBy(desc(threads.createdAt))
         .limit(limit)
       return { content: [{ type: 'text' as const, text: JSON.stringify(rows) }] }
     },
