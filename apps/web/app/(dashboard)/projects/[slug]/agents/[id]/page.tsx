@@ -17,7 +17,8 @@ import { AgentConnectGuideDialog } from "@/components/agent/agent-connect-guide-
 import { getAgent, getAgentUsageByModel, getAgentSnapshot, getMyMainAgent } from "@/modules/agent/queries"
 import { listThreads } from "@/modules/thread/queries"
 import { listEvents } from "@/modules/event/queries"
-import { timeAgo, eventTitle } from "@/lib/format"
+import { eventTitle } from "@/lib/format"
+import { getTimeAgo } from "@/lib/time-ago"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { MainAgentBadge } from "@/components/agent/main-agent-badge"
@@ -65,6 +66,7 @@ interface Props {
 export default async function AgentDetailPage({ params, searchParams }: Props) {
   const session = await requireDashboardAccess()
   const t = await getTranslations("project")
+  const timeAgo = await getTimeAgo()
   const autoConnect = (await searchParams).connect === "1"
 
   const connStatusLabel = (status: string) => {

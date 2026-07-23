@@ -11,7 +11,7 @@ import { AgentDisconnectButton } from "@/components/agent/agent-disconnect-butto
 import { AgentAvatar } from "@/components/agent/agent-appearance"
 import { PagerStatusIcon } from "@/components/agent/pager-status-icon"
 import { LimitedBadge } from "@/components/agent/limited-badge"
-import { timeAgo } from "@/lib/format"
+import { useTimeAgo } from "@/lib/time-ago"
 import { cn } from "@/lib/utils"
 
 // Statuses match the badges; filter runs in-memory over the SSR snapshot.
@@ -70,6 +70,7 @@ function compact(n: number): string {
 export function AgentList({ items, showProject = false, showOwner = false, showActions = false }: Props) {
   const t = useTranslations("project")
   const tc = useTranslations("common")
+  const timeAgo = useTimeAgo()
   const [filter, setFilter] = useState<Filter>("all")
 
   const counts = useMemo(() => {

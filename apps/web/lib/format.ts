@@ -66,17 +66,42 @@ export function formatDateTime(iso: string): string {
   return `${yyyy}-${mm}-${dd} ${hh}:${min}`
 }
 
-/** Simple relative time string in Korean */
-export function timeAgo(iso: string): string {
-  const now = Date.now()
-  const then = new Date(iso).getTime()
-  const diffMs = now - then
-  const diffSec = Math.floor(diffMs / 1000)
-  if (diffSec < 60) return '방금 전'
+/** A message key under `common.time` plus the number to interpolate. */
+export interface TimeAgoParts {
+  key: "justNow" | "minutes" | "hours" | "days"
+  count: number
+}
+
+/**
+ * Pick the unit and count for a relative time. Pure: no i18n, so it stays usable
+ * from both the server and the client. `lib/time-ago.ts` turns this into text.
+ *
+ * Deliberately NOT Intl.RelativeTimeFormat / next-intl's `format.relativeTime`.
+ * Both change what the UI says: with the default `numeric: "auto"`, Korean renders
+ * -2 days as "그저께" rather than "2일 전", and automatic unit selection folds long
+ * gaps into weeks and years, while these thresholds have no upper bound (400 days
+ * reads as "400일 전"). There is also no Intl equivalent of the sub-minute "방금 전"
+ * - `numeric: "always"` gives "0초 후". Keeping the thresholds here preserves the
+ * existing output exactly; the keys make it translatable.
+ */
+export function timeAgoParts(iso: string): TimeAgoParts {
+  const diffSec = Math.floor((Date.now() - new Date(iso).getTime()) / 1000)
+  if (diffSec < 60) return { key: "justNow", count: 0 }
   const diffMin = Math.floor(diffSec / 60)
-  if (diffMin < 60) return `${diffMin}분 전`
+  if (diffMin < 60) return { key: "minutes", count: diffMin }
   const diffHour = Math.floor(diffMin / 60)
-  if (diffHour < 24) return `${diffHour}시간 전`
-  const diffDay = Math.floor(diffHour / 24)
-  return `${diffDay}일 전`
+  if (diffHour < 24) return { key: "hours", count: diffHour }
+  return { key: "days", count: Math.floor(diffHour / 24) }
+}
+
+/**
+ * When a thread was last active: its newest message, or its creation if it has
+ * none. Shared so the thread list and the project overview cannot drift on which
+ * timestamp "last activity" means.
+ */
+export function threadActivityIso(thread: {
+  lastMessageAt?: Date | null
+  createdAt: Date
+}): string {
+  return (thread.lastMessageAt ?? thread.createdAt).toISOString()
 }

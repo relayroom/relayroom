@@ -32,7 +32,7 @@ import {
 } from "@/components/ui/table"
 import { InviteForm } from "./invite-form"
 import { PendingInvitations } from "./pending-invitations"
-import { timeAgo } from "@/lib/format"
+import { getTimeAgo } from "@/lib/time-ago"
 
 export const dynamic = "force-dynamic"
 
@@ -42,9 +42,10 @@ interface Props {
 
 export default async function OrganizationDetailPage({ params }: Props) {
   const { slug } = await params
-  const [session, t] = await Promise.all([
+  const [session, t, timeAgo] = await Promise.all([
     requireDashboardAccess(),
     getTranslations("org"),
+    getTimeAgo(),
   ])
 
   // Fetch org by slug

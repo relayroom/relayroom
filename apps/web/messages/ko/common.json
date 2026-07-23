@@ -66,5 +66,11 @@
   },
   "limited": {
     "badge": "{time}까지 제한됨"
+  },
+  "time": {
+    "justNow": "방금 전",
+    "minutes": "{count}분 전",
+    "hours": "{count}시간 전",
+    "days": "{count}일 전"
   }
 }

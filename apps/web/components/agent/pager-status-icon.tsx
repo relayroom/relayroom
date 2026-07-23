@@ -9,7 +9,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
-import { timeAgo } from "@/lib/format"
+import { useTimeAgo } from "@/lib/time-ago"
 import { useRealtime } from "@/components/realtime/realtime-provider"
 
 /**
@@ -74,6 +74,7 @@ export function PagerStatusBadge({
   lastSeenAt: string | null
 }) {
   const t = useTranslations("common")
+  const timeAgo = useTimeAgo()
   const realtime = useRealtime()
   const online = realtime?.pagerOnline(agentId) ?? status
 

@@ -1,7 +1,7 @@
 import Link from "next/link"
 import type { EventRow } from "@/modules/event/queries"
 import { AgentAuthor } from "@/components/agent/agent-author"
-import { timeAgo, eventTitle } from "@/lib/format"
+import { eventTitle } from "@/lib/format"
 import { cn } from "@/lib/utils"
 
 const EVENT_TYPE_STYLES: Record<string, string> = {
@@ -21,6 +21,9 @@ function compactNum(n: number): string {
 interface Props {
   event: EventRow
   projectSlug: string
+  /** Pre-resolved relative time for the event. Kept as a prop so this stays a
+   * presentational component with no i18n of its own. */
+  timeLabel: string
   /** "full" = events page (model / tokens / cost meta); "compact" = overview card. */
   variant?: "full" | "compact"
 }
@@ -30,7 +33,7 @@ interface Props {
  * author agent (link + crown + owner), and — in full mode — model + token usage +
  * cost. Shared by the events page and the overview "recent events" card.
  */
-export function EventListItem({ event, projectSlug, variant = "full" }: Props) {
+export function EventListItem({ event, projectSlug, timeLabel, variant = "full" }: Props) {
   const compact = variant === "compact"
   const u = event.usage
   const inTok = u?.input_tokens ?? 0
@@ -92,7 +95,7 @@ export function EventListItem({ event, projectSlug, variant = "full" }: Props) {
       </div>
 
       <span className="shrink-0 font-mono text-xs text-muted-foreground">
-        {timeAgo(event.createdAt.toISOString())}
+        {timeLabel}
       </span>
     </div>
   )

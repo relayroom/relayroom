@@ -7,6 +7,7 @@ import { resolveActiveOrgId } from "@/lib/active-org"
 import { getProjectBySlug } from "@/modules/project/queries"
 import { listEvents } from "@/modules/event/queries"
 import { EventListItem } from "@/components/event/event-list-item"
+import { getTimeAgo } from "@/lib/time-ago"
 import { Pagination } from "@/components/ui/pagination"
 
 export const dynamic = "force-dynamic"
@@ -21,6 +22,7 @@ interface Props {
 export default async function EventsPage({ params, searchParams }: Props) {
   await requireDashboardAccess()
   const t = await getTranslations("project")
+  const timeAgo = await getTimeAgo()
 
   const { slug } = await params
   const sp = await searchParams
@@ -101,7 +103,12 @@ export default async function EventsPage({ params, searchParams }: Props) {
       ) : (
         <div className="divide-y divide-border rounded-lg border border-border">
           {events.map((event) => (
-            <EventListItem key={event.id} event={event} projectSlug={slug} />
+            <EventListItem
+              key={event.id}
+              event={event}
+              projectSlug={slug}
+              timeLabel={timeAgo(event.createdAt.toISOString())}
+            />
           ))}
         </div>
       )}

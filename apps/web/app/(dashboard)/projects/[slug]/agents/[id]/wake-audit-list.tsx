@@ -4,7 +4,7 @@ import { useState } from "react"
 import { useTranslations } from "next-intl"
 import { ChevronDownIcon } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
-import { timeAgo } from "@/lib/format"
+import { useTimeAgo } from "@/lib/time-ago"
 import type { WakeAuditRow } from "@/modules/wake/queries"
 
 const PAGE = 10
@@ -13,6 +13,7 @@ const PAGE = 10
  *  the full window in). */
 export function WakeAuditList({ rows }: { rows: WakeAuditRow[] }) {
   const t = useTranslations("wake")
+  const timeAgo = useTimeAgo()
   const [visible, setVisible] = useState(PAGE)
   const shown = rows.slice(0, visible)
   const remaining = rows.length - visible

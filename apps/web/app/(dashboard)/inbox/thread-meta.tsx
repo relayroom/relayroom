@@ -2,7 +2,7 @@
 
 import { useTranslations } from "next-intl"
 import { cn } from "@/lib/utils"
-import { timeAgo } from "@/lib/format"
+import { useTimeAgo } from "@/lib/time-ago"
 
 export interface ThreadMetaProps {
   status: string
@@ -36,6 +36,7 @@ export function ThreadMeta({
   updatedAt,
 }: ThreadMetaProps) {
   const t = useTranslations("inbox")
+  const timeAgo = useTimeAgo()
 
   const opener = createdByHuman
     ? t("you")

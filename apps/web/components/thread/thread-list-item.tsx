@@ -2,7 +2,6 @@ import Link from "next/link"
 import { MessageSquareIcon, CornerDownRightIcon } from "lucide-react"
 import type { ThreadRow } from "@/modules/thread/queries"
 import { AgentAuthor } from "@/components/agent/agent-author"
-import { timeAgo } from "@/lib/format"
 import { cn } from "@/lib/utils"
 
 const STATUS_BADGE_STYLES: Record<string, string> = {
@@ -18,6 +17,9 @@ interface Props {
   projectSlug: string
   /** Pre-resolved status label (caller owns the i18n namespace). */
   statusLabel: string
+  /** Pre-resolved relative time for the row's last activity. Same reason as
+   * statusLabel: this stays a presentational component with no i18n of its own. */
+  timeLabel: string
   /** "full" = standalone list row (padding, hover, message count); "compact" =
    * inside an overview card (tighter, no message count). */
   variant?: "full" | "compact"
@@ -28,7 +30,7 @@ interface Props {
  * preview, and the author agent (link + crown + owner). Shared by the threads
  * page and the overview "recent threads" card so the layout stays in one place.
  */
-export function ThreadListItem({ thread, projectSlug, statusLabel, variant = "full" }: Props) {
+export function ThreadListItem({ thread, projectSlug, statusLabel, timeLabel, variant = "full" }: Props) {
   const compact = variant === "compact"
   const showMeta = !!thread.creatorAgentPart || !!thread.authorAgentPart || (!compact && thread.messageCount > 0)
 
@@ -92,9 +94,7 @@ export function ThreadListItem({ thread, projectSlug, statusLabel, variant = "fu
       </div>
 
       <span className="shrink-0 font-mono text-xs text-muted-foreground">
-        {thread.lastMessageAt
-          ? timeAgo(thread.lastMessageAt.toISOString())
-          : timeAgo(thread.createdAt.toISOString())}
+        {timeLabel}
       </span>
     </div>
   )
