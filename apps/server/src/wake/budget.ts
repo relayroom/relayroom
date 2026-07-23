@@ -11,6 +11,13 @@ export const DEFAULT_URGENT_PER_HOUR = 5
 
 // 프로젝트 예약 floor(스펙 §15.1): max(소유자 예산의 20%, 5/hr). priority는 2배 지분.
 export const FLOOR_FRACTION = 0.2
+/**
+ * Floor, not a share: this many wakes per hour are available to a project even when
+ * the owner's budget works out lower. Setting wakesPerHour to 0 therefore still
+ * lets 5 through, which surprises whoever set it to 0 expecting silence. Documented
+ * rather than changed - the floor exists so a small budget cannot lock a project out
+ * entirely, and that reason still holds.
+ */
 export const FLOOR_MIN = 5
 export const PRIORITY_MULTIPLIER = 2
 
