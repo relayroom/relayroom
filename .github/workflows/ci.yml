@@ -43,3 +43,52 @@ jobs:
         run: pnpm test
       - name: Build publishable CLI
         run: pnpm --filter @relayroom/cli build
+
+  # What this job catches that `test` cannot: things MISSING FROM THE DOCKER BUILD
+  # CONTEXT. `tsc --noEmit` and `pnpm build` run against the whole working tree, so a
+  # file that exists in the repo but is never COPYed into the image looks fine to
+  # both of them - and the image build is the only place that difference shows up.
+  #
+  # This is not hypothetical. 0.4.1 shipped with both web images failing to build:
+  # apps/web/vitest.config.ts had started importing the shared test database URL
+  # from test/, which the web Dockerfile did not copy, and `next build` type-checks
+  # config files. Tests were green, `pnpm build` was green, and the break surfaced
+  # only when someone pressed release - after npm had already published.
+  #
+  # amd64 only: this class of failure (missing context, type errors, missing deps,
+  # Dockerfile syntax) is architecture-independent, and release-images.yml still
+  # builds arm64 before anything is published. Two nets; no reason to make the first
+  # one twice as heavy.
+  #
+  # push: false - nothing is published from here. A PR job that pushed would need
+  # `packages: write`, and a fork PR's GITHUB_TOKEN is read-only, so pushing would
+  # turn every outside contribution red. Building is the whole check.
+  #
+  # No path filter on purpose. The build context is the repo root, so almost any
+  # file can change the result - the 0.4.1 break came from test/, which an
+  # apps/**-and-packages/** filter would have skipped straight past. A filter that
+  # is wrong disables this check silently, and it would be saving free runner
+  # minutes on a public repo.
+  images:
+    name: Image build (docker context check)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [server, web]
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+      - name: Build ${{ matrix.app }} image
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: .
+          file: apps/${{ matrix.app }}/Dockerfile
+          platforms: linux/amd64
+          push: false
+          # Scoped per app so the two matrix legs do not evict each other. mode=min
+          # (final layers only) to stay small: the GHA cache is 10GB per repo with
+          # LRU eviction, and crowding out setup-node's pnpm cache would cost the
+          # `test` job more time than this job saves. Raise to max if builds are slow.
+          cache-from: type=gha,scope=image-${{ matrix.app }}
+          cache-to: type=gha,mode=min,scope=image-${{ matrix.app }}
