@@ -107,5 +107,33 @@
     "statusFailed": "We could not load the telemetry status.",
     "saveFailed": "We could not save the telemetry setting.",
     "feedbackFailed": "We could not send your feedback. Please try again."
+  },
+  "validation": {
+    "nameRequired": "Please enter your name.",
+    "passwordMin": "Your password must be at least 8 characters."
+  },
+  "media": {
+    "fileTooLarge": "The file is larger than 5MB.",
+    "parseFailed": "Could not parse multipart/form-data.",
+    "missingFile": "The file field is missing.",
+    "unsupportedType": "That image format is not supported. (PNG, JPEG and WebP only)",
+    "unsupportedKind": "That image kind is not supported.",
+    "invalidProjectId": "That project id is not valid.",
+    "projectNotFound": "We could not find that project.",
+    "uploadDenied": "You do not have permission to upload to this project.",
+    "processFailed": "We could not process the image.",
+    "storeFailed": "We could not save the file."
+  },
+  "invitation": {
+    "invalid": "This invitation is not valid.",
+    "expired": "This invitation has expired.",
+    "emailTaken": "An account already exists for this email. Sign in, then accept the invitation.",
+    "accountCreateFailed": "We could not create the account."
+  },
+  "setup": {
+    "invalidEmail": "Enter a valid email address.",
+    "adminExists": "An administrator account already exists.",
+    "userCreateFailed": "We could not create the user.",
+    "promoteFailed": "We could not grant administrator access. Another administrator may already exist."
   }
 }

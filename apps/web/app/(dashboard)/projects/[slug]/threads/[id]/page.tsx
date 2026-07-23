@@ -205,7 +205,7 @@ export default async function ThreadDetailPage({ params }: Props) {
         </div>
       )}
 
-      {/* Live "작성 중" indicator (transient, agent-emitted) */}
+      {/* Live "composing" indicator (transient, agent-emitted) */}
       <ComposingIndicator
         threadId={thread.id}
         parts={thread.targetAgents.map((a) => a.part)}
