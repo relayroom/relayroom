@@ -40,7 +40,7 @@ export interface ProjectMember {
   userId: string
   name: string
   email: string
-  /** project_access grant level: write | readonly | readonly_all */
+  /** project_access grant level: write | readonly | owner */
   level: string
   /** True if this user created the project. */
   isCreator: boolean
