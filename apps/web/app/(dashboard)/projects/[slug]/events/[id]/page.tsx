@@ -6,7 +6,8 @@ import { requireDashboardAccess } from "@/lib/auth-session"
 import { resolveActiveOrgId } from "@/lib/active-org"
 import { getProjectBySlug } from "@/modules/project/queries"
 import { getEvent } from "@/modules/event/queries"
-import { formatDateTime, eventTitle } from "@/lib/format"
+import { eventTitle } from "@/lib/format"
+import { getDateFormatters } from "@/lib/date-format.server"
 import { MainAgentBadge } from "@/components/agent/main-agent-badge"
 
 export const dynamic = "force-dynamic"
@@ -36,6 +37,7 @@ interface Props {
 export default async function EventDetailPage({ params }: Props) {
   await requireDashboardAccess()
   const t = await getTranslations("project")
+  const { formatDateTime } = await getDateFormatters()
 
   const { slug, id } = await params
   const orgId = await resolveActiveOrgId()

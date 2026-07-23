@@ -3,6 +3,7 @@ import { PlusIcon, BuildingIcon, UsersIcon } from "lucide-react"
 import { getTranslations } from "next-intl/server"
 import { requireDashboardAccess } from "@/lib/auth-session"
 import { listMyOrganizations } from "@/modules/organization/queries"
+import { getDateFormatters } from "@/lib/date-format.server"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -10,9 +11,10 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 export const dynamic = "force-dynamic"
 
 export default async function OrganizationsPage() {
-  const [session, t] = await Promise.all([
+  const [session, t, { formatDate }] = await Promise.all([
     requireDashboardAccess(),
     getTranslations("org"),
+    getDateFormatters(),
   ])
 
   const result = await listMyOrganizations(session.user.id)
@@ -96,7 +98,7 @@ export default async function OrganizationsPage() {
                   {t("list.memberCount", { count: org.memberCount })}
                 </span>
                 <span className="ml-auto font-mono">
-                  {org.createdAt.toLocaleDateString()}
+                  {formatDate(org.createdAt.toISOString())}
                 </span>
               </div>
             </Link>

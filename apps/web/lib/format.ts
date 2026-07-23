@@ -1,5 +1,6 @@
-// All functions use fixed UTC+9 offset (KST) to ensure deterministic output
-// in server components and avoid hydration mismatches.
+// Pure, timezone-independent display helpers: text shaping and the relative-time
+// bucket. Anything that has to name a wall-clock time lives in lib/date-format.ts,
+// which needs the reader's timezone and so cannot be a bare function here.
 
 /**
  * A short, human-readable title for an event row, instead of a raw UUID. Prefers
@@ -48,23 +49,8 @@ export function stripMarkdown(md: string): string {
     .trim()
 }
 
-const KST_OFFSET = 9 * 60 * 60 * 1000 // 9 hours in ms
-
-function toKST(iso: string): Date {
-  const utc = new Date(iso).getTime()
-  return new Date(utc + KST_OFFSET)
-}
-
-/** Format as YYYY-MM-DD HH:mm (KST, Korean locale style) */
-export function formatDateTime(iso: string): string {
-  const d = toKST(iso)
-  const yyyy = d.getUTCFullYear()
-  const mm = String(d.getUTCMonth() + 1).padStart(2, '0')
-  const dd = String(d.getUTCDate()).padStart(2, '0')
-  const hh = String(d.getUTCHours()).padStart(2, '0')
-  const min = String(d.getUTCMinutes()).padStart(2, '0')
-  return `${yyyy}-${mm}-${dd} ${hh}:${min}`
-}
+// Absolute date/time formatting moved to lib/date-format.ts, which states an
+// instant in the READER's timezone. It used to live here, pinned to UTC+9.
 
 /** A message key under `common.time` plus the number to interpolate. */
 export interface TimeAgoParts {
