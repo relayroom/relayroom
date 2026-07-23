@@ -41,6 +41,7 @@ import {
 } from '@relayroom/db'
 import { alias } from 'drizzle-orm/pg-core'
 import { Hono } from 'hono'
+import type { Context } from 'hono'
 import { z } from 'zod'
 import { DEFAULT_RELAYROOM_MD, NEEDS_HUMAN_TAG, resolveAgentColorHex } from '@relayroom/shared'
 import type { Bus } from '../bus'
@@ -1200,6 +1201,139 @@ function normalizeToolSchemas(raw: string): string {
   return rewrite(raw)
 }
 
+// ── Runtime authorization for the connect-code endpoints ──────────────────────
+/**
+ * The connect code is a PROJECT-WIDE shared secret that travels in the URL path,
+ * so it lands in server and proxy logs and every agent in the project holds it. It
+ * is fine for enrollment and useless as a runtime credential: it does not expire,
+ * it cannot be revoked for one member without cutting off everyone, and banning a
+ * member does not take it away. That last point is the sharp edge - banProjectMember
+ * deletes the member's tokens, so the MCP path shuts immediately, while these
+ * endpoints kept answering.
+ *
+ * `part` had the same problem from the other side: it was an unauthenticated claim
+ * in the query string or body, so a code-holder could name any part and read its
+ * unread subjects.
+ *
+ * So: the bearer token is authoritative for (user, project), and `part` is checked
+ * against it. The token is a (user x project) credential, NOT a part credential -
+ * one token can hold agent_connection rows for several parts, so the part cannot be
+ * DERIVED from it - hence the request still names the part and we verify the caller
+ * owns it. That is the rule resolveConnection already applies on the MCP path; this
+ * makes the runtime endpoints agree with it instead of contradicting it.
+ *
+ * What this does not separate: two parts owned by the SAME user. Part-scoped tokens
+ * would need `agent:<id>` in the token's scopes at issuance plus a migration for
+ * tokens already out there; tracked separately.
+ */
+type RuntimeEnforcement = 'required' | 'grace'
+
+/** Warn once per (endpoint, part) per window. The whole point of the grace-period
+ *  log is to tell an operator when it is safe to drop the fallback, and a heartbeat
+ *  firing every few seconds per agent would bury that signal in its own noise. */
+const GRACE_WARN_WINDOW_MS = 10 * 60_000
+const graceWarnedAt = new Map<string, number>()
+
+function warnLegacyAuth(endpoint: string, part: string | null, connectCode: string): void {
+  const key = `${endpoint}|${part ?? '-'}`
+  const now = Date.now()
+  const last = graceWarnedAt.get(key)
+  if (last !== undefined && now - last < GRACE_WARN_WINDOW_MS) return
+  graceWarnedAt.set(key, now)
+  // Only the first 4 characters of the code: enough to tell two projects apart in a
+  // log, not enough to be a credential if the log is shared.
+  console.warn(
+    `[auth] ${endpoint} accepted with no bearer token (part=${part ?? '-'}, code=${connectCode.slice(0, 4)}...). `
+    + 'Connect-code-only access to runtime endpoints is deprecated and will be rejected in a future '
+    + 'release - update the RelayRoom CLI on this machine.',
+  )
+}
+
+/**
+ * Authorize a connect-code endpoint. Returns a Response to send when the request
+ * must be refused, or null to let the handler proceed.
+ *
+ * Which endpoints are 'required' is decided by whether a client that has not been
+ * upgraded yet would fail LOUDLY. /wake/claim, /wake/delivered and /pending-wake
+ * qualify: the pager and the channel already send the header, and a pager that
+ * cannot claim a lease stops nudging visibly. Everything else is 'grace', because
+ * the failure would be silent - the ask-guard fails open, the usage hook swallows
+ * its errors, and the status bar's inbox counter keeps showing its last value.
+ *
+ * `part: null` authorizes at project level only (for endpoints that are not about
+ * one agent). A PRESENT-BUT-INVALID token is always an error, never a fall back to
+ * the legacy path - otherwise an expired token would silently downgrade to weaker
+ * auth, which is the opposite of what expiry is for.
+ */
+async function authorizeRuntime(
+  db: Db,
+  c: Context,
+  opts: {
+    connectCode: string
+    part: string | null
+    enforcement: RuntimeEnforcement
+    endpoint: string
+  },
+): Promise<Response | null> {
+  const { connectCode, part, enforcement, endpoint } = opts
+  const authHeader = c.req.header('Authorization') ?? ''
+  const token = /^Bearer (.+)$/i.exec(authHeader)?.[1] ?? null
+
+  if (!token) {
+    if (enforcement === 'grace') {
+      warnLegacyAuth(endpoint, part, connectCode)
+      return null
+    }
+    return c.json(
+      { error: 'agent bearer token required' },
+      401,
+      { 'WWW-Authenticate': wwwAuthenticateHeader(getServerBase()) },
+    )
+  }
+
+  const tokenRow = await lookupOauthToken(db, token)
+  if (!tokenRow?.userId) {
+    return c.json(
+      { error: 'invalid or expired token' },
+      401,
+      { 'WWW-Authenticate': wwwAuthenticateHeader(getServerBase()) },
+    )
+  }
+  const userId = tokenRow.userId
+
+  const [project] = await db
+    .select({ id: projects.id, organizationId: projects.organizationId })
+    .from(projects)
+    .where(and(eq(projects.connectCode, connectCode), isNull(projects.archivedAt)))
+    .limit(1)
+  if (!project) return c.json({ error: 'unknown connect code' }, 404)
+
+  if (!(await isOrgMember(db, project.organizationId, userId))) {
+    return c.json({ error: 'not a member of this project\'s organization' }, 403)
+  }
+  if (await isBannedFromProject(db, project.id, userId)) {
+    return c.json({ error: 'banned from this project' }, 403)
+  }
+
+  if (part === null) return null
+
+  const [agent] = await db
+    .select({ ownerUserId: agents.ownerUserId })
+    .from(agents)
+    .where(and(
+      eq(agents.projectId, project.id),
+      eq(agents.part, part),
+      isNull(agents.deletedAt),
+    ))
+    .limit(1)
+  if (!agent) return c.json({ error: 'agent not registered' }, 404)
+  if (agent.ownerUserId !== userId) {
+    return c.json({ error: 'this token does not own that part' }, 403)
+  }
+
+  return null
+}
+
 /** Count an agent's unread messages that still live in an OPEN thread. Closed/
  *  canceled threads are resolved, so their unread must not keep a wake alive. */
 async function openUnreadCount(db: Db, agentId: string): Promise<number> {
@@ -1378,6 +1512,10 @@ export function createMcpRoute(db: Db, bus: Bus) {
     if (!isValidPart(part)) {
       return c.json({ error: 'invalid part' }, 400)
     }
+    const denied = await authorizeRuntime(db, c, {
+      connectCode, part, enforcement: 'grace', endpoint: 'POST /usage',
+    })
+    if (denied) return denied
 
     const [project] = await db
       .select({ id: projects.id })
@@ -1417,6 +1555,11 @@ export function createMcpRoute(db: Db, bus: Bus) {
   // content, or the default template when unset.
   route.get('/:connectCode/relayroom-md', async (c) => {
     const connectCode = c.req.param('connectCode')
+    // No part: this is project-scoped content, so membership is the whole check.
+    const denied = await authorizeRuntime(db, c, {
+      connectCode, part: null, enforcement: 'grace', endpoint: 'GET /relayroom-md',
+    })
+    if (denied) return denied
     const [project] = await db
       .select({ id: projects.id, slug: projects.slug, relayroomMd: projects.relayroomMd })
       .from(projects)
@@ -1441,6 +1584,10 @@ export function createMcpRoute(db: Db, bus: Bus) {
     const connectCode = c.req.param('connectCode')
     const part = c.req.query('part') ?? ''
     if (!isValidPart(part)) return c.json({ error: 'invalid part' }, 400)
+    const denied = await authorizeRuntime(db, c, {
+      connectCode, part, enforcement: 'grace', endpoint: 'GET /role',
+    })
+    if (denied) return denied
     const [project] = await db
       .select({ id: projects.id })
       .from(projects)
@@ -1466,6 +1613,10 @@ export function createMcpRoute(db: Db, bus: Bus) {
     if (!isValidPart(part)) return c.json({ error: 'invalid part' }, 400)
     const holder = typeof body?.holder === 'string' ? body.holder : null
     const host = typeof body?.host === 'string' && body.host.trim() ? body.host.trim().slice(0, 200) : null
+    const denied = await authorizeRuntime(db, c, {
+      connectCode, part, enforcement: 'grace', endpoint: 'POST /heartbeat',
+    })
+    if (denied) return denied
 
     const [project] = await db
       .select({ id: projects.id, slug: projects.slug })
@@ -1582,6 +1733,10 @@ export function createMcpRoute(db: Db, bus: Bus) {
     const holder = typeof body?.holder === 'string' ? body.holder : ''
     if (!isValidPart(part)) return c.json({ error: 'invalid part' }, 400)
     if (!holder) return c.json({ error: 'holder required' }, 400)
+    const denied = await authorizeRuntime(db, c, {
+      connectCode, part, enforcement: 'required', endpoint: 'POST /wake/claim',
+    })
+    if (denied) return denied
 
     const agent = await resolveAgentByCode(connectCode, part)
     if (!agent) return c.json({ ok: false, noWake: true })
@@ -1601,6 +1756,10 @@ export function createMcpRoute(db: Db, bus: Bus) {
     const holder = typeof body?.holder === 'string' ? body.holder : ''
     if (!isValidPart(part)) return c.json({ error: 'invalid part' }, 400)
     if (!wakeId || !holder) return c.json({ error: 'wakeId and holder required' }, 400)
+    const denied = await authorizeRuntime(db, c, {
+      connectCode, part, enforcement: 'required', endpoint: 'POST /wake/delivered',
+    })
+    if (denied) return denied
 
     const agent = await resolveAgentByCode(connectCode, part)
     if (!agent) return c.json({ ok: false, stale: true })
@@ -1620,6 +1779,10 @@ export function createMcpRoute(db: Db, bus: Bus) {
     const part = c.req.query('part') ?? ''
     const holder = c.req.query('holder') ?? ''
     if (!isValidPart(part)) return c.json({ error: 'invalid part' }, 400)
+    const denied = await authorizeRuntime(db, c, {
+      connectCode, part, enforcement: 'required', endpoint: 'GET /pending-wake',
+    })
+    if (denied) return denied
 
     const agent = await resolveAgentByCode(connectCode, part)
     if (!agent) return c.json({ wake: false })
@@ -1635,14 +1798,25 @@ export function createMcpRoute(db: Db, bus: Bus) {
   })
 
   // Unread messages addressed to a part. NOTE (07): the pager no longer uses this
-  // for catch-up — catch-up is now the single coalesced decision in /pending-wake.
-  // This endpoint is kept for diagnostics / dashboard / backward compatibility.
-  // Read-only; same connect-code trust model as /usage and /heartbeat. Does NOT
-  // create an agent — an unknown part has nothing unread by definition.
+  // for catch-up - catch-up is now the single coalesced decision in /pending-wake.
+  //
+  // It is NOT unused, though: the tmux status bar's inbox counter polls it every
+  // ~4s. That caller is a curl line inside the rr.sh script that `relayroom init`
+  // GENERATES (packages/cli/src/init.ts), so it does not turn up when you grep the
+  // runtime clients for endpoint URLs - which is exactly how it got read as having
+  // no callers. Check generated shell as well as runtime/*.mjs before concluding an
+  // endpoint is dead.
+  //
+  // Read-only. Does NOT create an agent - an unknown part has nothing unread by
+  // definition.
   route.get('/:connectCode/unread', async (c) => {
     const connectCode = c.req.param('connectCode')
     const part = c.req.query('part') ?? ''
     if (!isValidPart(part)) return c.json({ error: 'invalid part' }, 400)
+    const denied = await authorizeRuntime(db, c, {
+      connectCode, part, enforcement: 'grace', endpoint: 'GET /unread',
+    })
+    if (denied) return denied
 
     const [project] = await db
       .select({ id: projects.id })
