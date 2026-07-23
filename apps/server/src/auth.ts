@@ -14,6 +14,7 @@ import { and, eq } from 'drizzle-orm'
 import type { Db } from '@relayroom/db'
 import { agentConnections, agents, projects } from '@relayroom/db'
 import type { Context } from 'hono'
+import { tokenScopeAllowsProject } from './lib/token-scope'
 
 // We query auth schema tables directly; import them from @relayroom/db/auth-schema
 // but because the server's createDb() uses drizzle(client, { schema }) with only
@@ -55,6 +56,8 @@ interface TokenRow {
   id: string
   accessTokenExpiresAt: Date | null
   scopes: string | null
+  /** Which issuer minted this token - see lib/token-scope.ts. */
+  clientId: string | null
 }
 
 /**
@@ -77,8 +80,9 @@ async function lookupToken(db: Db, token: string): Promise<TokenRow | null> {
       id: string
       access_token_expires_at: Date | null
       scopes: string | null
+      client_id: string | null
     }> = await pgClient`
-      SELECT id, access_token_expires_at, scopes
+      SELECT id, access_token_expires_at, scopes, client_id
       FROM better_auth_oauth_access_token
       WHERE access_token = ${token}
         AND (access_token_expires_at IS NULL OR access_token_expires_at > NOW())
@@ -90,6 +94,7 @@ async function lookupToken(db: Db, token: string): Promise<TokenRow | null> {
       id: row.id,
       accessTokenExpiresAt: row.access_token_expires_at,
       scopes: row.scopes,
+      clientId: row.client_id,
     }
   }
   catch {
@@ -142,6 +147,15 @@ async function validateToken(
       .limit(1)
 
     if (!row) return null
+
+    // Token project scope (BUG-0007). `scopes` was already selected here and still
+    // never consulted; the project came from whichever agent_connection the token
+    // happened to have. Checked AFTER the join, because that join is what resolves
+    // which project this stream would be scoped to. A mismatch returns no context,
+    // so the SSE route refuses rather than subscribing to another project's events.
+    if (!tokenScopeAllowsProject(tokenRow.clientId, tokenRow.scopes, row.projectId)) {
+      return null
+    }
 
     return {
       token,

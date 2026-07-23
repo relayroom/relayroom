@@ -99,6 +99,13 @@
       "when": 1783119497373,
       "tag": "0013_add_limited_until",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1783205897373,
+      "tag": "0014_revoke_cross_project_agent_connections",
+      "breakpoints": true
     }
   ]
 }

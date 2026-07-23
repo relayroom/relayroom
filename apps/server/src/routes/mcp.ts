@@ -60,6 +60,7 @@ import { shouldWake } from '../wake/issuance'
 import { isWakeBudgetEnabled } from '../wake/flag'
 import { CapabilityError, getCapabilities, resolveUrgent } from '../priority/capability'
 import { seedOwnerWakeBudget } from '../budget/seed-owner-budget'
+import { tokenScopeAllowsProject } from '../lib/token-scope'
 
 // ── Token budget helpers ───────────────────────────────────────────────────────
 
@@ -146,6 +147,10 @@ interface TokenLookup {
   id: string
   userId: string | null
   accessTokenExpiresAt: Date | null
+  /** Space-delimited grant string. For agent tokens this holds `project:<id>`. */
+  scopes: string | null
+  /** Which issuer minted this token - see lib/token-scope.ts. */
+  clientId: string | null
 }
 
 /**
@@ -160,8 +165,10 @@ async function lookupOauthToken(db: Db, token: string): Promise<TokenLookup | nu
       id: string
       user_id: string | null
       access_token_expires_at: Date | null
+      scopes: string | null
+      client_id: string | null
     }> = await pgClient`
-      SELECT id, user_id, access_token_expires_at
+      SELECT id, user_id, access_token_expires_at, scopes, client_id
       FROM better_auth_oauth_access_token
       WHERE access_token = ${token}
         AND (access_token_expires_at IS NULL OR access_token_expires_at > NOW())
@@ -173,6 +180,8 @@ async function lookupOauthToken(db: Db, token: string): Promise<TokenLookup | nu
       id: row.id,
       userId: row.user_id,
       accessTokenExpiresAt: row.access_token_expires_at,
+      scopes: row.scopes,
+      clientId: row.client_id,
     }
   }
   catch {
@@ -257,6 +266,23 @@ async function resolveConnection(
 
   if (!project) {
     throw { status: 404 as const, error: 'unknown connect code' }
+  }
+
+  // 2.5 Token project scope (BUG-0007). An agent token is minted for ONE project,
+  // but the project here comes from the connect code, and everything below only
+  // checked org membership - so a token for project A authenticated against
+  // project B in the same org and its scope did nothing.
+  //
+  // Placed immediately after the project resolves and before the membership check,
+  // because everything further down writes: the ownership compare-and-set claims
+  // the agent for this user, and the connection upsert and budget seed follow. A
+  // refused connect must leave none of that behind.
+  //
+  // A generic 403 with no detail, and the scope is never logged: the caller chose
+  // the project by supplying a connect code, so telling them how close they got
+  // would hand them an oracle.
+  if (!tokenScopeAllowsProject(tokenRow.clientId, tokenRow.scopes, project.id)) {
+    throw { status: 403 as const, error: 'not authorized for this project' }
   }
 
   // 3. Verify org membership
@@ -1307,6 +1333,15 @@ async function authorizeRuntime(
     .where(and(eq(projects.connectCode, connectCode), isNull(projects.archivedAt)))
     .limit(1)
   if (!project) return c.json({ error: 'unknown connect code' }, 404)
+
+  // Same token-scope gate as the MCP connect path (BUG-0007). These endpoints also
+  // pick their project from a connect code and then authenticate a bearer, so a
+  // token minted for another project would otherwise reach any part of THIS one
+  // that its user happens to own. Narrower than the MCP hole, identical in kind -
+  // and one predicate for both is what stops the two paths from drifting.
+  if (!tokenScopeAllowsProject(tokenRow.clientId, tokenRow.scopes, project.id)) {
+    return c.json({ error: 'not authorized for this project' }, 403)
+  }
 
   if (!(await isOrgMember(db, project.organizationId, userId))) {
     return c.json({ error: 'not a member of this project\'s organization' }, 403)

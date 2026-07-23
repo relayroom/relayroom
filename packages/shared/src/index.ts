@@ -10,6 +10,10 @@ export * from './relayroom-md'
 // Agent color presets (hex) + auto-resolver, shared with the web palette.
 export * from './agent-colors'
 
+// OAuth client identity for agent tokens - shared by the issuer (web) and the
+// enforcer (server), which must not disagree on it.
+export * from './oauth'
+
 // ── Attention signal ─────────────────────────────────────────────────────────
 
 /**
