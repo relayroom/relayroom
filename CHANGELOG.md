@@ -4,6 +4,104 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.4.3] - 2026-07-23
+
+Correctness release. No database migration.
+
+Two of the fixes below concern numbers the dashboard was presenting as fact, and one
+concerns an isolation guarantee the product makes and was not keeping. The rest is the
+same shape as 0.4.1: rules the code stated somewhere and did not apply everywhere.
+
+### Security
+- **The connect code is no longer written to a log file.** Both wake runtimes logged the
+  SSE URL when the stream came up, and the connect code is a query parameter on that URL.
+  A connect code is a capability key shared by every agent in a project, so writing it to
+  disk is a defect regardless of who can read the file.
+
+### Fixed
+- **One account could stop another account's agents from ever waking.** The wake budget is
+  isolated per owner, but the sweep batch that decides who gets *considered* was
+  instance-wide: the fifty lowest agent ids, oldest first. A budget-suppressed agent stays
+  idle with unread messages, so it stays a candidate - meaning one owner with fifty or more
+  exhausted agents held every slot on every tick, indefinitely, while another owner with an
+  untouched budget was never evaluated. Measured over five ticks: zero of five agents woken
+  for the healthy owner. The batch now bounds how many slots a single owner can take and
+  orders by how long an agent has actually been waiting rather than by how old its row is.
+  A single-owner instance is unaffected.
+
+  This bounds the failure rather than removing it: slots taken by a suppressed owner are
+  still spent on agents that get suppressed again. A slow queue beats a queue nobody can
+  join, and the trade is recorded in the code.
+
+- **Turn costs were reported several times higher than they were.** Two independent errors
+  compounded. Cache creation and cache reads were summed and charged at the base input
+  rate, when a cache read bills at roughly a tenth of it - and cache reads dominate an
+  agent's token mix, so a turn with 500 fresh input tokens and 100k of cache reads was
+  priced at about eight times actual. Separately, the rate table matched on the model
+  family, so every Opus generation was billed at the Opus 4.1 rate while the current tier
+  is a third of that.
+
+  Rates are now matched against verified entries only, and a model that is not listed
+  reports its token counts with **no cost figure at all** rather than a guess. In a product
+  whose subject is observability, a visible gap prompts someone to add a verified rate,
+  while a wrong number is indistinguishable from a right one.
+
+- **`relayroom setup` silently took over another worktree's identity.** codex and agy keep
+  one MCP registration per machine, so running setup in a second worktree repointed every
+  other codex/agy worktree at that part. The agent that lost its identity kept running and
+  began posting as someone else, with nothing printed at the moment it happened. Setup now
+  reports the part currently registered before taking it over. claude is unaffected, since
+  it registers per worktree.
+
+- **`rr.sh` no longer resets a worktree's agent when it regenerates itself.** `rr.sh up` and
+  `rr.sh update --self` re-ran `relayroom init` without `--agent`, which defaults to
+  `claude`, so updating a shell script in a codex or agy worktree left behind a `CLAUDE.md`
+  for a CLI that is not in use.
+
+- **An ambiguous tmux target is refused instead of silently splitting in two.**
+  `config.target` was used as a session name by `rr.sh` and as a full
+  `session:window.pane` target by the pager. tmux does not object to the mismatch - it
+  quietly rewrites `:` and `.` to `_` when creating a session - so the agent ran in one
+  session while the pager woke another, both exited 0, and nothing was logged. The
+  commands that create, attach to, or kill a session now refuse such a target and print
+  the name tmux would have invented; `doctor` reports it without exiting.
+
+- **An agent with more than one connection could be locked out of its own event stream.**
+  The SSE auth path picked one of the token's connections arbitrarily - no ordering, first
+  row wins - then refused the request if the caller had named a different part, with a
+  message describing a scope that does not exist. This happens whenever a part is renamed
+  and the token is reused. The token now resolves against the requested part.
+
+- **The MCP handshake reports the shipped version** instead of a hardcoded `0.1.0`, and a
+  config field can now be cleared. `writeConfig` skipped empty values, so `previousTarget`
+  outlived its purpose and kept `rr.sh up` trying to rename a session that had already been
+  renamed.
+
+- **A deprecated Server Action was still a live endpoint.** `disconnectAgent` had no
+  callers but remained exported under `"use server"`, which is a network endpoint
+  regardless - and its query ordering was reversed, so it revoked the oldest connection
+  while its comment said latest. Cancelling an invitation now goes through the same
+  confirmation dialog the rest of the app uses, since it cannot be undone.
+
+### Changed
+- **Absolute timestamps are shown in the reader's timezone**, labelled with the zone
+  (`2026-07-23 15:41 GMT+9`). They were formatted against a fixed zone, so a reader outside
+  it saw times that were not theirs, while two server components used whatever the
+  container happened to have - putting two conventions nine hours apart on one screen. The
+  browser's zone now travels in a cookie, the way the language already does, and is
+  validated before use. Bare dates carry no label, since a zone does not qualify them.
+
+- **The pager and the Claude Channels server share one wake client.** They had independent
+  copies of the lease, SSE, catch-up, auth and retry logic, and the copies had drifted far
+  enough that an identical message woke an agent about 1.5 seconds later depending on the
+  delivery mode. Roughly 320 lines of duplication are gone, and a parity guard now fails
+  the build if either runtime redefines the protocol locally.
+
+- **`projectAccessLevel` describes the levels the product actually issues.** The shared
+  enum listed a value nothing writes and omitted `owner`, which decides who may manage a
+  project's members. Nothing consumed it yet, which is the point: consolidating the
+  definitions later would have silently dropped `owner`.
+
 ## [0.4.2] - 2026-07-23
 
 Security release. Includes a migration (`0014_revoke_cross_project_agent_connections`);
