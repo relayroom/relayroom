@@ -18,5 +18,13 @@ db_data/
 .claude/scheduled_tasks.lock
 .claude/
 
+# RelayRoom worktree runtime, written by `relayroom init`. Per-worktree and
+# per-part (.relayroom/config.json holds this agent's part + token), so it must
+# never be committed. RELAYROOM.md is synced from the hub, not authored here.
+RELAYROOM.md
+.relayroom/
+rr.sh
+.mcp.json
+
 # Local npm-publish helper (personal release convenience, not part of CE)
 np.sh
