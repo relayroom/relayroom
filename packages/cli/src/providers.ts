@@ -55,7 +55,12 @@ export const AGY_MCP_MERGE_SCRIPT =
   'let c={};try{c=JSON.parse(fs.readFileSync(p,"utf8")||"{}")}catch(e){}' +
   'c.mcpServers=c.mcpServers||{};' +
   'c.mcpServers[process.argv[2]]={url:process.argv[1],headers:{Authorization:"Bearer "+(process.env.RELAYROOM_TOKEN||"")}};' +
-  'fs.writeFileSync(p,JSON.stringify(c,null,2));' +
+  // This file holds the bearer token in cleartext, so keep it owner-only. `mode` on
+  // write only applies when the file is CREATED, so chmod after as well - that also
+  // tightens a file an older CLI already wrote world-readable. Best-effort chmod
+  // (it can fail on some network/Windows mounts), matching writeConfig in config.ts.
+  'fs.writeFileSync(p,JSON.stringify(c,null,2),{mode:0o600});' +
+  'try{fs.chmodSync(p,0o600)}catch(e){}' +
   'console.error("registered "+process.argv[2]+" in "+p)'
 
 export interface McpAddSpec {

@@ -335,8 +335,10 @@ mcp_add() {
     # command - it reads ~/.gemini/config/mcp_config.json. Merge the relayroom server
     # in (preserving any other servers). Token via env so it never lands in shell
     # history. This is a GLOBAL file - like codex, all agy worktrees share this entry,
-    # so per-worktree part identity is not possible here.
-    RELAYROOM_TOKEN="$TOKEN" node -e 'const fs=require("fs"),os=require("os"),path=require("path");if(!process.env.RELAYROOM_TOKEN){console.error("agy MCP: RELAYROOM_TOKEN not set");process.exit(1)}const p=path.join(os.homedir(),".gemini","config","mcp_config.json");fs.mkdirSync(path.dirname(p),{recursive:true});let c={};try{c=JSON.parse(fs.readFileSync(p,"utf8")||"{}")}catch(e){}c.mcpServers=c.mcpServers||{};c.mcpServers.relayroom={url:process.argv[1],headers:{Authorization:"Bearer "+process.env.RELAYROOM_TOKEN}};fs.writeFileSync(p,JSON.stringify(c,null,2))' "$URL"
+    # so per-worktree part identity is not possible here. The file stores the bearer in
+    # cleartext, so it is written (and re-chmodded, for files an older CLI left open)
+    # owner-only - same treatment as .relayroom/config.json.
+    RELAYROOM_TOKEN="$TOKEN" node -e 'const fs=require("fs"),os=require("os"),path=require("path");if(!process.env.RELAYROOM_TOKEN){console.error("agy MCP: RELAYROOM_TOKEN not set");process.exit(1)}const p=path.join(os.homedir(),".gemini","config","mcp_config.json");fs.mkdirSync(path.dirname(p),{recursive:true});let c={};try{c=JSON.parse(fs.readFileSync(p,"utf8")||"{}")}catch(e){}c.mcpServers=c.mcpServers||{};c.mcpServers.relayroom={url:process.argv[1],headers:{Authorization:"Bearer "+process.env.RELAYROOM_TOKEN}};fs.writeFileSync(p,JSON.stringify(c,null,2),{mode:0o600});try{fs.chmodSync(p,0o600)}catch(e){}' "$URL"
   else
     # Claude defaults to LOCAL scope, which it keys to the git REPO ROOT - so every
     # worktree shares one entry and they all post as the same part. Register in
