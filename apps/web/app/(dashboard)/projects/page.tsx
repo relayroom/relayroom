@@ -5,7 +5,7 @@ import { PlusIcon, FolderOpenIcon, UsersIcon, BotIcon, MessageSquareIcon, Activi
 import { requireDashboardAccess } from "@/lib/auth-session"
 import { resolveActiveOrgId } from "@/lib/active-org"
 import { listProjects } from "@/modules/project/queries"
-import { timeAgo } from "@/lib/format"
+import { getTimeAgo } from "@/lib/time-ago"
 import { readableOn, projectInitials, DEFAULT_PROJECT_COLOR } from "@/lib/project-colors"
 import { Sparkline } from "@/components/dashboard/sparkline"
 import { Button } from "@/components/ui/button"
@@ -15,6 +15,7 @@ export const dynamic = "force-dynamic"
 export default async function ProjectsPage() {
   const session = await requireDashboardAccess()
   const t = await getTranslations("project")
+  const timeAgo = await getTimeAgo()
 
   const orgId = await resolveActiveOrgId()
   if (!orgId) {

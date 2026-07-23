@@ -8,6 +8,8 @@ import { getProjectBySlug } from "@/modules/project/queries"
 import { listThreads } from "@/modules/thread/queries"
 import { listAgentTargets } from "@/modules/agent/queries"
 import { ThreadListItem } from "@/components/thread/thread-list-item"
+import { threadActivityIso } from "@/lib/format"
+import { getTimeAgo } from "@/lib/time-ago"
 import { Pagination } from "@/components/ui/pagination"
 import { NewThreadButton } from "./new-thread-button"
 
@@ -27,6 +29,7 @@ interface Props {
 export default async function ThreadsPage({ params, searchParams }: Props) {
   await requireDashboardAccess()
   const t = await getTranslations("project")
+  const timeAgo = await getTimeAgo()
 
   const { slug } = await params
   const sp = await searchParams
@@ -159,6 +162,7 @@ export default async function ThreadsPage({ params, searchParams }: Props) {
                 thread={thread}
                 projectSlug={slug}
                 statusLabel={t(`threads.status.${thread.status}` as never)}
+                timeLabel={timeAgo(threadActivityIso(thread))}
               />
             ))}
           </div>

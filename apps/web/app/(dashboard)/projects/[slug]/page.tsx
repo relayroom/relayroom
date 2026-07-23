@@ -17,7 +17,8 @@ import { ThreadListItem } from "@/components/thread/thread-list-item"
 import { EventListItem } from "@/components/event/event-list-item"
 import { PagerStatusIcon } from "@/components/agent/pager-status-icon"
 import { AgentRegisterDialog } from "@/components/agent/agent-register-dialog"
-import { timeAgo } from "@/lib/format"
+import { threadActivityIso } from "@/lib/format"
+import { getTimeAgo } from "@/lib/time-ago"
 
 export const dynamic = "force-dynamic"
 
@@ -35,6 +36,7 @@ export default async function ProjectOverviewPage({ params }: Props) {
   const session = await requireDashboardAccess()
   const currentUserId = session.user.id
   const t = await getTranslations("project")
+  const timeAgo = await getTimeAgo()
 
   const { slug } = await params
   const orgId = await resolveActiveOrgId()
@@ -268,6 +270,7 @@ export default async function ProjectOverviewPage({ params }: Props) {
                       thread={thread}
                       projectSlug={slug}
                       statusLabel={t(`overview.status.${thread.status}` as never)}
+                      timeLabel={timeAgo(threadActivityIso(thread))}
                       variant="compact"
                     />
                   ))}
@@ -297,6 +300,7 @@ export default async function ProjectOverviewPage({ params }: Props) {
                       key={event.id}
                       event={event}
                       projectSlug={slug}
+                      timeLabel={timeAgo(event.createdAt.toISOString())}
                       variant="compact"
                     />
                   ))}

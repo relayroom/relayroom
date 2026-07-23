@@ -66,5 +66,11 @@
   },
   "limited": {
     "badge": "Limited until {time}"
+  },
+  "time": {
+    "justNow": "just now",
+    "minutes": "{count, plural, one {# minute ago} other {# minutes ago}}",
+    "hours": "{count, plural, one {# hour ago} other {# hours ago}}",
+    "days": "{count, plural, one {# day ago} other {# days ago}}"
   }
 }

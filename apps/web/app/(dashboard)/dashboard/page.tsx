@@ -17,7 +17,7 @@ import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { UsageChart } from "@/components/dashboard/usage-chart"
-import { timeAgo } from "@/lib/format"
+import { getTimeAgo } from "@/lib/time-ago"
 
 export const dynamic = "force-dynamic"
 
@@ -37,6 +37,7 @@ export default async function DashboardPage() {
   const userName = session.user.name ?? session.user.email
 
   const t = await getTranslations("dashboard")
+  const timeAgo = await getTimeAgo()
 
   // Telemetry consent banner: shown only to the instance superuser, and only
   // until a choice has been made. getTelemetryStatus denies non-superusers, so a
