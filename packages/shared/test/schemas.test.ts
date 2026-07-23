@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ackInput, closeInput, eventInput, replyInput, sendMessageInput } from '../src/index'
+import { ackInput, closeInput, eventInput, projectAccessLevel, replyInput, sendMessageInput } from '../src/index'
 
 describe('sendMessageInput', () => {
   it('accepts a valid payload', () => {
@@ -34,5 +34,22 @@ describe('other inputs', () => {
   it('eventInput defaults detail to empty object', () => {
     const e = eventInput.parse({ project: 'p', part: 'web', type: 'spawn' })
     expect(e.detail).toEqual({})
+  })
+})
+
+describe('projectAccessLevel', () => {
+  it('accepts owner, which the member-management guards depend on', () => {
+    // canManage, the owner count and the last-owner guards in the dashboard all key
+    // off this value; an enum without it would reject a grant the product issues.
+    expect(projectAccessLevel.parse('owner')).toBe('owner')
+  })
+
+  it('accepts the other two grants the dashboard issues', () => {
+    expect(projectAccessLevel.parse('readonly')).toBe('readonly')
+    expect(projectAccessLevel.parse('write')).toBe('write')
+  })
+
+  it('rejects readonly_all, which no code path ever wrote', () => {
+    expect(() => projectAccessLevel.parse('readonly_all')).toThrow()
   })
 })

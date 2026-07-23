@@ -57,7 +57,7 @@ export const projectAccess = pgTable('project_access', {
   userId: text('user_id')
     .notNull()
     .references(() => better_auth_user.id, { onDelete: 'cascade' }),
-  level: text('level').notNull(), // readonly_all | readonly | write
+  level: text('level').notNull(), // readonly | write | owner
   bannedAt: timestamp('banned_at', { withTimezone: true }), // null = active. 가역(하드 삭제 아님)
   bannedByUserId: text('banned_by_user_id').references(() => better_auth_user.id, { onDelete: 'set null' }),
   wakePriority: boolean('wake_priority').notNull().default(false), // true = 이 프로젝트가 더 큰 예약 floor 지분
