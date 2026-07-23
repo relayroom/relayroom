@@ -1,11 +1,13 @@
 import { sql } from 'drizzle-orm'
 import {
   boolean,
+  check,
   index,
   integer,
   jsonb,
   pgTable,
   primaryKey,
+  real,
   text,
   timestamp,
   uniqueIndex,
@@ -374,4 +376,125 @@ export const governanceAudits = pgTable('governance_audit', {
   createdAt: createdAt(),
 }, t => [
   index('governance_audit_project_created_idx').on(t.projectId, t.createdAt),
+])
+
+// ── project knowledge (0.5.0 L0) ─────────────────────────────────────────────
+// What a project has learned, kept apart from the conversation it came from.
+// Threads are a record of what was said; these tables are the distilled claims an
+// agent should read BEFORE acting, plus the ledger that says why each one is
+// trusted. The split matters: `knowledge` is current state, `knowledge_validation`
+// is the evidence, `knowledge_audit` is the history. A bare trusted flag would
+// answer "is it trusted" but never "who decided that, and on what".
+//
+// L0 ships the substrate with a human owner as the only promoter. The tables for
+// CI attestation (check map, nonces) and the metrics rollup land with the features
+// that write them, so unused schema does not set first.
+
+export const knowledge = pgTable('knowledge', {
+  id: uuidPk(),
+  projectId: uuid('project_id').notNull()
+    .references(() => projects.id, { onDelete: 'cascade' }),
+  kind: text('kind').notNull(),               // fact | convention | pitfall | decision
+  title: text('title').notNull(),
+  body: text('body').notNull(),
+  sourceKind: text('source_kind').notNull(),  // thread | event | human | learn | proposer
+  // Where the claim came from, so an operator can trace it back and purge
+  // everything derived from one thread.
+  sourceRefs: jsonb('source_refs').$type<{ threadId?: string; eventId?: string; messageId?: string }[]>()
+    .notNull().default(sql`'[]'::jsonb`),
+  confidence: real('confidence').notNull().default(0), // derived cache, written by the verifier
+  validationState: text('validation_state').notNull().default('candidate'), // candidate|trusted|contradicted|retired
+  promotedAt: timestamp('promoted_at', { withTimezone: true }), // set on candidate->trusted, kept on demote
+  supersededById: uuid('superseded_by_id'),   // self-ref, FK added below via migration
+  expiresAt: timestamp('expires_at', { withTimezone: true }),
+  createdByUserId: text('created_by_user_id')
+    .references(() => better_auth_user.id, { onDelete: 'set null' }),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, t => [
+  index('knowledge_project_state_idx').on(t.projectId, t.validationState),
+  index('knowledge_project_kind_idx').on(t.projectId, t.kind),
+  // Not redundant with the primary key: a composite FK can only reference a unique
+  // constraint, and L1's check map uses (project_id, id) so a mapping can never
+  // point at another project's row. Created now because adding it later is a
+  // second migration for no reason.
+  uniqueIndex('knowledge_project_id_uq').on(t.projectId, t.id),
+  check('knowledge_kind_ck', sql`${t.kind} in ('fact','convention','pitfall','decision')`),
+  check('knowledge_state_ck', sql`${t.validationState} in ('candidate','trusted','contradicted','retired')`),
+])
+
+// ── knowledge_validation ─────────────────────────────────────────────────────
+// The evidence behind a claim's state. Written by the verifier (a human confirm in
+// L0, CI attestation in L1) and by the contradiction path; agents never write here,
+// which is what keeps an agent from promoting its own guess.
+export const knowledgeValidations = pgTable('knowledge_validation', {
+  id: uuidPk(),
+  knowledgeId: uuid('knowledge_id').notNull()
+    .references(() => knowledge.id, { onDelete: 'cascade' }),
+  signal: text('signal').notNull(),      // support | contradict
+  issuer: text('issuer').notNull(),      // ci_attest | human | error_event
+  // Identity that promotion counts DISTINCT over: a userId for human, the project's
+  // CI issuer id for ci_attest, 'error' for error_event. The whole CI system shares
+  // one issuer by default, so a hundred green runs still count as one voice.
+  issuerId: text('issuer_id').notNull(),
+  sourceRef: jsonb('source_ref').$type<{ runId?: string; userId?: string; eventId?: string }>()
+    .notNull().default(sql`'{}'::jsonb`),
+  // false for an attestation with no check mapping: recorded as history, never
+  // counted toward promotion.
+  counted: boolean('counted').notNull().default(true),
+  sourceFingerprint: text('source_fingerprint').notNull(), // stable hash of issuer+sourceRef
+  weight: real('weight').notNull().default(1),
+  createdAt: createdAt(),
+}, t => [
+  index('knowledge_validation_knowledge_idx').on(t.knowledgeId),
+  // Independence, enforced in the schema rather than in the counting query: one
+  // issuer-source can support a claim once. Re-running the same CI job cannot
+  // manufacture agreement.
+  uniqueIndex('knowledge_validation_dedup').on(t.knowledgeId, t.signal, t.sourceFingerprint),
+  check('knowledge_validation_signal_ck', sql`${t.signal} in ('support','contradict')`),
+  check('knowledge_validation_issuer_ck', sql`${t.issuer} in ('ci_attest','human','error_event')`),
+])
+
+// ── knowledge_audit ──────────────────────────────────────────────────────────
+// Append-only history of knowledge state changes. governance_audit is ban/unban
+// only and cannot carry these, and a state column alone loses the transition:
+// from_state/to_state is what makes "this was promoted, then contradicted" legible
+// after the fact.
+export const knowledgeAudits = pgTable('knowledge_audit', {
+  id: uuidPk(),
+  projectId: uuid('project_id').notNull()
+    .references(() => projects.id, { onDelete: 'cascade' }),
+  // promote | demote | retire | playbook_change | attest_secret_rotate |
+  // proposer_approve | proposer_reject | check_map_change
+  action: text('action').notNull(),
+  knowledgeId: uuid('knowledge_id').references(() => knowledge.id, { onDelete: 'set null' }),
+  fromState: text('from_state'),
+  toState: text('to_state'),
+  actorKind: text('actor_kind').notNull(),  // human | ci | system
+  actorUserId: text('actor_user_id')        // null unless actorKind = 'human'
+    .references(() => better_auth_user.id, { onDelete: 'set null' }),
+  detail: jsonb('detail').$type<Record<string, unknown>>().notNull().default({}),
+  createdAt: createdAt(),
+}, t => [
+  index('knowledge_audit_project_created_idx').on(t.projectId, t.createdAt),
+  index('knowledge_audit_knowledge_idx').on(t.knowledgeId),
+  check('knowledge_audit_actor_ck', sql`${t.actorKind} in ('human','ci','system')`),
+])
+
+// ── recall_log ───────────────────────────────────────────────────────────────
+// What was retrieved and what was actually used, which is the only way to tell
+// whether recall is helping. `usedKnowledgeId` is a self-contained FK to knowledge
+// added in the migration (same reason as supersededById).
+export const recallLogs = pgTable('recall_log', {
+  id: uuidPk(),
+  projectId: uuid('project_id').notNull()
+    .references(() => projects.id, { onDelete: 'cascade' }),
+  agentId: uuid('agent_id').references(() => agents.id, { onDelete: 'set null' }),
+  queryHash: text('query_hash'),
+  returnedKnowledgeIds: jsonb('returned_knowledge_ids').$type<string[]>()
+    .notNull().default(sql`'[]'::jsonb`),
+  usedKnowledgeId: uuid('used_knowledge_id'), // FK added below via migration
+  createdAt: createdAt(),
+}, t => [
+  index('recall_log_project_created_idx').on(t.projectId, t.createdAt),
 ])
