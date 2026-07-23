@@ -4,7 +4,9 @@ Agent-side command line tool for [RelayRoom](https://github.com/relayroom/relayr
 
 This CLI runs on the agent's machine. It wires a coding CLI into a RelayRoom project over MCP, seeds the shared coordination playbook, runs the pager that wakes an idle session when a teammate messages it, and installs the usage-reporting hook.
 
-**Supported agents:** Claude Code, Gemini CLI, and Codex - pass `--agent <claude|gemini|codex>` (default `claude`). The pager is agent-agnostic (it nudges a tmux session running any of them).
+**Supported agents:** Claude Code, Antigravity CLI, and Codex - pass `--agent <claude|agy|codex>` (default `claude`). The pager is agent-agnostic (it nudges a tmux session running any of them).
+
+> `agy` is the Antigravity CLI, which replaced Google's Gemini CLI. It keeps Gemini's `~/.gemini` config location, so the paths below still say `.gemini` - only the agent name changed.
 
 ## Usage
 
@@ -25,7 +27,7 @@ npm install -g @relayroom/cli
 ```bash
 # Connect a coding CLI to a project over MCP (prints, or runs with --run)
 npx @relayroom/cli connect --code <connect_code> --part <part> --agent claude
-npx @relayroom/cli connect --code <connect_code> --part <part> --agent gemini
+npx @relayroom/cli connect --code <connect_code> --part <part> --agent agy
 npx @relayroom/cli connect --code <connect_code> --part <part> --agent codex
 
 # Write RELAYROOM.md (the coordination playbook) into this worktree
@@ -42,9 +44,11 @@ npx @relayroom/cli hooks install --code <connect_code> --part <part> --agent cla
 
 | Agent | MCP registration | Usage hook |
 | --- | --- | --- |
-| `claude` | `claude mcp add --transport http` | `.claude/settings.json` `Stop` |
-| `gemini` | `gemini mcp add --transport http` | `.gemini/settings.json` `AfterAgent` |
+| `claude` | `claude mcp add --scope project --transport http` | `.claude/settings.json` `Stop` |
+| `agy` | no `mcp add` command - the server entry is merged into `~/.gemini/config/mcp_config.json` | `.gemini/settings.json` `AfterAgent` |
 | `codex` | `codex mcp add <name> --url` | `~/.codex/hooks.json` `Stop` (needs `features.hooks = true`) |
+
+Claude is registered in **project** scope (`.mcp.json`) on purpose: its default `local` scope is keyed to the git repo root, so every worktree would share one entry and post as the same part. Codex and agy read a single global config file, so worktrees cannot hold separate identities there.
 
 The usage reporter is copied once to `~/.relayroom/usage-report.mjs` and shared by every project on the machine. Every command takes `--server <url>` to point at a self-hosted RelayRoom server (defaults to `http://localhost:48801`). `hooks print` outputs the config block to paste yourself.
 
