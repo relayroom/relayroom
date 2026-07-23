@@ -68,6 +68,15 @@ function resolveDir(payload) {
 }
 const AGENT = arg("agent", "claude")
 
+// Cache tokens are not input tokens at the base rate, and for agent workloads they
+// are usually the LARGEST bucket - charging them at full price overstates the cost
+// several-fold. A cache READ bills at ~0.1x the base input rate; a cache WRITE bills
+// at 1.25x (5-minute TTL). A 1-hour-TTL write is 2x, which the transcript's
+// cache_creation_input_tokens field cannot distinguish, so writes are estimated at
+// the 5-minute rate and a 1-hour-heavy workload reads slightly low.
+const CACHE_READ_RATE = 0.1
+const CACHE_WRITE_RATE = 1.25
+
 // Rough $/MTok by model family (input, output) - approximate, for an at-a-glance
 // cost estimate. Token counts are exact; this is only the $ conversion.
 function priceFor(model = "") {
@@ -112,7 +121,10 @@ function claudeAssistantText(row) {
 
 function parseClaude(transcriptPath) {
   const lines = readFileSync(transcriptPath, "utf8").split("\n").filter(Boolean)
-  let inTok = 0, outTok = 0, cacheTok = 0, model, title, summary, startedAt, endedAt
+  // Writes and reads are tracked apart because they bill at different rates; the
+  // two are summed back into one `cache_tokens` for the wire format, which has a
+  // single field.
+  let inTok = 0, outTok = 0, cacheWrite = 0, cacheRead = 0, model, title, summary, startedAt, endedAt
   for (let i = lines.length - 1; i >= 0; i--) {
     let row
     try { row = JSON.parse(lines[i]) } catch { continue }
@@ -128,7 +140,8 @@ function parseClaude(transcriptPath) {
       if (u) {
         inTok += u.input_tokens ?? 0
         outTok += u.output_tokens ?? 0
-        cacheTok += (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0)
+        cacheWrite += u.cache_creation_input_tokens ?? 0
+        cacheRead += u.cache_read_input_tokens ?? 0
         model ??= row.message.model
         if (!endedAt && row.timestamp) endedAt = row.timestamp // latest assistant
       }
@@ -140,7 +153,7 @@ function parseClaude(transcriptPath) {
       }
     }
   }
-  return { inTok, outTok, cacheTok, model, title, summary, startedAt, endedAt }
+  return { inTok, outTok, cacheWrite, cacheRead, model, title, summary, startedAt, endedAt }
 }
 
 // ── Codex: rollout JSONL with `token_count` events; use the last turn's delta ──
@@ -181,8 +194,9 @@ function parseCodex(transcriptPath) {
   // Adding reasoning_output_tokens again double-counts output. Use output directly;
   // only fall back to reasoning when no output field is present.
   const outTok = u.output_tokens ?? u.completion_tokens ?? u.reasoning_output_tokens ?? 0
-  const cacheTok = u.cached_input_tokens ?? u.cache_read_input_tokens ?? 0
-  return { inTok, outTok, cacheTok, model }
+  // Codex reports only cache READS; there is no write field to separate out.
+  const cacheRead = u.cached_input_tokens ?? u.cache_read_input_tokens ?? 0
+  return { inTok, outTok, cacheWrite: 0, cacheRead, model }
 }
 
 // ── Gemini: JSONL transcript. Each assistant ("gemini") line carries `model` and a
@@ -205,10 +219,10 @@ function parseGemini(transcriptPath) {
     const input = tk.input ?? 0
     const cached = tk.cached ?? 0
     const inTok = Math.max(0, input - cached)         // fresh (non-cached) input
-    const cacheTok = cached                            // cache read
+    const cacheRead = cached                           // reads only; no write field
     const outTok = (tk.output ?? 0) + (tk.thoughts ?? 0) // visible output + thinking
-    if (inTok + outTok + cacheTok <= 0) continue
-    return { inTok, outTok, cacheTok, model: row.model }
+    if (inTok + outTok + cacheRead <= 0) continue
+    return { inTok, outTok, cacheWrite: 0, cacheRead, model: row.model }
   }
   return null
 }
@@ -253,12 +267,21 @@ async function main() {
   dbg({ stage: "parsed", agent: AGENT, parsed: parsed ?? null })
   if (!parsed) return
 
-  const { inTok, outTok, cacheTok, model, title, summary, startedAt, endedAt } = parsed
+  const { inTok, outTok, cacheWrite, cacheRead, model, title, summary, startedAt, endedAt } = parsed
+  // One number for the wire format, which has a single cache field; the split is a
+  // costing detail, and widening the payload would need the server and dashboard too.
+  const cacheTok = cacheWrite + cacheRead
   if (inTok + outTok + cacheTok <= 0) { dbg({ stage: "zero-usage", agent: AGENT }); return } // nothing to report
 
   let cost
   const p = priceFor(model)
-  if (p) cost = +(((inTok + cacheTok) / 1e6) * p[0] + (outTok / 1e6) * p[1]).toFixed(6)
+  if (p) {
+    const inputCost =
+      (inTok / 1e6) * p[0] +
+      (cacheWrite / 1e6) * p[0] * CACHE_WRITE_RATE +
+      (cacheRead / 1e6) * p[0] * CACHE_READ_RATE
+    cost = +(inputCost + (outTok / 1e6) * p[1]).toFixed(6)
+  }
 
   const usage = { input_tokens: inTok, output_tokens: outTok, cache_tokens: cacheTok }
   if (model) usage.model = model
