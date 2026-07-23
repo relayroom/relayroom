@@ -20,6 +20,10 @@ COPY apps/web apps/web
 COPY packages/db packages/db
 COPY packages/shared packages/shared
 COPY packages/telemetry packages/telemetry
+# apps/web/vitest.config.ts imports the shared test database URL from test/, and
+# `next build` type-checks it. Builder stage only - the runtime image copies just
+# the standalone output, so no test code ships.
+COPY test test
 
 RUN pnpm --filter @relayroom/web build
 
