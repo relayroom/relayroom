@@ -24,18 +24,24 @@ import { runEligibilitySweep } from './sweep'
 import { expireStale } from './state'
 import { autoCloseIdleThreads } from './autoclose'
 import { resolveStaleAlerts, runGovernanceDetection } from '../governance/detect'
+import { runKnowledgeRetention } from '../knowledge/retention'
 
 export const RECONCILE_INTERVAL_MS = 60_000 // 1 min: phantom detection (ledger catch-up)
 export const SWEEP_INTERVAL_MS = 30_000 // 30 s: recover suppressed parts (window freed)
 export const GOVERNANCE_INTERVAL_MS = 60_000 // 1 min: risk detection + auto-resolve (phase 08)
 export const EXPIRY_INTERVAL_MS = 30_000 // 30 s: expire unactivated wake_intents (phase 02 reserve refund)
 export const AUTOCLOSE_INTERVAL_MS = 5 * 60_000 // 5 min: auto-close idle threads (backstop)
+// 15 min: retire expired knowledge (FEAT-0001). Relaxed on purpose - `recall`
+// filters expires_at itself, so an expired entry is already unreadable and this
+// only settles the stored state and the audit ledger behind it.
+export const KNOWLEDGE_RETENTION_INTERVAL_MS = 15 * 60_000
 
 export interface WakeJobs {
   stop(): void
 }
 
 export interface StartWakeJobsOptions {
+  knowledgeRetentionMs?: number
   reconcileMs?: number
   sweepMs?: number
   governanceMs?: number
@@ -54,6 +60,7 @@ export function startWakeJobs(db: Db, bus: Bus, opts: StartWakeJobsOptions = {})
   const governanceMs = opts.governanceMs ?? GOVERNANCE_INTERVAL_MS
   const expiryMs = opts.expiryMs ?? EXPIRY_INTERVAL_MS
   const autocloseMs = opts.autocloseMs ?? AUTOCLOSE_INTERVAL_MS
+  const knowledgeRetentionMs = opts.knowledgeRetentionMs ?? KNOWLEDGE_RETENTION_INTERVAL_MS
 
   // Per-job re-entrancy guard: skip a tick if the PREVIOUS run of the same job is
   // still in flight. A slow reconcile/sweep otherwise overlaps itself (setInterval
@@ -80,6 +87,10 @@ export function startWakeJobs(db: Db, bus: Bus, opts: StartWakeJobsOptions = {})
   timers.push(setInterval(safe('autoclose', () => autoCloseIdleThreads(db)), autocloseMs))
   // Governance detection (phase 08): raise alerts on tripped patterns, then close
   // alerts whose pattern has stopped. Both are idempotent and DB-backed.
+  // Knowledge expiry (FEAT-0001). Not a wake job, but this is the process's only
+  // scheduler, and it already gives every tick the re-entrancy guard and the
+  // throwing-callback protection this needs too.
+  timers.push(setInterval(safe('knowledge-retention', () => runKnowledgeRetention(db)), knowledgeRetentionMs))
   timers.push(
     setInterval(
       safe('governance', async () => {
