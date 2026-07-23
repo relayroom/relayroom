@@ -33,8 +33,10 @@ import {
   getOrCreateAgent,
   messages,
   messageRecipients,
+  knowledge,
   projectAccess,
   projects,
+  recallLogs,
   threads,
   touchAgent,
   authSchema,
@@ -42,6 +44,7 @@ import {
 import { alias } from 'drizzle-orm/pg-core'
 import { Hono } from 'hono'
 import type { Context } from 'hono'
+import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import { DEFAULT_RELAYROOM_MD, NEEDS_HUMAN_TAG, resolveAgentColorHex } from '@relayroom/shared'
 import type { Bus } from '../bus'
@@ -419,6 +422,92 @@ const isUuid = (s: string) =>
  * privilege boundary.
  */
 const isValidPart = (s: string) => /^[a-z0-9][a-z0-9_-]{0,31}$/.test(s)
+
+
+// ── Knowledge tools (FEAT-0001 L0) ────────────────────────────────────────────
+
+/** The `knowledge.kind` domain, matching the knowledge_kind_ck CHECK constraint. */
+const KNOWLEDGE_KINDS = ['fact', 'convention', 'pitfall', 'decision'] as const
+
+const RECALL_DEFAULT_LIMIT = 5
+const RECALL_MAX_LIMIT = 20
+/** Threshold the `%` operator compares against; below it, nothing matches. */
+const RECALL_SIMILARITY_THRESHOLD = 0.1
+
+/**
+ * Ceiling on `learn` calls per agent per hour.
+ *
+ * The number is a starting guess, not a measured one - say so plainly rather than
+ * let a later reader assume it was derived from something. It exists to stop a
+ * looping agent from filling the table, and a project that legitimately needs more
+ * will show up as rejections in the tool output.
+ */
+const LEARN_PER_AGENT_HOURLY = 20
+
+// In memory, per process, like the send loop-breaker in wake/pipeline.ts. `knowledge`
+// has no agent column - sourceRefs is typed {threadId,eventId,messageId} - so there
+// is nothing to count per agent in the database. Process-local is the same trade the
+// loop-breaker already makes: a preventive gate, not a ledger.
+const LEARN_WINDOW_MS = 60 * 60_000
+const learnCalls = new Map<string, number[]>()
+
+/** Records this call and reports whether it is within the ceiling. */
+function allowLearn(agentId: string, now = Date.now()): boolean {
+  const seen = (learnCalls.get(agentId) ?? []).filter(t => t > now - LEARN_WINDOW_MS)
+  if (seen.length >= LEARN_PER_AGENT_HOURLY) {
+    learnCalls.set(agentId, seen)
+    return false
+  }
+  seen.push(now)
+  learnCalls.set(agentId, seen)
+  return true
+}
+
+/** Test-only: clear the per-agent windows so cases do not bleed into each other. */
+export function resetLearnRateLimit(): void {
+  learnCalls.clear()
+}
+
+/**
+ * Hash of a recall query, for grouping identical searches when measuring
+ * recall-hit-rate. The query text itself is never stored: it is whatever an agent
+ * was about to do, which can name customers, paths, or incidents, and none of that
+ * needs to survive to compute a rate.
+ *
+ * The normalization is written out because a later change to it silently stops
+ * matching every hash recorded before: lowercase, collapse runs of whitespace,
+ * trim.
+ */
+function recallQueryHash(query: string): string {
+  const normalized = query.toLowerCase().replace(/\s+/g, ' ').trim()
+  return createHash('sha256').update(normalized).digest('hex')
+}
+
+/**
+ * May this connection write knowledge?
+ *
+ * INTERIM. The real check belongs in the shared project-access rank helper being
+ * extracted from the dashboard's requireProjectAccess, which also encodes "an org
+ * owner/admin is an effective owner even with no project_access row". This does
+ * NOT encode that rule, so it is STRICTER than the final behaviour: an org owner
+ * without an explicit row is refused here and will be allowed once the helper
+ * lands. Deliberately the strict direction - an interim gate that is too permissive
+ * grants access nobody reviewed, and the failure is invisible.
+ *
+ * Replace this body with the shared helper; do not extend it.
+ */
+async function canWriteKnowledge(db: Db, ctx: McpConnectionContext): Promise<boolean> {
+  const [row] = await db
+    .select({ level: projectAccess.level })
+    .from(projectAccess)
+    .where(and(
+      eq(projectAccess.projectId, ctx.projectId),
+      eq(projectAccess.userId, ctx.userId),
+      isNull(projectAccess.bannedAt),
+    ))
+    .limit(1)
+  return row?.level === 'write' || row?.level === 'owner'
+}
 
 /**
  * Creates a new McpServer with all RelayRoom tools registered,
@@ -1133,6 +1222,199 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
           nickname: me?.nickname ?? undefined,
         }) }],
       }
+    },
+  )
+
+  // ── recall: retrieval before action ───────────────────────────────────────
+
+  mcp.tool(
+    'recall',
+    'Search this project\'s trusted knowledge before starting non-trivial work: '
+      + 'conventions, known pitfalls, decisions already made, and facts other agents '
+      + 'established. Call this BEFORE you plan or edit, not after. Returns only '
+      + 'entries a human or CI has confirmed - unconfirmed notes are never returned. '
+      + 'Pass the returned queryId to `recall_used` when an entry actually shapes '
+      + 'what you do.',
+    {
+      query: z.string().min(1).max(500).describe('What you are about to do, or the topic to look up'),
+      kind: z.enum(KNOWLEDGE_KINDS).optional()
+        .describe('Restrict to one kind: fact | convention | pitfall | decision'),
+      limit: z.number().int().min(1).max(RECALL_MAX_LIMIT).optional()
+        .describe(`Max entries to return (default ${RECALL_DEFAULT_LIMIT}, max ${RECALL_MAX_LIMIT})`),
+    },
+    async (args) => {
+      // No extra authorization here on purpose: resolveConnection already proved
+      // this caller is an org member of this project and not banned from it, which
+      // is exactly what recall requires (any access level may read).
+      const limit = Math.min(args.limit ?? RECALL_DEFAULT_LIMIT, RECALL_MAX_LIMIT)
+      const me = await touchAgent(db, ctx.projectId, ctx.part)
+      if (!me) return partGone()
+
+      const rows = await db.transaction(async (tx) => {
+        // The `%` operator reads pg_trgm.similarity_threshold, and that is what the
+        // gin_trgm_ops index is built to answer - a bare `similarity() > x` filter
+        // would not use the index at all. set_config(..., is_local => true) is
+        // SET LOCAL with a bind parameter, so it is scoped to this transaction and
+        // the threshold is not interpolated into SQL text.
+        await tx.execute(
+          sql`select set_config('pg_trgm.similarity_threshold', ${String(RECALL_SIMILARITY_THRESHOLD)}, true)`,
+        )
+        return tx.execute<{
+          id: string
+          kind: string
+          title: string
+          body: string
+          confidence: number
+          source_refs: { threadId?: string; eventId?: string; messageId?: string }[]
+        }>(sql`
+          select id, kind, title, body, confidence, source_refs
+          from ${knowledge}
+          where project_id = ${ctx.projectId}
+            -- Trusted only. This is the guard the whole feature rests on: a
+            -- candidate is an unverified claim, and returning one would put
+            -- unreviewed text into another agent's context as though it were
+            -- established.
+            and validation_state = 'trusted'
+            ${args.kind ? sql`and kind = ${args.kind}` : sql``}
+            and (expires_at is null or expires_at > now())
+            and (title || ' ' || body) % ${args.query}
+          order by (similarity(title || ' ' || body, ${args.query}) * (0.5 + confidence)) desc,
+                   updated_at desc
+          limit ${limit}
+        `)
+      })
+
+      const entries = rows.map(r => ({
+        id: r.id,
+        kind: r.kind,
+        title: r.title,
+        body: r.body,
+        confidence: r.confidence,
+        sourceRefs: r.source_refs,
+      }))
+
+      // The log is what makes recall-hit-rate measurable. Only the hash of the
+      // query is stored - see recallQueryHash for why and how it is normalized.
+      const [logged] = await db.insert(recallLogs).values({
+        projectId: ctx.projectId,
+        agentId: me.id,
+        queryHash: recallQueryHash(args.query),
+        returnedKnowledgeIds: entries.map(e => e.id),
+      }).returning({ id: recallLogs.id })
+
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify({ entries, queryId: logged!.id }) }],
+      }
+    },
+  )
+
+  // ── learn: capture a durable lesson ───────────────────────────────────────
+
+  mcp.tool(
+    'learn',
+    'Record something worth remembering for this project - a convention, a pitfall '
+      + 'you hit, a decision and its reason, or a durable fact. It is stored as a '
+      + 'CANDIDATE and is NOT returned by `recall` until a human confirms it, so '
+      + 'writing one does not put it in anyone else\'s context. Record specifics '
+      + 'that would have saved you time, not summaries of what you did.',
+    {
+      title: z.string().min(1).max(200).describe('One line naming the lesson'),
+      body: z.string().min(1).max(4000).describe('The lesson itself, specific enough to act on'),
+      kind: z.enum(KNOWLEDGE_KINDS).describe('fact | convention | pitfall | decision'),
+      sourceThreadId: z.string().optional().describe('UUID of the thread this came from, if any'),
+    },
+    async (args) => {
+      const me = await touchAgent(db, ctx.projectId, ctx.part)
+      if (!me) return partGone()
+
+      if (!(await canWriteKnowledge(db, ctx))) {
+        return { content: [{ type: 'text' as const,
+          text: 'error: writing knowledge needs write access to this project. '
+            + 'Ask a project owner to grant it.' }], isError: true }
+      }
+
+      if (args.sourceThreadId !== undefined) {
+        if (!isUuid(args.sourceThreadId)) {
+          return { content: [{ type: 'text' as const, text: 'error: invalid sourceThreadId' }], isError: true }
+        }
+        const [thread] = await db.select({ id: threads.id }).from(threads)
+          .where(and(eq(threads.id, args.sourceThreadId), eq(threads.projectId, ctx.projectId)))
+          .limit(1)
+        if (!thread) {
+          return { content: [{ type: 'text' as const, text: 'error: sourceThreadId not in your project' }], isError: true }
+        }
+      }
+
+      // Rate limit. Rejected LOUDLY rather than dropped: an agent that believes it
+      // recorded a lesson and did not is worse off than one told it hit a limit.
+      if (!allowLearn(me.id)) {
+        return { content: [{ type: 'text' as const,
+          text: `error: rate limit of ${LEARN_PER_AGENT_HOURLY} learn calls per hour reached for this agent. `
+            + 'NOTHING was recorded. Combine what you were recording into one entry, or retry later.' }],
+        isError: true }
+      }
+
+      const sourceRefs = args.sourceThreadId ? [{ threadId: args.sourceThreadId }] : []
+
+      const [row] = await db.insert(knowledge).values({
+        projectId: ctx.projectId,
+        kind: args.kind,
+        title: args.title,
+        body: args.body,
+        sourceKind: 'learn',
+        sourceRefs,
+        // ALWAYS candidate. There is no argument this tool can take, and no branch
+        // in it, that produces a trusted row: promotion is a separate ledgered
+        // transaction with a human or CI as the issuer. An agent asserting its own
+        // claim is trustworthy is the failure this whole design is built to avoid.
+        validationState: 'candidate',
+        createdByUserId: ctx.userId,
+      }).returning({ id: knowledge.id, validationState: knowledge.validationState })
+
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify({
+          id: row!.id,
+          validationState: row!.validationState,
+        }) }],
+      }
+    },
+  )
+
+  // ── recall_used: close the hit-rate loop ──────────────────────────────────
+
+  mcp.tool(
+    'recall_used',
+    'Report that a recalled entry actually shaped what you did. Optional and '
+      + 'best-effort, but it is what makes recall quality measurable rather than '
+      + 'guessed at. Pass the queryId from `recall` and the id of the entry you used.',
+    {
+      queryId: z.string().describe('The queryId returned by `recall`'),
+      knowledgeId: z.string().describe('The id of the entry you acted on'),
+    },
+    async (args) => {
+      if (!isUuid(args.queryId) || !isUuid(args.knowledgeId)) {
+        return { content: [{ type: 'text' as const, text: 'error: invalid queryId or knowledgeId' }], isError: true }
+      }
+      // Scoped to this project so one project cannot annotate another's log, and
+      // matched against what that query actually returned so the hit rate cannot be
+      // inflated by naming an entry the agent was never shown.
+      const [log] = await db.select({ id: recallLogs.id, returned: recallLogs.returnedKnowledgeIds })
+        .from(recallLogs)
+        .where(and(eq(recallLogs.id, args.queryId), eq(recallLogs.projectId, ctx.projectId)))
+        .limit(1)
+      if (!log) {
+        return { content: [{ type: 'text' as const, text: 'error: unknown queryId' }], isError: true }
+      }
+      if (!log.returned.includes(args.knowledgeId)) {
+        return { content: [{ type: 'text' as const,
+          text: 'error: that entry was not among the results for this queryId' }], isError: true }
+      }
+
+      await db.update(recallLogs)
+        .set({ usedKnowledgeId: args.knowledgeId })
+        .where(eq(recallLogs.id, args.queryId))
+
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true }) }] }
     },
   )
 

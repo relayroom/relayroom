@@ -123,6 +123,110 @@ exports[`MCP tool contract > advertises stable descriptions and input schemas 1`
     "name": "inbox",
   },
   {
+    "description": "Record something worth remembering for this project - a convention, a pitfall you hit, a decision and its reason, or a durable fact. It is stored as a CANDIDATE and is NOT returned by \`recall\` until a human confirms it, so writing one does not put it in anyone else's context. Record specifics that would have saved you time, not summaries of what you did.",
+    "execution": {
+      "taskSupport": "forbidden",
+    },
+    "inputSchema": {
+      "properties": {
+        "body": {
+          "description": "The lesson itself, specific enough to act on",
+          "maxLength": 4000,
+          "minLength": 1,
+          "type": "string",
+        },
+        "kind": {
+          "description": "fact | convention | pitfall | decision",
+          "enum": [
+            "fact",
+            "convention",
+            "pitfall",
+            "decision",
+          ],
+          "type": "string",
+        },
+        "sourceThreadId": {
+          "description": "UUID of the thread this came from, if any",
+          "type": "string",
+        },
+        "title": {
+          "description": "One line naming the lesson",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "title",
+        "body",
+        "kind",
+      ],
+      "type": "object",
+    },
+    "name": "learn",
+  },
+  {
+    "description": "Search this project's trusted knowledge before starting non-trivial work: conventions, known pitfalls, decisions already made, and facts other agents established. Call this BEFORE you plan or edit, not after. Returns only entries a human or CI has confirmed - unconfirmed notes are never returned. Pass the returned queryId to \`recall_used\` when an entry actually shapes what you do.",
+    "execution": {
+      "taskSupport": "forbidden",
+    },
+    "inputSchema": {
+      "properties": {
+        "kind": {
+          "description": "Restrict to one kind: fact | convention | pitfall | decision",
+          "enum": [
+            "fact",
+            "convention",
+            "pitfall",
+            "decision",
+          ],
+          "type": "string",
+        },
+        "limit": {
+          "description": "Max entries to return (default 5, max 20)",
+          "maximum": 20,
+          "minimum": 1,
+          "type": "integer",
+        },
+        "query": {
+          "description": "What you are about to do, or the topic to look up",
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "query",
+      ],
+      "type": "object",
+    },
+    "name": "recall",
+  },
+  {
+    "description": "Report that a recalled entry actually shaped what you did. Optional and best-effort, but it is what makes recall quality measurable rather than guessed at. Pass the queryId from \`recall\` and the id of the entry you used.",
+    "execution": {
+      "taskSupport": "forbidden",
+    },
+    "inputSchema": {
+      "properties": {
+        "knowledgeId": {
+          "description": "The id of the entry you acted on",
+          "type": "string",
+        },
+        "queryId": {
+          "description": "The queryId returned by \`recall\`",
+          "type": "string",
+        },
+      },
+      "required": [
+        "queryId",
+        "knowledgeId",
+      ],
+      "type": "object",
+    },
+    "name": "recall_used",
+  },
+  {
     "description": "Reply to an existing thread in this project.",
     "execution": {
       "taskSupport": "forbidden",
