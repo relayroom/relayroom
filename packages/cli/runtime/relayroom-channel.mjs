@@ -27,7 +27,7 @@ import { hostname } from "node:os"
 import { join } from "node:path"
 // The wake protocol (lease claim, fencing, SSE, catch-up) is shared with the pager;
 // only the delivery step below is specific to Claude Channels. See wake-client.mjs.
-import { createWakeClient, backoff } from "./wake-client.mjs"
+import { createWakeClient, backoff, sanitizeField } from "./wake-client.mjs"
 
 // ── Args + config ─────────────────────────────────────────────────────────────
 function arg(name, fallback) {
@@ -175,13 +175,18 @@ function buildContent(batch) {
     "Use the RelayRoom `inbox` MCP tool to read (NOT curl/shell - the HTTP API 404s and " +
     "won't mark anything read). Reply ONLY if it needs an answer; otherwise just ack it. " +
     "Do NOT reply to acknowledge or confirm. Close the thread when it's resolved."
+  // subject and fromPart are chosen by whoever sent the message, so they are cleaned
+  // and clamped before going anywhere near the rendered notification - same treatment,
+  // and the same limits, as the pager's nudge text. See sanitizeField.
   if (batch.length === 1) {
     const e = batch[0]
-    const subj = e.subject ? ` "${e.subject}"` : ""
-    const who = e.fromPart ? ` from ${e.fromPart}` : ""
+    const subjText = sanitizeField(e.subject, 80)
+    const whoText = sanitizeField(e.fromPart, 32)
+    const subj = subjText ? ` "${subjText}"` : ""
+    const who = whoText ? ` from ${whoText}` : ""
     return `New RelayRoom message${subj}${who} for part "${PART}". ${guidance}`
   }
-  const froms = [...new Set(batch.map((e) => e.fromPart).filter(Boolean))].join(", ")
+  const froms = [...new Set(batch.map((e) => sanitizeField(e.fromPart, 32)).filter(Boolean))].join(", ")
   return `${batch.length} new RelayRoom messages for part "${PART}"${froms ? ` (from ${froms})` : ""}. ${guidance}`
 }
 
@@ -230,8 +235,11 @@ async function flush() {
         continue
       }
       transientRetries = 0
-      const subj = batch.find((e) => e.subject)?.subject
-      const from = [...new Set(batch.map((e) => e.fromPart).filter(Boolean))].join(", ")
+      // meta values become attributes on the rendered channel event, so they are
+      // sanitized and clamped too - an unbounded subject with a quote in it is the
+      // one thing a peer fully controls here.
+      const subj = sanitizeField(batch.find((e) => e.subject)?.subject, 80)
+      const from = [...new Set(batch.map((e) => sanitizeField(e.fromPart, 32)).filter(Boolean))].join(", ")
       sendChannel(buildContent(batch), { from, subject: subj, wake: String(decision.wakeId).slice(0, 8) })
       log(`channel push: ${batch.length} msg (wake ${String(decision.wakeId).slice(0, 8)})`)
       await wake.reportDelivered(decision.wakeId) // fence pending -> delivered

