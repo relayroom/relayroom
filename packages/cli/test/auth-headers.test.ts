@@ -359,3 +359,64 @@ describe("ask guard: role lookup", () => {
     expect(stderr).toContain("./rr.sh setup")
   })
 })
+
+describe("generated rr.sh: session name guard", () => {
+  let dir: string
+  let hub: ReturnType<typeof recordingHub>
+  let url: string
+  let savedTmux: string | undefined
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), "relayroom-target-"))
+    hub = recordingHub(MD_HANDLER)
+    url = `http://127.0.0.1:${await hub.port}`
+    savedTmux = process.env.TMUX
+    delete process.env.TMUX
+  })
+
+  afterEach(() => {
+    hub.server.close()
+    if (savedTmux !== undefined) process.env.TMUX = savedTmux
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  const runRr = (args: string[]) =>
+    new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
+      execFile(
+        "bash",
+        [join(dir, "rr.sh"), ...args],
+        { cwd: dir, timeout: 20_000 },
+        (err, stdout, stderr) => {
+          const code = err && typeof (err as { code?: unknown }).code === "number" ? (err as { code: number }).code : err ? 1 : 0
+          resolve({ code, stdout: String(stdout), stderr: String(stderr) })
+        },
+      )
+    })
+
+  // A window/pane target in config.target: tmux would silently create a session
+  // called "rr-core_0_1" while the pager keeps waking "rr-core:0.1".
+  const AMBIGUOUS = "rr-core:0.1"
+
+  it("refuses to touch tmux when the target is a window/pane target", async () => {
+    await init({ dir, code: "c1", part: "core", server: url, target: AMBIGUOUS, tmuxCheck: false })
+    const { code, stderr } = await runRr(["down"])
+    expect(code).toBe(1)
+    expect(stderr).toContain("cannot use as a session name")
+    // The message has to name the rewrite, or the user cannot connect the symptom
+    // (nothing wakes) to the cause (two different session names).
+    expect(stderr).toContain("rr-core_0_1")
+  })
+
+  it("diagnoses instead of dying in doctor, which is what you run when it bites", async () => {
+    await init({ dir, code: "c1", part: "core", server: url, target: AMBIGUOUS, tmuxCheck: false })
+    const { stdout } = await runRr(["doctor"])
+    expect(stdout).toContain("window/pane separator")
+    expect(stdout).toContain("nobody delivers")
+  })
+
+  it("stays out of the way for an ordinary session name", async () => {
+    await init({ dir, code: "c1", part: "core", server: url, target: "RR-demo-core", tmuxCheck: false })
+    const { stderr } = await runRr(["down"])
+    expect(stderr).not.toContain("cannot use as a session name")
+  })
+})
