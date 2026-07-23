@@ -11,10 +11,8 @@ import {
 } from "react"
 import { useRouter } from "next/navigation"
 import type { HubBusEvent } from "@relayroom/shared"
+import { PAGER_ONLINE_WINDOW_MS } from "@/lib/pager-liveness"
 
-// Mirror of the server's pager-liveness window (modules/agent/queries.ts). After
-// this long without a beat, the client downgrades an agent's indicator to offline.
-const PAGER_ONLINE_WINDOW_MS = 90_000
 // How often to re-check for stale pagers (offline detection granularity).
 const STALE_CHECK_MS = 15_000
 const REFRESH_DEBOUNCE_MS = 400
