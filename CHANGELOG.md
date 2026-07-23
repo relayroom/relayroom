@@ -4,6 +4,75 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.4.1] - 2026-07-23
+
+Security and correctness release. No database migration. Self-hosters should update.
+
+Most of what follows is one shape of defect: a rule the code stated in a comment, and
+did not apply on every path that reached it.
+
+### Security
+- **A project ban now stops reads.** `isBannedFromProject` was called on write paths and
+  on SSE connect, and on no read path - so a banned member who refreshed the project page
+  still received every thread body, the events, agents and usage tabs, and the project
+  **connect code**. Enforced per project in the layout and per listing as a SQL predicate.
+  The SSE stream re-checks periodically; the previous authorization was evaluated once, at
+  connect, and a stream is a single request that never ends.
+- **The runtime endpoints require a bearer token.** `/mcp/:connectCode/...` authenticated
+  on the connect code alone and read `part` from an unauthenticated query parameter, so
+  anyone holding the project's code could read any part's unread thread subjects and
+  senders. The code is shared by every agent in a project and cannot be rotated to remove
+  one member. The token now establishes the caller, and `part` is accepted only if the
+  caller owns it - the same rule the MCP connect path already enforced. The three `wake`
+  endpoints require it immediately; `/unread`, `/heartbeat`, `/usage`, `/role` and
+  `/relayroom-md` accept the previous form behind a deprecation warning and will require it
+  in a future release.
+- **Message recipients are validated consistently.** `postMessage` filtered only on
+  project, so a crafted request could address a soft-deleted agent - whose token was
+  revoked when it was deleted - and wake it over the bus.
+- **Deleting an agent is no longer undone by traffic.** Every activity path cleared
+  `deletedAt`, and the deleted part's pager keeps running, so its next heartbeat restored
+  the agent to the roster and to the wake recipients while the operator believed it was
+  gone. Deliberate re-add from the dashboard is unchanged: intent revives, traffic does not.
+- **The CLI keeps credentials out of shared files.** The agy MCP config holds a bearer
+  token and was written world-readable; it is now owner-only, as `.relayroom/config.json`
+  already was. The usage hook no longer writes the connect code into
+  `.claude/settings.json`, a file Claude Code's convention says to commit for the team.
+
+### Fixed
+- **Instances reported the wrong version.** The lockstep version was maintained by hand in
+  four places that had drifted apart; anything built from source identified itself as
+  0.3.2, and the dashboard permanently advertised an update that was already installed.
+  It now derives from `package.json`, which changesets keeps in lockstep.
+- **An unreadable version no longer triggers an upgrade prompt.** The comparison coerced an
+  unparseable version to `0.0.0` - older than every release - so any instance whose version
+  could not be read was told to upgrade.
+- **`search` returned the oldest matches, not the newest.** `DISTINCT ON` forced ordering
+  by the uuidv7 primary key, so on a project with history it returned the first ten matches
+  ever made and silently dropped every recent one.
+- **The default playbook pointed at a command that does not exist.** It told a disconnected
+  agent to repair itself with `./rr.sh gemini mcp-add`, a form `rr.sh` rejects - in the very
+  paragraph about recovering a dead MCP connection.
+- **The pager authenticates on every call**, and reports a rejected heartbeat rather than
+  discarding it.
+
+### Changed
+- **The dashboard is properly localized.** 70 user-facing strings were hardcoded in Korean,
+  including module errors, media upload failures, form validation, the invitation email and
+  every relative timestamp. The locale defaults to English, so this is what a user saw
+  unless they had chosen Korean.
+- **The usage hook documents what it sends.** Besides token counts it sends an excerpt of
+  each turn for Claude - the first 80 characters of the prompt and the last 500 of the
+  answer - to your own hub. That was never stated. `"usageContent": false` in
+  `.relayroom/config.json` drops the excerpts and keeps the counts.
+- The telemetry privacy notice said beacons were off until an admin opted in. Anonymous,
+  content-free telemetry has been on by default since 0.3.9; only that comment was missed.
+
+### Note for self-hosters
+A pager configured without a token now receives 401 on the `wake` endpoints instead of
+being served. Such an agent could never read its inbox, so this turns a half-working setup
+into one that fails visibly; run `./rr.sh doctor` and reconnect from the dashboard.
+
 ## [0.4.0] - 2026-07-05
 
 Includes a database migration (`0013_add_limited_until`); it applies automatically on
