@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm"
 import type { ApiResultWithItem } from "@relayroom/shared"
 import { db } from "@/modules/drizzle/db"
+import { getErrorTranslations } from "@/lib/action-i18n"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -101,6 +102,7 @@ export async function getUsageSeries(
   orgId: string,
   windowDays = 14,
 ): Promise<ApiResultWithItem<UsageSeries>> {
+  const t = await getErrorTranslations()
   try {
     const [result, modelResult] = await Promise.all([
       db.execute(sql`
@@ -147,7 +149,7 @@ export async function getUsageSeries(
     return { result: true, item: toSeries(rows, windowDays, modelRows) }
   } catch (err) {
     console.error("[getUsageSeries]", err)
-    return { result: false, message: "사용량 정보를 불러오는 데 실패했습니다." }
+    return { result: false, message: t("usage.loadFailed") }
   }
 }
 
@@ -159,6 +161,7 @@ export async function getUsageSeriesForProject(
   projectId: string,
   windowDays = 14,
 ): Promise<ApiResultWithItem<UsageSeries>> {
+  const t = await getErrorTranslations()
   try {
     const [result, modelResult] = await Promise.all([
       db.execute(sql`
@@ -201,7 +204,7 @@ export async function getUsageSeriesForProject(
     return { result: true, item: toSeries(rows, windowDays, modelRows) }
   } catch (err) {
     console.error("[getUsageSeriesForProject]", err)
-    return { result: false, message: "사용량 정보를 불러오는 데 실패했습니다." }
+    return { result: false, message: t("usage.loadFailed") }
   }
 }
 
@@ -250,6 +253,7 @@ export async function getProjectUsageDetail(
   from: string,
   to: string,
 ): Promise<ApiResultWithItem<ProjectUsageDetail>> {
+  const t = await getErrorTranslations()
   try {
     const [dayRes, modelRes, agentRes, dayAgentRes, boundsRes] = await Promise.all([
       db.execute(sql`
@@ -375,6 +379,6 @@ export async function getProjectUsageDetail(
     }
   } catch (err) {
     console.error("[getProjectUsageDetail]", err)
-    return { result: false, message: "사용량 정보를 불러오는 데 실패했습니다." }
+    return { result: false, message: t("usage.loadFailed") }
   }
 }

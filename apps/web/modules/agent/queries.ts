@@ -9,6 +9,7 @@ import { db } from "@/modules/drizzle/db"
 import { agents, agentConnections, agentSnapshots, events, messages, threads, projects } from "@relayroom/db/schema"
 import { better_auth_user } from "@relayroom/db/auth-schema"
 import type { AgentStatus } from "@/components/agent/agent-status-badge"
+import { getErrorTranslations } from "@/lib/action-i18n"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -128,6 +129,7 @@ export interface AgentDetail {
 export async function listAgents(
   projectId: string,
 ): Promise<ApiResultWithItems<AgentRow>> {
+  const t = await getErrorTranslations()
   try {
     // Agents + owner display name.
     const rows = await db
@@ -235,7 +237,7 @@ export async function listAgents(
     return { result: true, totalCount: items.length, items }
   } catch (err) {
     console.error("[listAgents]", err)
-    return { result: false, message: "에이전트 목록을 불러오는 데 실패했습니다." }
+    return { result: false, message: t("agent.listFailed") }
   }
 }
 
@@ -265,6 +267,7 @@ export interface MyAgentRow {
  * derived status, and usage like the per-project list.
  */
 export async function listMyAgents(userId: string): Promise<ApiResultWithItems<MyAgentRow>> {
+  const t = await getErrorTranslations()
   try {
     const rows = await db
       .select({
@@ -358,7 +361,7 @@ export async function listMyAgents(userId: string): Promise<ApiResultWithItems<M
     return { result: true, totalCount: items.length, items }
   } catch (err) {
     console.error("[listMyAgents]", err)
-    return { result: false, message: "에이전트 목록을 불러오는 데 실패했습니다." }
+    return { result: false, message: t("agent.listFailed") }
   }
 }
 
@@ -545,6 +548,7 @@ export async function getAgent(
   projectId: string,
   agentId: string,
 ): Promise<ApiResultWithItem<AgentDetail>> {
+  const t = await getErrorTranslations()
   try {
     // Fetch agent, scoped to projectId for security
     const [agent] = await db
@@ -554,7 +558,7 @@ export async function getAgent(
       .limit(1)
 
     if (!agent || agent.projectId !== projectId) {
-      return { result: false, message: "에이전트를 찾을 수 없습니다." }
+      return { result: false, message: t("agent.notFound") }
     }
 
     // Fetch all connections
@@ -672,6 +676,6 @@ export async function getAgent(
     }
   } catch (err) {
     console.error("[getAgent]", err)
-    return { result: false, message: "에이전트 정보를 불러오는 데 실패했습니다." }
+    return { result: false, message: t("agent.loadFailed") }
   }
 }

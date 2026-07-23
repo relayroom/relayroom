@@ -3,6 +3,7 @@ import type { ApiResultWithItem, ApiResultWithItems } from "@relayroom/shared"
 import { db } from "@/modules/drizzle/db"
 import { wakeEvents, ownerWakeBudgets, projects, agents } from "@relayroom/db/schema"
 import { better_auth_user } from "@relayroom/db/auth-schema"
+import { getErrorTranslations } from "@/lib/action-i18n"
 
 // Spec §15.1 defaults applied when an owner has not set a budget yet.
 const DEFAULT_WAKES_PER_HOUR = 30
@@ -23,6 +24,7 @@ export interface OwnerWakeBudget {
 export async function getOwnerWakeBudget(
   userId: string,
 ): Promise<ApiResultWithItem<OwnerWakeBudget>> {
+  const t = await getErrorTranslations()
   try {
     const [row] = await db
       .select({
@@ -53,7 +55,7 @@ export async function getOwnerWakeBudget(
     }
   } catch (err) {
     console.error("[getOwnerWakeBudget]", err)
-    return { result: false, message: "Wake 예산을 불러오지 못했습니다." }
+    return { result: false, message: t("wake.budgetLoadFailed") }
   }
 }
 
@@ -90,6 +92,7 @@ export async function listOwnerWakeAudit(
   windowHours: number,
   projectId?: string,
 ): Promise<ApiResultWithItems<WakeAuditRow> & { summary: WakeAuditSummary }> {
+  const t = await getErrorTranslations()
   const emptySummary: WakeAuditSummary = {
     total: 0,
     urgentCount: 0,
@@ -151,6 +154,6 @@ export async function listOwnerWakeAudit(
     }
   } catch (err) {
     console.error("[listOwnerWakeAudit]", err)
-    return { result: false, message: "감사 기록을 불러오지 못했습니다.", summary: emptySummary }
+    return { result: false, message: t("wake.auditLoadFailed"), summary: emptySummary }
   }
 }

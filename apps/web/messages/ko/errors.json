@@ -19,7 +19,9 @@
     "connectionNotFound": "연결을 찾을 수 없거나 권한이 없습니다.",
     "disconnectFailed": "연결 해제 중 오류가 발생했습니다.",
     "ownedByAnother": "이 에이전트 파트는 다른 사용자가 소유하고 있습니다. 소유자에게 이관을 요청하세요.",
-    "manageDenied": "이 에이전트의 소유자, 프로젝트 owner, 또는 조직 관리자만 이 작업을 할 수 있습니다."
+    "manageDenied": "이 에이전트의 소유자, 프로젝트 owner, 또는 조직 관리자만 이 작업을 할 수 있습니다.",
+    "listFailed": "에이전트 목록을 불러오는 데 실패했습니다.",
+    "loadFailed": "에이전트 정보를 불러오는 데 실패했습니다."
   },
   "project": {
     "notFound": "프로젝트를 찾을 수 없거나 권한이 없습니다.",
@@ -30,7 +32,9 @@
     "updateFailed": "프로젝트 수정 중 오류가 발생했습니다.",
     "archiveFailed": "프로젝트 아카이브 중 오류가 발생했습니다.",
     "relayroomMdFailed": "RELAYROOM.md 저장 중 오류가 발생했습니다.",
-    "regenerateCodeFailed": "연결 코드 재발급 중 오류가 발생했습니다."
+    "regenerateCodeFailed": "연결 코드 재발급 중 오류가 발생했습니다.",
+    "listFailed": "프로젝트 목록을 불러오는 데 실패했습니다.",
+    "loadFailed": "프로젝트 정보를 불러오는 데 실패했습니다."
   },
   "member": {
     "manageDenied": "이 프로젝트의 멤버를 관리할 권한이 없습니다.",
@@ -43,7 +47,9 @@
     "updateFailed": "권한 변경 중 오류가 발생했습니다.",
     "removeFailed": "멤버 제거 중 오류가 발생했습니다.",
     "banFailed": "ban 처리 중 오류가 발생했습니다.",
-    "unbanFailed": "unban 처리 중 오류가 발생했습니다."
+    "unbanFailed": "unban 처리 중 오류가 발생했습니다.",
+    "listFailed": "멤버 목록을 불러오는 데 실패했습니다.",
+    "orgListFailed": "조직 멤버를 불러오는 데 실패했습니다."
   },
   "thread": {
     "notFound": "스레드를 찾을 수 없거나 권한이 없습니다.",
@@ -53,11 +59,33 @@
     "messageFailed": "메시지 전송에 실패했습니다.",
     "closeFailed": "스레드 상태 변경 중 오류가 발생했습니다.",
     "addTagsFailed": "태그 추가 중 오류가 발생했습니다.",
-    "dismissFailed": "확인 처리 중 오류가 발생했습니다."
+    "dismissFailed": "확인 처리 중 오류가 발생했습니다.",
+    "listFailed": "스레드 목록을 불러오는 데 실패했습니다.",
+    "loadFailed": "스레드 정보를 불러오는 데 실패했습니다."
+  },
+  "event": {
+    "notFound": "이벤트를 찾을 수 없습니다.",
+    "listFailed": "이벤트 목록을 불러오는 데 실패했습니다.",
+    "loadFailed": "이벤트 정보를 불러오는 데 실패했습니다."
+  },
+  "usage": {
+    "loadFailed": "사용량 정보를 불러오는 데 실패했습니다."
+  },
+  "organization": {
+    "listFailed": "조직 목록을 불러오는 데 실패했습니다."
+  },
+  "dashboard": {
+    "loadFailed": "대시보드 정보를 불러오는 데 실패했습니다."
+  },
+  "inbox": {
+    "loadFailed": "수신함을 불러오는 데 실패했습니다.",
+    "governanceLoadFailed": "거버넌스 알림을 불러오는 데 실패했습니다."
   },
   "wake": {
     "budgetFailed": "Wake 예산 저장에 실패했습니다.",
-    "broadcastCapFailed": "브로드캐스트 캡 저장에 실패했습니다."
+    "broadcastCapFailed": "브로드캐스트 캡 저장에 실패했습니다.",
+    "budgetLoadFailed": "Wake 예산을 불러오지 못했습니다.",
+    "auditLoadFailed": "감사 기록을 불러오지 못했습니다."
   },
   "admin": {
     "superuserOnly": "이 설정은 인스턴스 최고 관리자만 변경할 수 있습니다.",

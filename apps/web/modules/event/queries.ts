@@ -3,6 +3,7 @@ import type { ApiResultWithItem, ApiResultWithItems } from "@relayroom/shared"
 import { db } from "@/modules/drizzle/db"
 import { events, agents } from "@relayroom/db/schema"
 import { better_auth_user } from "@relayroom/db/auth-schema"
+import { getErrorTranslations } from "@/lib/action-i18n"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -80,6 +81,7 @@ export async function listEvents(
   projectId: string,
   filter: EventFilter = {},
 ): Promise<ApiResultWithItems<EventRow>> {
+  const t = await getErrorTranslations()
   try {
     const page = Math.max(1, filter.page ?? 1)
     const limit = Math.max(1, Math.min(100, filter.limit ?? 50))
@@ -145,7 +147,7 @@ export async function listEvents(
     return { result: true, totalCount: Number(totalCount), items }
   } catch (err) {
     console.error("[listEvents]", err)
-    return { result: false, message: "이벤트 목록을 불러오는 데 실패했습니다." }
+    return { result: false, message: t("event.listFailed") }
   }
 }
 
@@ -155,6 +157,7 @@ export async function getEvent(
   projectId: string,
   eventId: string,
 ): Promise<ApiResultWithItem<EventDetail>> {
+  const t = await getErrorTranslations()
   try {
     // Fetch the event, scoped to projectId for security
     const [event] = await db
@@ -163,7 +166,7 @@ export async function getEvent(
       .where(and(eq(events.id, eventId), eq(events.projectId, projectId)))
       .limit(1)
 
-    if (!event) return { result: false, message: "이벤트를 찾을 수 없습니다." }
+    if (!event) return { result: false, message: t("event.notFound") }
 
     // Fetch emitting agent info (part, role, owner)
     let agentPart: string | null = null
@@ -264,6 +267,6 @@ export async function getEvent(
     }
   } catch (err) {
     console.error("[getEvent]", err)
-    return { result: false, message: "이벤트 정보를 불러오는 데 실패했습니다." }
+    return { result: false, message: t("event.loadFailed") }
   }
 }

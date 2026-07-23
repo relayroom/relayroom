@@ -9,6 +9,7 @@ import { notBannedFromProject } from "@/lib/auth-session"
 import { projects, agents } from "@relayroom/db/schema"
 import { better_auth_member } from "@relayroom/db/auth-schema"
 import type { OrgCard } from "@/modules/organization/queries"
+import { getErrorTranslations } from "@/lib/action-i18n"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -48,6 +49,7 @@ export async function getDashboardSummary(
   orgId: string,
   userId: string,
 ): Promise<ApiResultWithItem<DashboardSummary>> {
+  const t = await getErrorTranslations()
   try {
     // ── Project count + recent 4 ──────────────────────────────────────────
     const agentCountSq = db
@@ -159,6 +161,6 @@ export async function getDashboardSummary(
     return { result: true, item: summary }
   } catch (err) {
     console.error("[getDashboardSummary]", err)
-    return { result: false, message: "대시보드 정보를 불러오는 데 실패했습니다." }
+    return { result: false, message: t("dashboard.loadFailed") }
   }
 }

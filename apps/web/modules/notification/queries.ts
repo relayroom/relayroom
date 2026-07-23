@@ -6,6 +6,7 @@ import { db } from "@/modules/drizzle/db"
 import { notBannedFromProject } from "@/lib/auth-session"
 import { governanceAlerts, projects, projectAccess, threads, agents } from "@relayroom/db/schema"
 import { better_auth_member, better_auth_user } from "@relayroom/db/auth-schema"
+import { getErrorTranslations } from "@/lib/action-i18n"
 
 /**
  * Number of open threads across an org's projects.
@@ -131,6 +132,7 @@ export async function getOpenThreadsForOrg(
   orgId: string,
   viewerUserId?: string,
 ): Promise<ApiResultWithItems<InboxThread>> {
+  const t = await getErrorTranslations()
   try {
     const rows = await selectInboxThreads(
       and(
@@ -142,7 +144,7 @@ export async function getOpenThreadsForOrg(
     return { result: true, totalCount: rows.length, items: rows }
   } catch (err) {
     console.error("[getOpenThreadsForOrg]", err)
-    return { result: false, message: "수신함을 불러오는 데 실패했습니다." }
+    return { result: false, message: t("inbox.loadFailed") }
   }
 }
 
@@ -234,6 +236,7 @@ export async function getGovernanceAlertsForManager(
   orgId: string,
   userId: string,
 ): Promise<ApiResultWithItems<GovernanceAlertRow>> {
+  const t = await getErrorTranslations()
   try {
     const ids = await getManagedProjectIds(orgId, userId)
     if (ids.length === 0) return { result: true, totalCount: 0, items: [] }
@@ -275,7 +278,7 @@ export async function getGovernanceAlertsForManager(
     return { result: true, totalCount: items.length, items }
   } catch (err) {
     console.error("[getGovernanceAlertsForManager]", err)
-    return { result: false, message: "거버넌스 알림을 불러오는 데 실패했습니다." }
+    return { result: false, message: t("inbox.governanceLoadFailed") }
   }
 }
 
@@ -288,6 +291,7 @@ export async function getAttentionThreadsForOrg(
   orgId: string,
   viewerUserId?: string,
 ): Promise<ApiResultWithItems<InboxThread>> {
+  const t = await getErrorTranslations()
   try {
     const rows = await selectInboxThreads(
       and(
@@ -300,6 +304,6 @@ export async function getAttentionThreadsForOrg(
     return { result: true, totalCount: rows.length, items: rows }
   } catch (err) {
     console.error("[getAttentionThreadsForOrg]", err)
-    return { result: false, message: "수신함을 불러오는 데 실패했습니다." }
+    return { result: false, message: t("inbox.loadFailed") }
   }
 }

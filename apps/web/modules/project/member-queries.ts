@@ -3,6 +3,7 @@ import type { ApiResultWithItems } from "@relayroom/shared"
 import { db } from "@/modules/drizzle/db"
 import { projects, projectAccess } from "@relayroom/db/schema"
 import { better_auth_member, better_auth_user } from "@relayroom/db/auth-schema"
+import { getErrorTranslations } from "@/lib/action-i18n"
 
 export interface ConnectableProject {
   id: string
@@ -64,6 +65,7 @@ export interface OrgMemberOption {
 export async function getProjectMembers(
   projectId: string,
 ): Promise<ApiResultWithItems<ProjectMember>> {
+  const t = await getErrorTranslations()
   try {
     const [createdBy] = await db
       .select({ createdByUserId: projects.createdByUserId })
@@ -99,7 +101,7 @@ export async function getProjectMembers(
     return { result: true, totalCount: items.length, items }
   } catch (err) {
     console.error("[getProjectMembers]", err)
-    return { result: false, message: "멤버 목록을 불러오는 데 실패했습니다." }
+    return { result: false, message: t("member.listFailed") }
   }
 }
 
@@ -141,6 +143,7 @@ export async function getAddableOrgMembers(
   orgId: string,
   projectId: string,
 ): Promise<ApiResultWithItems<OrgMemberOption>> {
+  const t = await getErrorTranslations()
   try {
     const existing = db
       .select({ userId: projectAccess.userId })
@@ -175,6 +178,6 @@ export async function getAddableOrgMembers(
     return { result: true, totalCount: items.length, items }
   } catch (err) {
     console.error("[getAddableOrgMembers]", err)
-    return { result: false, message: "조직 멤버를 불러오는 데 실패했습니다." }
+    return { result: false, message: t("member.orgListFailed") }
   }
 }

@@ -19,7 +19,9 @@
     "connectionNotFound": "This connection does not exist or you do not have access to it.",
     "disconnectFailed": "We could not revoke the connection.",
     "ownedByAnother": "This agent part is already owned by another user. Ask its owner to transfer it.",
-    "manageDenied": "Only this agent's owner, a project owner, or an org manager can do this."
+    "manageDenied": "Only this agent's owner, a project owner, or an org manager can do this.",
+    "listFailed": "We could not load the agents.",
+    "loadFailed": "We could not load this agent."
   },
   "project": {
     "notFound": "This project does not exist or you do not have access to it.",
@@ -30,7 +32,9 @@
     "updateFailed": "We could not update the project.",
     "archiveFailed": "We could not archive the project.",
     "relayroomMdFailed": "We could not save RELAYROOM.md.",
-    "regenerateCodeFailed": "We could not regenerate the connect code."
+    "regenerateCodeFailed": "We could not regenerate the connect code.",
+    "listFailed": "We could not load the projects.",
+    "loadFailed": "We could not load this project."
   },
   "member": {
     "manageDenied": "You do not have permission to manage this project's members.",
@@ -43,7 +47,9 @@
     "updateFailed": "We could not change the member's access.",
     "removeFailed": "We could not remove the member.",
     "banFailed": "We could not complete the ban.",
-    "unbanFailed": "We could not lift the ban."
+    "unbanFailed": "We could not lift the ban.",
+    "listFailed": "We could not load the members.",
+    "orgListFailed": "We could not load the organization's members."
   },
   "thread": {
     "notFound": "This thread does not exist or you do not have access to it.",
@@ -53,11 +59,33 @@
     "messageFailed": "Your message could not be sent.",
     "closeFailed": "We could not change the thread's status.",
     "addTagsFailed": "We could not add the tags.",
-    "dismissFailed": "We could not clear the attention flag."
+    "dismissFailed": "We could not clear the attention flag.",
+    "listFailed": "We could not load the threads.",
+    "loadFailed": "We could not load this thread."
+  },
+  "event": {
+    "notFound": "This event does not exist or you do not have access to it.",
+    "listFailed": "We could not load the events.",
+    "loadFailed": "We could not load this event."
+  },
+  "usage": {
+    "loadFailed": "We could not load the usage data."
+  },
+  "organization": {
+    "listFailed": "We could not load the organizations."
+  },
+  "dashboard": {
+    "loadFailed": "We could not load the dashboard."
+  },
+  "inbox": {
+    "loadFailed": "We could not load the inbox.",
+    "governanceLoadFailed": "We could not load the governance alerts."
   },
   "wake": {
     "budgetFailed": "We could not save the wake budget.",
-    "broadcastCapFailed": "We could not save the broadcast cap."
+    "broadcastCapFailed": "We could not save the broadcast cap.",
+    "budgetLoadFailed": "We could not load the wake budget.",
+    "auditLoadFailed": "We could not load the audit records."
   },
   "admin": {
     "superuserOnly": "Only the instance superuser can change this setting.",

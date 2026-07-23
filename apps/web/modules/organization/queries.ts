@@ -2,6 +2,7 @@ import { count, eq, inArray } from "drizzle-orm"
 import type { ApiResultWithItems } from "@relayroom/shared"
 import { db } from "@/modules/drizzle/db"
 import { better_auth_member, better_auth_organization } from "@relayroom/db/auth-schema"
+import { getErrorTranslations } from "@/lib/action-i18n"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -24,6 +25,7 @@ export interface OrgCard {
 export async function listMyOrganizations(
   userId: string,
 ): Promise<ApiResultWithItems<OrgCard>> {
+  const t = await getErrorTranslations()
   try {
     // All memberships for this user
     const memberships = await db
@@ -91,6 +93,6 @@ export async function listMyOrganizations(
     return { result: true, totalCount: items.length, items }
   } catch (err) {
     console.error("[listMyOrganizations]", err)
-    return { result: false, message: "조직 목록을 불러오는 데 실패했습니다." }
+    return { result: false, message: t("organization.listFailed") }
   }
 }
