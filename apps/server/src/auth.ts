@@ -10,7 +10,7 @@
  * is present. Auth enforcement on /mcp is handled directly in routes/mcp.ts
  * (unconditional, independent of any env flag).
  */
-import { and, eq } from 'drizzle-orm'
+import { and, asc, eq } from 'drizzle-orm'
 import type { Db } from '@relayroom/db'
 import { agentConnections, agents, projects } from '@relayroom/db'
 import type { Context } from 'hono'
@@ -105,14 +105,30 @@ async function lookupToken(db: Db, token: string): Promise<TokenRow | null> {
 /**
  * Validate a bearer token and resolve scope chain.
  *
+ * `requestedPart` is the part the CALLER says it is. A token is a (user x project)
+ * credential, not a part credential - it can hold agent_connection rows for several
+ * parts at once, which happens routinely when an agent is re-pointed at a new part
+ * and keeps its token, because nothing marks the old connection disconnected. This
+ * used to take whichever row the database returned first, so the caller's own part
+ * was a coin flip, and a caller that named its part was then refused for not being
+ * the part that got picked.
+ *
+ * So the part is looked up, not inferred: name it and we find that connection.
+ * Same rule the MCP runtime endpoints follow.
+ *
  * Returns null if:
  *   - Token not found (deleted = revoked)
  *   - Token expired (access_token_expires_at < now())
  *   - No active agent_connection references this token
+ *   - `requestedPart` was given and this token has no connection for it
+ *   - No part was given and the token has several connections (genuinely ambiguous)
+ * A null context is not itself a rejection: the SSE route falls back to its
+ * connect-code branch, exactly as it does for a caller holding no token.
  */
 async function validateToken(
   db: Db,
   token: string,
+  requestedPart?: string | null,
 ): Promise<AgentTokenContext | null> {
   try {
     // Step 1: Look up token in oauth table via raw SQL
@@ -126,7 +142,10 @@ async function validateToken(
 
     // Step 3: Resolve agent_connection -> agent -> project scope
     // agentConnections.accessTokenId stores the token's 'id' (not the raw token).
-    const [row] = await db
+    // No LIMIT: we need to see every connection this token holds to pick the right
+    // one. Ordered by part so the single-connection and ambiguous cases below are at
+    // least deterministic rather than dependent on the query plan.
+    const rows = await db
       .select({
         connectionId: agentConnections.id,
         agentId: agents.id,
@@ -144,8 +163,15 @@ async function validateToken(
           eq(agentConnections.status, 'connected'),
         ),
       )
-      .limit(1)
+      .orderBy(asc(agents.part))
 
+    if (rows.length === 0) return null
+
+    // Caller named its part: that is the connection, or none.
+    // Caller named none: only safe when there is exactly one to infer from.
+    const row = requestedPart
+      ? rows.find(r => r.agentPart === requestedPart)
+      : rows.length === 1 ? rows[0] : undefined
     if (!row) return null
 
     // Token project scope (BUG-0007). `scopes` was already selected here and still
@@ -200,10 +226,14 @@ export function getAgentTokenContext(c: Context): AgentTokenContext | undefined 
  * If a token is present and valid, attaches `agentTokenCtx` and touches
  * last_seen_at. If absent or invalid, does nothing (no error).
  */
-export async function tryAttachTokenContext(db: Db, c: Context): Promise<void> {
+export async function tryAttachTokenContext(
+  db: Db,
+  c: Context,
+  requestedPart?: string | null,
+): Promise<void> {
   const token = extractBearer(c)
   if (!token) return
-  const ctx = await validateToken(db, token)
+  const ctx = await validateToken(db, token, requestedPart)
   if (!ctx) return
   c.set('agentTokenCtx', ctx)
   void touchConnection(db, ctx.connectionId)
