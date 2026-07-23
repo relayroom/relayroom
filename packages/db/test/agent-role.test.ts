@@ -14,7 +14,9 @@ import { getOrCreateProject, getOrCreateAgent, touchAgent } from '../src/bootstr
 import { agents } from '../src/schema'
 import { better_auth_user } from '../src/auth-schema'
 
-const db = createDb('postgres://hub:hub@localhost:48802/hub_test')
+import { TEST_DATABASE_URL } from '../../../test/db-url'
+
+const db = createDb(TEST_DATABASE_URL)
 afterAll(() => db.$client.end())
 
 // owner_user_id has an FK to better_auth_user, so owners must be seeded first.

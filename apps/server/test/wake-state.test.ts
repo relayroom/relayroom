@@ -4,7 +4,7 @@ import { createDb } from '@relayroom/db'
 import { agents, projects, wakeIntents } from '@relayroom/db'
 import { ensurePending, expireStale, markDelivered, onActivation } from '../src/wake/state'
 
-const TEST_DATABASE_URL = 'postgres://hub:hub@localhost:48802/hub_test'
+import { TEST_DATABASE_URL } from '../../../test/db-url'
 const db = createDb(TEST_DATABASE_URL)
 
 afterAll(async () => {

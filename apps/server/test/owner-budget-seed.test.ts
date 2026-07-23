@@ -4,7 +4,7 @@ import { createDb, type Db } from '@relayroom/db'
 import { authSchema, ownerWakeBudgets } from '@relayroom/db'
 import { seedOwnerWakeBudget } from '../src/budget/seed-owner-budget'
 
-const TEST_DATABASE_URL = 'postgres://hub:hub@localhost:48802/hub_test'
+import { TEST_DATABASE_URL } from '../../../test/db-url'
 const db: Db = createDb(TEST_DATABASE_URL)
 
 const USER = 'user_seed_11'
