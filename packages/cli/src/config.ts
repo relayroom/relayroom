@@ -31,6 +31,11 @@ export interface RelayRoomConfig {
   /** Bearer token for MCP auth, so rr.sh can re-run `mcp add` after a reset. Local
    *  + gitignored (same secret the CLI already stores in .claude.json etc.). */
   token?: string
+  /** Whether the turn-end usage hook may include the turn's content excerpts
+   *  (the prompt's first 80 chars + the answer's last 500) alongside the token
+   *  counts. Absent/true keeps the dashboard event showing the exchange; false
+   *  reports counts only. Read by runtime/usage-report.mjs. */
+  usageContent?: boolean
   /** Wake delivery path for the primary agent. "channel" => Claude Code Channels
    *  (the pager skips send-keys; the channel server pushes notifications). "headless"
    *  => the pager spawns the part's CLI (codex/agy) once per wake instead of typing

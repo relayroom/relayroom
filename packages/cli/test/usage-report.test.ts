@@ -120,6 +120,51 @@ describe("usage reporter: identity resolution", () => {
   })
 })
 
+describe("usage reporter: content excerpts", () => {
+  let dir: string
+  let collector: ReturnType<typeof usageCollector>
+  let server: string
+
+  const writeConfig = (extra: Record<string, unknown> = {}) =>
+    writeFileSync(
+      join(dir, ".relayroom", "config.json"),
+      JSON.stringify({ code: "c", part: "core", server, ...extra }),
+    )
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), "relayroom-usage-content-"))
+    collector = usageCollector()
+    server = `http://127.0.0.1:${await collector.port}`
+    mkdirSync(join(dir, ".relayroom"), { recursive: true })
+    writeConfig()
+    writeFileSync(join(dir, "transcript.jsonl"), TRANSCRIPT)
+  })
+
+  afterEach(() => {
+    collector.server.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it("includes the prompt/answer excerpts by default (the dashboard event shows the exchange)", async () => {
+    await runReporter(["--agent", "claude"], { transcript_path: join(dir, "transcript.jsonl") }, dir)
+    expect(collector.received()?.json.detail).toEqual({ title: "hi", summary: "hello" })
+  })
+
+  it("drops them when the worktree config opts out, keeping the token counts", async () => {
+    writeConfig({ usageContent: false })
+    await runReporter(["--agent", "claude"], { transcript_path: join(dir, "transcript.jsonl") }, dir)
+    const got = collector.received()
+    expect(got?.json.detail).toBeUndefined()
+    expect(got?.json.usage.input_tokens).toBe(10)
+  })
+
+  it("keeps reporting when the config opts back in", async () => {
+    writeConfig({ usageContent: true })
+    await runReporter(["--agent", "claude"], { transcript_path: join(dir, "transcript.jsonl") }, dir)
+    expect(collector.received()?.json.detail).toEqual({ title: "hi", summary: "hello" })
+  })
+})
+
 describe("usage hook command", () => {
   it("never writes the connect code into the agent settings file", () => {
     const cmd = hookCommand({
