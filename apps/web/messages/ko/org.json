@@ -82,6 +82,9 @@
     "copyError": "클립보드 복사에 실패했습니다",
     "cancelSuccess": "초대가 취소되었습니다",
     "cancelError": "초대 취소에 실패했습니다",
-    "empty": "대기 중인 초대가 없습니다."
+    "empty": "대기 중인 초대가 없습니다.",
+    "cancelConfirmTitle": "이 초대를 취소할까요?",
+    "cancelConfirmBody": "초대 링크가 즉시 무효가 됩니다. 링크를 들고 있는 사람은 더 이상 참여할 수 없고, 다시 초대하려면 새 초대를 보내야 합니다.",
+    "cancelling": "초대를 취소하는 중..."
   }
 }
