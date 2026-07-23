@@ -15,6 +15,7 @@ export function ProjectTabBar({ slug }: Props) {
     { label: t("tabs.overview"), href: base, exact: true },
     { label: t("tabs.threads"), href: `${base}/threads` },
     { label: t("tabs.events"), href: `${base}/events` },
+    { label: t("tabs.knowledge"), href: `${base}/knowledge` },
     { label: t("tabs.agents"), href: `${base}/agents` },
     { label: t("tabs.members"), href: `${base}/members` },
     { label: t("tabs.usage"), href: `${base}/usage` },
