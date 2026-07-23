@@ -36,6 +36,9 @@ import { buildText } from "./pager-text.mjs"
 // Headless delivery (delivery=headless, codex/agy only): spawn the part's CLI per wake
 // instead of tmux send-keys. Pure spec/prompt builders live in a testable sibling module.
 import { buildHeadlessPrompt, headlessSpawnSpec, makeWakeDedup } from "./pager-headless.mjs"
+// The wake protocol (lease claim, fencing, SSE, catch-up) is shared with the Claude
+// Channels server; only the delivery below is send-keys / headless specific.
+import { createWakeClient, backoff } from "./wake-client.mjs"
 
 // ── Args ────────────────────────────────────────────────────────────────────
 function arg(name, fallback) {
@@ -140,11 +143,22 @@ let leaseHeld = false       // last lease state seen from heartbeat/claim
 // races that ambient tracking caused (a heartbeat/SSE update could redirect a
 // report to the wrong wake mid-defer).
 
-function authHeaders(extra) {
-  const h = { ...(extra ?? {}) }
-  if (TOKEN) h.authorization = `Bearer ${TOKEN}`
-  return h
-}
+// Cap every server fetch: a hung claim/delivered call inside flush() would otherwise
+// pin the single-flight `flushing` flag true forever and stall all later nudges.
+// Declared here rather than with the tmux timeouts below because the wake client
+// reads it at module init, and a `const` read before its declaration is a crash.
+const FETCH_TIMEOUT_MS = 8000
+
+const wake = createWakeClient({
+  server: SERVER,
+  code: CODE,
+  project: PROJECT,
+  part: PART,
+  holder: HOLDER,
+  token: TOKEN,
+  fetchTimeoutMs: FETCH_TIMEOUT_MS,
+  log,
+})
 
 let activeHeadlessChild = null
 
@@ -166,7 +180,7 @@ const releaseLease = () => {
   if (!CODE) return
   fetch(`${SERVER}/mcp/${encodeURIComponent(CODE)}/heartbeat`, {
     method: "POST",
-    headers: authHeaders({ "content-type": "application/json" }),
+    headers: wake.authHeaders({ "content-type": "application/json" }),
     body: JSON.stringify({ part: PART, holder: HOLDER, release: true }),
   }).catch(() => {})
 }
@@ -174,9 +188,6 @@ for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => { killHeadlessChi
 
 // ── tmux nudge ──────────────────────────────────────────────────────────────
 const TMUX_TIMEOUT_MS = 5000 // kill a hung tmux child so the defer loop can't wait forever
-// Cap every server fetch: a hung claim/delivered call inside flush() would otherwise
-// pin the single-flight `flushing` flag true forever and stall all later nudges.
-const FETCH_TIMEOUT_MS = 8000
 
 function tmux(args) {
   return new Promise((resolve, reject) => {
@@ -360,39 +371,6 @@ function spawnHeadless(batch, wakeId) {
   })
 }
 
-// Claim the server-side lease for this part's active wake. Returns the response
-// JSON ({ ok, held?, holder?, wakeId?, noWake? }) or null on transport failure.
-async function claimLease() {
-  if (!CODE) return null
-  try {
-    const res = await fetch(`${SERVER}/mcp/${encodeURIComponent(CODE)}/wake/claim`, {
-      method: "POST",
-      headers: authHeaders({ "content-type": "application/json" }),
-      body: JSON.stringify({ part: PART, holder: HOLDER }),
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    })
-    if (!res.ok) return null
-    return await res.json()
-  } catch { return null }
-}
-
-// Fencing: report that we nudged with wakeId. The server ignores stale wakeIds.
-async function reportDelivered(wakeId) {
-  if (!CODE || !wakeId) return
-  try {
-    const res = await fetch(`${SERVER}/mcp/${encodeURIComponent(CODE)}/wake/delivered`, {
-      method: "POST",
-      headers: authHeaders({ "content-type": "application/json" }),
-      body: JSON.stringify({ part: PART, holder: HOLDER, wakeId }),
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    })
-    if (res.ok) {
-      const d = await res.json().catch(() => ({}))
-      if (d.stale) log(`delivered report stale (wake ${String(wakeId).slice(0, 8)} superseded) — ok`)
-    }
-  } catch { /* best-effort */ }
-}
-
 // ── Debounced nudge ─────────────────────────────────────────────────────────
 let pending = [] // collected events in the current burst
 let timer = null
@@ -417,34 +395,10 @@ function enqueue(evt) {
 // outcomes (noWake / lease held by another pager) are dropped by the caller instead.
 function requeue(batch, reason) {
   pending.unshift(...batch)
-  const delay = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** Math.min(retries, 6))
+  const delay = backoff(retries, { baseMs: RETRY_BASE_MS, capMs: RETRY_MAX_MS, maxExponent: 6 })
   retries++
   if (!timer) timer = setTimeout(flush, delay)
   log(`nudge deferred: ${reason} (retry #${retries} in ${delay}ms)`)
-}
-
-// Interpret a claimLease() result. Returns:
-//   { go: false, reason }   -> do not nudge (no wake / held by other / lost / unreachable)
-//   { go: true, wakeId }    -> we hold the lease; nudge for this wakeId
-// Also syncs the global leaseHeld so heartbeats and re-claims agree.
-// FAIL-CLOSED: a null lease means the claim endpoint was unreachable, so we have NOT
-// confirmed we hold the lease. Skip rather than nudge on a guess - the server's
-// eligibility sweep re-issues the wake once the server is reachable again, so no
-// wake is lost; this only avoids a stale/unauthorized nudge during an outage.
-function leaseDecision(lease) {
-  // TRANSIENT: server unreachable. flush() re-queues on transient so the wake isn't
-  // dropped during an outage (the channel server does the same). Without this flag,
-  // requeue() never fires and the backoff retry path is dead code.
-  if (!lease) return { go: false, reason: "claim unreachable", transient: true }
-  if (lease.noWake) return { go: false, reason: "no active wake" }
-  if (lease.held && lease.holder !== HOLDER) return { go: false, reason: `lease held by ${lease.holder}` }
-  leaseHeld = !!lease.ok
-  if (!lease.ok) return { go: false, reason: "lease not held" }
-  // The server returns wakeId on EVERY ok:true claim (wake-lease.ts). A missing one
-  // means a server-side inconsistency: fail-closed rather than report a guessed
-  // (possibly stale) token - the eligibility sweep re-issues, so no wake is lost.
-  if (!lease.wakeId) return { go: false, reason: "claim ok but no wakeId" }
-  return { go: true, wakeId: lease.wakeId }
 }
 
 // buildText now lives in pager-text.mjs (imported above) so the keystroke sanitizer is
@@ -466,7 +420,8 @@ async function flush() {
 
       // 1) Claim the per-part lease: the server decides who nudges. (We re-claim
       //    after the defer below, so the wakeId we actually use is captured THERE.)
-      const first = leaseDecision(await claimLease())
+      const first = wake.leaseDecision(await wake.claimLease())
+      if (typeof first.held === "boolean") leaseHeld = first.held
       if (!first.go) {
         // Transient (server unreachable) -> re-queue+backoff; definitive -> drop.
         if (first.transient) { requeue(batch, first.reason); break }
@@ -494,7 +449,7 @@ async function flush() {
           retries = 0
           headlessDedup.mark(first.wakeId)
           log(`headless delivered via ${AGENT_CLI}: ${batch.length} message(s)`)
-          await reportDelivered(first.wakeId)
+          await wake.reportDelivered(first.wakeId)
         } else {
           requeue(batch, "headless spawn failed"); break
         }
@@ -515,7 +470,8 @@ async function flush() {
       //    announce is always the CURRENT one - its pending messages still need
       //    reading even if it rolled over while we waited. wakeId from the re-claim
       //    is used for both the text tag and reportDelivered, so they always match.
-      const again = leaseDecision(await claimLease())
+      const again = wake.leaseDecision(await wake.claimLease())
+      if (typeof again.held === "boolean") leaseHeld = again.held
       if (!again.go) {
         if (again.transient) { requeue(batch, again.reason); break }
         retries = 0; log(`skip nudge after defer: ${again.reason}`); continue
@@ -531,7 +487,7 @@ async function flush() {
       if (ok) {
         retries = 0
         log(`nudged ${TARGET}: ${batch.length} msg`)
-        await reportDelivered(wakeId)
+        await wake.reportDelivered(wakeId)
       } else {
         // tmux send failed after its own retries -> transient; re-queue with backoff.
         requeue(batch, "send-keys failed"); break
@@ -539,92 +495,6 @@ async function flush() {
     }
   } finally {
     flushing = false
-  }
-}
-
-// ── SSE subscription (manual parse over fetch stream) ───────────────────────
-function sseUrl() {
-  const u = new URL(`${SERVER}/api/sse`)
-  if (CODE) u.searchParams.set("code", CODE)
-  else u.searchParams.set("project", PROJECT)
-  u.searchParams.set("part", PART)
-  return u.toString()
-}
-
-// Idle watchdog: the server sends a keepalive ping every ~15s. If NOTHING arrives
-// for this long the connection is half-open (silently dead); abort so the reconnect
-// loop re-establishes it instead of blocking forever in reader.read().
-const SSE_IDLE_MS = 45_000
-
-async function subscribe() {
-  const headers = { accept: "text/event-stream" }
-  if (TOKEN) headers.authorization = `Bearer ${TOKEN}`
-
-  const ctrl = new AbortController()
-  const res = await fetch(sseUrl(), { headers, signal: ctrl.signal })
-  if (!res.ok || !res.body) {
-    throw new Error(`SSE ${res.status} ${res.statusText}`)
-  }
-  log(`connected → ${sseUrl()}`)
-  // The live stream only carries messages that arrive while we're connected.
-  // Pull anything we missed during the gap before this connection.
-  void catchUp()
-
-  // Arm/re-arm the idle watchdog on every byte; fire => abort the stream.
-  let idle = setTimeout(() => ctrl.abort(), SSE_IDLE_MS)
-  const bump = () => { clearTimeout(idle); idle = setTimeout(() => ctrl.abort(), SSE_IDLE_MS) }
-
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder()
-  let buf = ""
-  let eventName = "message"
-  let dataLines = [] // per SSE spec, an event may span MULTIPLE data: lines, joined by \n
-
-  // Dispatch one fully-accumulated event (fired on the blank line that ends it).
-  const dispatchEvent = () => {
-    if (dataLines.length && eventName === "message") {
-      try {
-        const evt = JSON.parse(dataLines.join("\n"))
-        // The bus 'message' stream also carries presence events (kind:'pager',
-        // emitted by every heartbeat) which the web uses for live status. Those have
-        // no subject/sender; if we treated them as messages, each heartbeat would
-        // enqueue an empty "message" and, during an active wake, fire an extra nudge
-        // -> a self-inflicted nudge storm. Only react to real messages.
-        if (evt.part === PART && evt.kind === "message") {
-          log(`event: "${evt.subject ?? ""}" from ${evt.fromPart ?? "?"}`)
-          enqueue(evt)
-        }
-      } catch {
-        // non-JSON data (e.g. ping payloads) — ignore
-      }
-    }
-    eventName = "message"
-    dataLines = []
-  }
-
-  try {
-    while (true) {
-      const { value, done } = await reader.read()
-      if (done) break
-      bump() // got bytes -> connection is alive, re-arm the idle watchdog
-      buf += decoder.decode(value, { stream: true })
-
-      let idx
-      while ((idx = buf.indexOf("\n")) !== -1) {
-        const line = buf.slice(0, idx).replace(/\r$/, "")
-        buf = buf.slice(idx + 1)
-
-        if (line === "") { dispatchEvent(); continue } // blank line ends the event
-        if (line.startsWith(":")) continue // comment / keepalive ping
-        if (line.startsWith("event:")) { eventName = line.slice(6).trim(); continue }
-        if (line.startsWith("data:")) {
-          // Strip ONE leading space after the colon (SSE spec), keep the rest verbatim.
-          dataLines.push(line.slice(5).replace(/^ /, ""))
-        }
-      }
-    }
-  } finally {
-    clearTimeout(idle) // stop the watchdog whether we ended cleanly or via abort
   }
 }
 
@@ -637,7 +507,7 @@ async function heartbeat() {
   try {
     const res = await fetch(`${SERVER}/mcp/${encodeURIComponent(CODE)}/heartbeat`, {
       method: "POST",
-      headers: authHeaders({ "content-type": "application/json" }),
+      headers: wake.authHeaders({ "content-type": "application/json" }),
       body: JSON.stringify({ part: PART, holder: HOLDER, host: hostname(), relayroomMd: existsSync(join(DIR, "RELAYROOM.md")), version: VERSION }),
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     })
@@ -723,49 +593,6 @@ function setupStatusBar() {
   set("set-option", "-t", TARGET, "status-interval", "5")
 }
 
-// ── Reconnect catch-up ───────────────────────────────────────────────────────
-// On every successful (re)connect, ask the server for a SINGLE coalesced wake
-// decision for this part (07). The server decides — given the active wake state +
-// unread + budget — whether to wake this idle part ONCE. This replaces the old
-// per-unread-item nudging: the messages stay in the inbox; catch-up only decides
-// whether to wake the part a single time. Connect-code only; best-effort.
-// Coalesce repeated catch-ups for the SAME wake. SSE can reconnect in bursts, and
-// each reconnect runs catchUp(); without this an unstable connection re-nudges the
-// same wakeId over and over. The server settles the wake once the agent reads/acks
-// (then pending-wake returns wake:false), so this only smooths the pre-settle window.
-let lastCatchupWakeId = null
-let lastCatchupAt = 0
-const CATCHUP_COOLDOWN_MS = 30_000
-
-async function catchUp() {
-  if (!CODE) return
-  try {
-    const u = new URL(`${SERVER}/mcp/${encodeURIComponent(CODE)}/pending-wake`)
-    u.searchParams.set("part", PART)
-    u.searchParams.set("holder", HOLDER)
-    // Timeout: every reconnect runs catchUp(); without a cap a hung request would
-    // accumulate and never resolve on a half-open connection.
-    const res = await fetch(u, { headers: authHeaders(), signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) })
-    if (!res.ok) return
-    const d = await res.json()
-    if (!d.wake) {
-      if (d.suppressed) log("catch-up: budget-suppressed, sweep will recover")
-      return
-    }
-    const nowTs = Date.now()
-    if (d.wakeId === lastCatchupWakeId && nowTs - lastCatchupAt < CATCHUP_COOLDOWN_MS) {
-      return // same wake, just re-delivered on a reconnect - don't re-nudge yet
-    }
-    lastCatchupWakeId = d.wakeId
-    lastCatchupAt = nowTs
-    // Single coalesced wake — never per-unread-item.
-    enqueue({ subject: d.subject, fromPart: d.fromPart, messageId: d.wakeId, count: d.count })
-    log(`catch-up: 1 coalesced wake (${d.count ?? "?"} unread)`)
-  } catch (err) {
-    log("catch-up failed:", err.message)
-  }
-}
-
 async function main() {
   // Headless delivery has no tmux pane, so skip status-bar wiring; heartbeat still runs
   // (it is the presence signal for a headless part, and skips its own tmux paint below).
@@ -785,7 +612,9 @@ async function main() {
   }
   for (;;) {
     try {
-      await subscribe()
+      // The live stream only carries what arrives while connected, so catch-up runs on
+      // every (re)connect to pick up whatever landed during the gap.
+      await wake.subscribe({ onMessage: enqueue, onConnect: () => void wake.catchUp({ enqueue }) })
       log("stream ended; reconnecting in 2s")
     } catch (err) {
       log("stream error:", err.message, "— retry in 2s")
