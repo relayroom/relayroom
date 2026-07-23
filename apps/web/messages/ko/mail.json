@@ -1,0 +1,9 @@
+{
+  "invitation": {
+    "subject": "[RelayRoom] {org} 팀에 초대되었습니다",
+    "greeting": "안녕하세요,",
+    "intro": "{inviter}님이 {org} 팀에 초대했습니다.",
+    "cta": "아래 링크를 클릭해 계정을 만들고 팀에 참여하세요:",
+    "expiry": "이 초대는 48시간 후에 만료됩니다."
+  }
+}

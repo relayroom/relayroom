@@ -1,0 +1,9 @@
+{
+  "invitation": {
+    "subject": "[RelayRoom] You have been invited to {org}",
+    "greeting": "Hello,",
+    "intro": "{inviter} invited you to the {org} team.",
+    "cta": "Click the link below to create your account and join the team:",
+    "expiry": "This invitation expires in 48 hours."
+  }
+}

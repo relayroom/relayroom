@@ -5,6 +5,7 @@ import { admin, organization, mcp } from "better-auth/plugins"
 import * as authSchema from "@relayroom/db/auth-schema"
 import { db } from "./db"
 import { sendMail, escapeHtml } from "./email"
+import { getNamespaceTranslations } from "./action-i18n"
 
 // ── Plugin selection rationale (F6a) ────────────────────────────────────────
 // We use `mcp()` (better-auth/plugins) which is a thin wrapper around
@@ -85,15 +86,25 @@ export const auth = betterAuth({
           data.inviter.user.name ?? data.inviter.user.email,
         )
         const orgName = escapeHtml(data.organization.name)
+        // The invite is sent in the INVITER's locale: the recipient has no account
+        // yet, so there is nothing to read a preference from. Carrying a locale on
+        // the invitation row would fix that, but it is a schema change.
+        // The <strong> wrapper is applied to the VALUES, not written into the
+        // message: next-intl parses tags inside a message as rich-text and a plain
+        // t() call then fails (FORMATTING_ERROR, renders the key). The values are
+        // escaped above, so the only markup here is ours. The subject is not HTML,
+        // so it keeps the raw org name.
+        const t = await getNamespaceTranslations("mail")
+        const strong = (s: string) => `<strong>${s}</strong>`
         await sendMail({
           to: data.email,
-          subject: `[RelayRoom] ${data.organization.name} 팀에 초대되었습니다`,
+          subject: t("invitation.subject", { org: data.organization.name }),
           html: `
-            <p>안녕하세요,</p>
-            <p><strong>${inviterName}</strong>님이 <strong>${orgName}</strong> 팀에 초대했습니다.</p>
-            <p>아래 링크를 클릭해 계정을 만들고 팀에 참여하세요:</p>
+            <p>${t("invitation.greeting")}</p>
+            <p>${t("invitation.intro", { inviter: strong(inviterName), org: strong(orgName) })}</p>
+            <p>${t("invitation.cta")}</p>
             <p><a href="${safeUrl}">${safeUrl}</a></p>
-            <p>이 초대는 48시간 후에 만료됩니다.</p>
+            <p>${t("invitation.expiry")}</p>
           `,
         })
       },
