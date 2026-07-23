@@ -24,14 +24,18 @@ const TRANSCRIPT = [
 ].join("\n")
 
 /** Collect one POSTed usage body, or null if the reporter never called. */
-function usageCollector(): { server: Server; port: Promise<number>; received: () => any | null } {
+function usageCollector(status = 200): { server: Server; port: Promise<number>; received: () => any | null } {
   let body: any = null
   const server = createServer((req, res) => {
     let raw = ""
     req.on("data", (d) => (raw += d))
     req.on("end", () => {
-      try { body = { url: req.url, json: JSON.parse(raw) } } catch { body = { url: req.url, json: null } }
-      res.writeHead(200, { "content-type": "application/json" })
+      try {
+        body = { url: req.url, json: JSON.parse(raw), auth: req.headers.authorization }
+      } catch {
+        body = { url: req.url, json: null, auth: req.headers.authorization }
+      }
+      res.writeHead(status, { "content-type": "application/json" })
       res.end("{}")
     })
   })
@@ -162,6 +166,62 @@ describe("usage reporter: content excerpts", () => {
     writeConfig({ usageContent: true })
     await runReporter(["--agent", "claude"], { transcript_path: join(dir, "transcript.jsonl") }, dir)
     expect(collector.received()?.json.detail).toEqual({ title: "hi", summary: "hello" })
+  })
+})
+
+describe("usage reporter: bearer", () => {
+  let dir: string
+  let collector: ReturnType<typeof usageCollector>
+  let server: string
+
+  const writeConfig = (extra: Record<string, unknown> = {}) =>
+    writeFileSync(
+      join(dir, ".relayroom", "config.json"),
+      JSON.stringify({ code: "c", part: "core", server, ...extra }),
+    )
+
+  const setup = async (status = 200) => {
+    dir = mkdtempSync(join(tmpdir(), "relayroom-usage-auth-"))
+    collector = usageCollector(status)
+    server = `http://127.0.0.1:${await collector.port}`
+    mkdirSync(join(dir, ".relayroom"), { recursive: true })
+    writeFileSync(join(dir, "transcript.jsonl"), TRANSCRIPT)
+  }
+
+  afterEach(() => {
+    collector.server.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it("sends the worktree's token", async () => {
+    await setup()
+    writeConfig({ token: "tok-abc" })
+    await runReporter(["--agent", "claude"], { transcript_path: join(dir, "transcript.jsonl") }, dir)
+    expect(collector.received()?.auth).toBe("Bearer tok-abc")
+  })
+
+  it("sends NO authorization header when the worktree has no token", async () => {
+    await setup()
+    writeConfig()
+    // The endpoint accepts an unauthenticated report during the grace period, and an
+    // empty `Bearer ` would be a present-but-invalid credential the server rejects.
+    const { code } = await runReporter(["--agent", "claude"], { transcript_path: join(dir, "transcript.jsonl") }, dir)
+    expect(code).toBe(0)
+    expect(collector.received()?.auth).toBeUndefined()
+    expect(collector.received()?.json.part).toBe("core")
+  })
+
+  it("reports a rejected POST on stderr instead of exiting quietly", async () => {
+    await setup(401)
+    writeConfig({ token: "stale" })
+    const { code, stderr } = await runReporter(
+      ["--agent", "claude"],
+      { transcript_path: join(dir, "transcript.jsonl") },
+      dir,
+    )
+    expect(code).toBe(0) // never blocks the agent
+    expect(stderr).toContain("401")
+    expect(stderr).toContain("./rr.sh setup")
   })
 })
 

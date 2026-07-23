@@ -280,8 +280,11 @@ describe('MCP resource server (/mcp/:connectCode)', () => {
     expect(transport.status).toBe(404)
     expect(((await transport.json()) as { error: string }).error).toMatch(/connect code/)
 
-    // Connect-code-only endpoints are cut off too.
-    expect((await app.request(`/mcp/${connectCode}/unread?part=worker`)).status).toBe(404)
+    // The runtime endpoints are cut off too. /unread authenticates the bearer first,
+    // so pass a valid one: the archived project must still be what fails, not the auth.
+    expect((await app.request(`/mcp/${connectCode}/unread?part=worker`, {
+      headers: { Authorization: `Bearer ${rawToken}` },
+    })).status).toBe(404)
     expect((await app.request(`/mcp/${connectCode}/relayroom-md`)).status).toBe(404)
   })
 
@@ -650,12 +653,16 @@ describe('MCP resource server (/mcp/:connectCode)', () => {
     const userId = await insertTestUser()
     await insertMembership(orgId, userId)
     const { id: projectId, connectCode } = await createTestProject(orgId)
+    // /unread is bearer-gated and the caller must own the part it asks about.
+    const rawToken = randomBytes(32).toString('hex')
+    await insertTestToken(rawToken, userId)
+    const auth = { Authorization: `Bearer ${rawToken}` }
 
     // Seed sender + recipient agents and a thread/message addressed to the recipient.
     const [sender] = await db.insert(agents)
       .values({ projectId, part: 'speaker' }).returning({ id: agents.id })
     const [recipient] = await db.insert(agents)
-      .values({ projectId, part: 'listener' }).returning({ id: agents.id })
+      .values({ projectId, part: 'listener', ownerUserId: userId }).returning({ id: agents.id })
     const [thread] = await db.insert(threads)
       .values({ projectId, subject: 'missed while offline', createdByAgentId: sender!.id })
       .returning({ id: threads.id })
@@ -666,7 +673,7 @@ describe('MCP resource server (/mcp/:connectCode)', () => {
       .values({ messageId: message!.id, agentId: recipient!.id })
 
     // Unread now lists the one message, with sender + subject.
-    const res = await app.request(`/mcp/${connectCode}/unread?part=listener`)
+    const res = await app.request(`/mcp/${connectCode}/unread?part=listener`, { headers: auth })
     expect(res.status).toBe(200)
     const body = await res.json() as { count: number; items: { messageId: string; subject: string; fromPart: string }[] }
     expect(body.count).toBe(1)
@@ -678,17 +685,24 @@ describe('MCP resource server (/mcp/:connectCode)', () => {
     await db.update(messageRecipients)
       .set({ readAt: new Date() })
       .where(and(eq(messageRecipients.messageId, message!.id), eq(messageRecipients.agentId, recipient!.id)))
-    const res2 = await app.request(`/mcp/${connectCode}/unread?part=listener`)
+    const res2 = await app.request(`/mcp/${connectCode}/unread?part=listener`, { headers: auth })
     const body2 = await res2.json() as { count: number }
     expect(body2.count).toBe(0)
   })
 
   it('unread endpoint: unknown connect code -> 404, invalid part -> 400', async () => {
-    const res404 = await app.request('/mcp/nonexistent-code-xyz/unread?part=listener')
+    const userId = await insertTestUser()
+    const rawToken = randomBytes(32).toString('hex')
+    await insertTestToken(rawToken, userId)
+
+    // A valid bearer, so the unknown code is what produces the 404.
+    const res404 = await app.request('/mcp/nonexistent-code-xyz/unread?part=listener', {
+      headers: { Authorization: `Bearer ${rawToken}` },
+    })
     expect(res404.status).toBe(404)
 
+    // Part shape is validated before auth, so a junk part is a 400 either way.
     const orgId = `mcp-org-unread2-${randomBytes(4).toString('hex')}`
-    const userId = await insertTestUser()
     await insertMembership(orgId, userId)
     const { connectCode } = await createTestProject(orgId)
     const res400 = await app.request(`/mcp/${connectCode}/unread?part=${encodeURIComponent('../evil master')}`)

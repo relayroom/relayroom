@@ -9,7 +9,10 @@
  * throws or blocks the agent, and silently does nothing if it cannot read usage.
  *
  *   --agent claude|gemini|codex   which transcript format to parse
- *   --code <connect_code> --part <part> [--server <url>]
+ *   --code <connect_code> --part <part> [--server <url>] [--token <bearer>]
+ *
+ * Identity (code/part/server/token) normally comes from the worktree's
+ * `.relayroom/config.json`; the flags are an override.
  *
  * WHAT IS SENT. Always: token counts, the model name, and a rough cost estimate.
  * Additionally, for Claude only, the turn's CONTENT in excerpt - the first 80
@@ -273,15 +276,32 @@ async function main() {
   if (startedAt) body.startedAt = startedAt
   if (endedAt) body.endedAt = endedAt
 
+  // Bearer when the worktree has one (same source as the identity above). Only
+  // when: an empty `Bearer ` is a present-but-invalid credential, which the server
+  // rejects rather than falling back, so a worktree with no token issued yet would
+  // stop reporting entirely.
+  const TOKEN = arg("token", cfg.token)
+  const headers = { "content-type": "application/json" }
+  if (TOKEN) headers.authorization = `Bearer ${TOKEN}`
+
   try {
     const res = await fetch(`${SERVER}/mcp/${encodeURIComponent(CODE)}/usage`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers,
       body: JSON.stringify(body),
       // This runs as a turn-end HOOK: a stalled network must never block the agent.
       signal: AbortSignal.timeout(5000),
     })
     dbg({ stage: "posted", agent: AGENT, status: res.status, model: model ?? null, inTok, outTok })
+    // A rejected report is otherwise invisible (the hook exits 0 and the dashboard
+    // just stays empty), so name it once on stderr. `|| true` in the hook command
+    // means this can never block the agent.
+    if (!res.ok) {
+      console.error(
+        `relayroom usage: hub returned ${res.status}` +
+        (res.status === 401 || res.status === 403 ? " (token missing or expired - run ./rr.sh setup)" : ""),
+      )
+    }
   } catch (err) { dbg({ stage: "post-throw", agent: AGENT, err: String(err?.message ?? err) }) }
 }
 
