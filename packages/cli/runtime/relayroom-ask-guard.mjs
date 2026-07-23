@@ -39,15 +39,31 @@ try {
 // Authoritative check (read-only) before ever blocking. Fail OPEN on anything odd.
 let cfg = {}
 try { cfg = JSON.parse(readFileSync(".relayroom/config.json", "utf8")) || {} } catch { /* ignore */ }
-const { code, part, server } = cfg
+const { code, part, server, token } = cfg
 if (!code || !part || !server) allow()
 
 try {
   const url = `${String(server).replace(/\/$/, "")}/mcp/${encodeURIComponent(code)}/role?part=${encodeURIComponent(part)}`
-  const res = await fetch(url, { signal: AbortSignal.timeout(2500) })
+  // Send the bearer when the worktree has one. Only when: an empty `Bearer ` is a
+  // present-but-invalid credential, which the server rejects outright rather than
+  // falling back to the connect code.
+  const res = await fetch(url, {
+    signal: AbortSignal.timeout(2500),
+    ...(token ? { headers: { authorization: `Bearer ${token}` } } : {}),
+  })
   if (res.ok) {
     const json = await res.json().catch(() => ({}))
     if (json && json.role === "default") block()
+  } else {
+    // Still fail OPEN - a guard that stops an agent because the hub is unhappy is
+    // worse than a guard that misses. But say so: a rejected lookup silently
+    // DISABLES this guard, and until now there was no way to tell that from a
+    // legitimate "you are the main agent, go ahead".
+    process.stderr.write(
+      `relayroom ask-guard: role lookup returned ${res.status}` +
+      `${res.status === 401 || res.status === 403 ? " (token missing or expired - run ./rr.sh setup)" : ""}` +
+      "; allowing the question through\n",
+    )
   }
 } catch { /* unreachable/timeout -> allow */ }
 allow()

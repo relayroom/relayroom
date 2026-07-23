@@ -252,7 +252,15 @@ unread_count() {
   if [ "$(( now - \${ts:-0} ))" -lt 4 ]; then echo "\${last:-0}"; return; fi
   # \`|| true\` so a failed curl/grep pipeline under \`set -o pipefail\` doesn't abort
   # rr.sh; an empty result falls through to the keep-last-value line below.
-  val="$(curl -s --max-time 1 "$SERVER/mcp/$CODE/unread?part=$PART" 2>/dev/null | grep -o '"count":[0-9]*' | head -1 | grep -o '[0-9]*' || true)"
+  # Two branches rather than a header variable: an empty TOKEN would send
+  # \`Authorization: Bearer \`, which the hub treats as a present-but-invalid
+  # credential and rejects outright instead of falling back to the connect code.
+  if [ -n "$TOKEN" ]; then
+    _unread() { curl -s --max-time 1 -H "Authorization: Bearer $TOKEN" "$SERVER/mcp/$CODE/unread?part=$PART" 2>/dev/null; }
+  else
+    _unread() { curl -s --max-time 1 "$SERVER/mcp/$CODE/unread?part=$PART" 2>/dev/null; }
+  fi
+  val="$(_unread | grep -o '"count":[0-9]*' | head -1 | grep -o '[0-9]*' || true)"
   # On a failed/empty fetch, keep the last known value (don't flap to 0 on a blip).
   [ -n "$val" ] || val="\${last:-0}"
   printf '%s %s' "$now" "$val" > "$cache" 2>/dev/null || true
@@ -504,7 +512,16 @@ case "\${1:-help}" in
       *)
         # Re-pull just RELAYROOM.md from the hub - no npm needed (the CLI updates via
         # npm). The running agent caches the old copy, so re-read it afterwards.
-        if curl -fsS "$SERVER/mcp/$CODE/relayroom-md" -o "$ROOT/RELAYROOM.md"; then
+        # Two explicit branches instead of building the header into a variable: an
+        # empty TOKEN would send \`Authorization: Bearer \` , and the server rejects a
+        # present-but-invalid bearer outright (it does not fall back), so a worktree
+        # with no token issued yet would stop being able to update at all.
+        if [ -n "$TOKEN" ]; then
+          _rrmd() { curl -fsS -H "Authorization: Bearer $TOKEN" "$SERVER/mcp/$CODE/relayroom-md" -o "$ROOT/RELAYROOM.md"; }
+        else
+          _rrmd() { curl -fsS "$SERVER/mcp/$CODE/relayroom-md" -o "$ROOT/RELAYROOM.md"; }
+        fi
+        if _rrmd; then
           rm -f "$ROOT/.relayroom/.update" 2>/dev/null || true
           echo "RELAYROOM.md updated from the hub. Re-read it now - the running agent still has the old copy."
         else echo "rr.sh: failed to fetch RELAYROOM.md from $SERVER" >&2; exit 1; fi ;;
@@ -635,11 +652,17 @@ export async function init(opts: InitOpts): Promise<void> {
   // Resolve the server: explicit --server -> previously-saved config -> built-in default.
   const server = (opts.server ?? saved.server ?? DEFAULT_SERVER).replace(/\/$/, "")
   const url = `${server}/mcp/${encodeURIComponent(code)}/relayroom-md`
+  // Same resolution as the identity above: an explicit --token, else whatever the
+  // worktree already saved. A re-init (`relayroom init` with no flags, the usual way
+  // to re-pull RELAYROOM.md) therefore still authenticates. The FIRST init on a fresh
+  // worktree legitimately has neither, and this endpoint accepts that - so send the
+  // header only when there is a token, never an empty `Bearer `.
+  const token = opts.token ?? saved.token
 
   let content: string
   let slugHeader: string | undefined
   try {
-    const res = await fetch(url)
+    const res = await fetch(url, token ? { headers: { authorization: `Bearer ${token}` } } : undefined)
     if (!res.ok) throw new Error(`server responded ${res.status}`)
     content = await res.text()
     slugHeader = res.headers.get("x-relayroom-project-slug") ?? undefined
