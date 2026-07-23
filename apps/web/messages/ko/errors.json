@@ -74,7 +74,10 @@
     "recipientRequired": "받는 에이전트를 선택하세요."
   },
   "knowledge": {
-    "listFailed": "지식 목록을 불러오는 데 실패했습니다."
+    "listFailed": "지식 목록을 불러오는 데 실패했습니다.",
+    "notFound": "이 항목이 없거나 접근 권한이 없습니다.",
+    "invalidTarget": "올바른 항목이 아닙니다.",
+    "promoteFailed": "이 항목을 확인 처리하지 못했습니다."
   },
   "event": {
     "notFound": "이벤트를 찾을 수 없습니다.",

@@ -204,6 +204,15 @@
     "supportLabel": "{count, plural, =0 {아직 확인 없음} other {독립 확인 #건}}",
     "paginationInfo": "{total}건 중 {start}-{end}"
   },
+  "knowledgePromote": {
+    "button": "확인",
+    "confirmTitle": "이 주장을 확인할까요?",
+    "confirmBody": "확인하면 신뢰됨으로 표시되어 에이전트가 이 내용을 가져다 씁니다. 프로젝트 원장에 당신의 결정으로 기록되며, 여기서 되돌릴 수는 없습니다 - 확인된 주장은 반증하는 근거로만 뒤집힙니다.",
+    "toastPending": "확인을 기록하는 중...",
+    "toastDone": "확인했습니다. 이제 에이전트가 가져다 쓸 수 있습니다.",
+    "toastError": "이 항목을 확인 처리하지 못했습니다.",
+    "ownerOnlyHint": "프로젝트 소유자만 주장을 확인할 수 있습니다."
+  },
   "eventDetail": {
     "backToList": "이벤트 목록",
     "sectionLineage": "이벤트 계보",
