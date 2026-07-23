@@ -225,6 +225,103 @@ describe("usage reporter: bearer", () => {
   })
 })
 
+describe("usage reporter: cost estimate", () => {
+  let dir: string
+  let collector: ReturnType<typeof usageCollector>
+  let server: string
+
+  // A cache-heavy turn - the normal shape for an agent, and where charging cache
+  // tokens at the full input rate goes badly wrong.
+  const CACHED_TRANSCRIPT = [
+    JSON.stringify({ type: "user", message: { content: "hi" } }),
+    JSON.stringify({
+      type: "assistant",
+      message: {
+        model: "claude-opus-4-8",
+        content: [{ type: "text", text: "hello" }],
+        usage: {
+          input_tokens: 500,
+          output_tokens: 300,
+          cache_creation_input_tokens: 1_000,
+          cache_read_input_tokens: 100_000,
+        },
+      },
+    }),
+  ].join("\n")
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), "relayroom-usage-cost-"))
+    collector = usageCollector()
+    server = `http://127.0.0.1:${await collector.port}`
+    mkdirSync(join(dir, ".relayroom"), { recursive: true })
+    writeFileSync(join(dir, ".relayroom", "config.json"), JSON.stringify({ code: "c", part: "core", server }))
+    writeFileSync(join(dir, "transcript.jsonl"), CACHED_TRANSCRIPT)
+  })
+
+  afterEach(() => {
+    collector.server.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it("bills cache reads at 0.1x and cache writes at 1.25x the input rate", async () => {
+    await runReporter(["--agent", "claude"], { transcript_path: join(dir, "transcript.jsonl") }, dir)
+    const got = collector.received()
+    const [inRate, outRate] = [5, 25] // the verified Opus 4.8 rate
+    const expected =
+      (500 / 1e6) * inRate +
+      (1_000 / 1e6) * inRate * 1.25 +
+      (100_000 / 1e6) * inRate * 0.1 +
+      (300 / 1e6) * outRate
+    expect(got?.json.usage.cost_usd).toBeCloseTo(expected, 6)
+    // The old formula charged every cache token at the full input rate; on this
+    // turn that is off by roughly 8x.
+    const atFullRate = ((500 + 101_000) / 1e6) * inRate + (300 / 1e6) * outRate
+    expect(got?.json.usage.cost_usd).toBeLessThan(atFullRate / 5)
+  })
+
+  it("still reports one cache_tokens total (the wire format is unchanged)", async () => {
+    await runReporter(["--agent", "claude"], { transcript_path: join(dir, "transcript.jsonl") }, dir)
+    expect(collector.received()?.json.usage.cache_tokens).toBe(101_000)
+  })
+
+  /** Same turn shape, a different model id. */
+  const transcriptFor = (model: string) =>
+    [
+      JSON.stringify({ type: "user", message: { content: "hi" } }),
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          model,
+          content: [{ type: "text", text: "hello" }],
+          usage: { input_tokens: 1_000_000, output_tokens: 0 },
+        },
+      }),
+    ].join("\n")
+
+  const costFor = async (model: string) => {
+    writeFileSync(join(dir, "transcript.jsonl"), transcriptFor(model))
+    await runReporter(["--agent", "claude"], { transcript_path: join(dir, "transcript.jsonl") }, dir)
+    return collector.received()?.json.usage
+  }
+
+  it("prices the current Opus generation at its own rate, not the 4.1 one", async () => {
+    // 1M input tokens, so the reported cost IS the input rate.
+    expect((await costFor("claude-opus-4-8")).cost_usd).toBeCloseTo(5, 6)
+  })
+
+  it("resolves dated snapshots and context-tagged ids to the base model's rate", async () => {
+    expect((await costFor("claude-haiku-4-5-20251001")).cost_usd).toBeCloseTo(1, 6)
+    expect((await costFor("claude-opus-4-8[1m]")).cost_usd).toBeCloseTo(5, 6)
+  })
+
+  it("omits the cost entirely for a model with no verified rate, keeping the tokens", async () => {
+    // Opus 4.1 is deliberately unlisted: reporting nothing beats reporting a guess.
+    const usage = await costFor("claude-opus-4-1-20250805")
+    expect(usage.cost_usd).toBeUndefined()
+    expect(usage.input_tokens).toBe(1_000_000)
+  })
+})
+
 describe("usage hook command", () => {
   it("never writes the connect code into the agent settings file", () => {
     const cmd = hookCommand({

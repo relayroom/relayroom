@@ -323,15 +323,44 @@ self_update_if_pending() {
     for _d in "$HOME"/.npm/_npx/*/; do [ -e "$_d/node_modules/@relayroom/cli/package.json" ] && rm -rf "$_d" 2>/dev/null || true; done
   fi
   # Regenerate rr.sh + config from the (now-current) CLI, then re-exec the new script.
-  $CLI init --code "$CODE" --part "$PART" --server "$SERVER" --no-tmux-check >/dev/null 2>&1 || true
+  # --agent matters: without it init falls back to "claude" and wires @RELAYROOM.md
+  # into a CLAUDE.md that a codex/agy-only worktree has no use for.
+  $CLI init --code "$CODE" --part "$PART" --server "$SERVER" --agent "$AGENT" --no-tmux-check >/dev/null 2>&1 || true
   export RR_SELF_UPDATED=1
   exec "$ROOT/rr.sh" "$@"
 }
 
 # ── per-CLI setup (mcp registration + usage hook) ─────────────────────────────
+# Which part an agent's MCP config currently names, or empty if it has none. Both
+# mcp_add (warn before taking a global entry over) and doctor (diagnose after the
+# fact) read it, so the two can never disagree about what is registered.
+registered_part() { grep -oE 'part=[A-Za-z0-9_-]+' "$1" 2>/dev/null | head -1 | cut -d= -f2 || true; }
+
+# The config file an agent reads its MCP servers from. claude's is per-worktree;
+# codex and agy have ONE global file per machine.
+agent_mcp_config() {
+  case "$1" in
+    claude) echo "$ROOT/.mcp.json" ;;
+    agy)    echo "$HOME/.gemini/config/mcp_config.json" ;;
+    codex)  echo "$HOME/.codex/config.toml" ;;
+  esac
+}
+
 mcp_add() {
   local a="$1"
   [ -n "$TOKEN" ] || { echo "no token in config - reconnect from the dashboard to issue one"; return 1; }
+  # codex/agy keep ONE registration per machine, so running setup here silently
+  # repoints every other worktree at this part. That used to be visible only if you
+  # thought to run doctor afterwards - by which time the other agent is already
+  # posting as the wrong part. Say it at the moment it happens.
+  case "$a" in
+    codex|agy)
+      local _prev; _prev="$(registered_part "$(agent_mcp_config "$a")")"
+      if [ -n "$_prev" ] && [ "$_prev" != "$PART" ]; then
+        echo "warning: $a's MCP config is GLOBAL ($(agent_mcp_config "$a")) and is currently registered as part '$_prev'." >&2
+        echo "         Registering '$PART' takes it over for EVERY $a worktree on this machine." >&2
+      fi ;;
+  esac
   if [ "$a" = "codex" ]; then
     export RELAYROOM_TOKEN="$TOKEN"
     codex mcp remove relayroom 2>/dev/null || true
@@ -387,12 +416,13 @@ doctor() {
   # file, so all their worktrees share ONE entry (whichever ran setup last wins) -
   # a part mismatch there means another worktree owns the global entry.
   local cfgfile cfgdesc global=""
+  cfgfile="$(agent_mcp_config "$PRIMARY")"
   case "$PRIMARY" in
-    claude) cfgfile=".mcp.json"; cfgdesc="this worktree's .mcp.json" ;;
-    agy)    cfgfile="$HOME/.gemini/config/mcp_config.json"; cfgdesc="~/.gemini/config/mcp_config.json"; global=1 ;;
-    codex)  cfgfile="$HOME/.codex/config.toml"; cfgdesc="~/.codex/config.toml"; global=1 ;;
+    claude) cfgdesc="this worktree's .mcp.json" ;;
+    agy)    cfgdesc="~/.gemini/config/mcp_config.json"; global=1 ;;
+    codex)  cfgdesc="~/.codex/config.toml"; global=1 ;;
   esac
-  local rp; rp="$(grep -oE 'part=[A-Za-z0-9_-]+' "$cfgfile" 2>/dev/null | head -1 | cut -d= -f2 || true)"
+  local rp; rp="$(registered_part "$cfgfile")"
   if [ -n "$rp" ]; then
     echo "$OKM $PRIMARY relayroom MCP registered ($cfgdesc, part=$rp)"
     if [ "$rp" != "$PART" ]; then
@@ -508,7 +538,7 @@ case "\${1:-help}" in
         # --no-tmux-check: regenerating rr.sh is maintenance, not launching the agent,
         # so it must work from anywhere (you usually update AFTER exiting tmux). The
         # tmux guard only matters for first-time \`relayroom init\`, which keeps it.
-        $CLI init --code "$CODE" --part "$PART" --server "$SERVER" --no-tmux-check ;;
+        $CLI init --code "$CODE" --part "$PART" --server "$SERVER" --agent "$AGENT" --no-tmux-check ;;
       *)
         # Re-pull just RELAYROOM.md from the hub - no npm needed (the CLI updates via
         # npm). The running agent caches the old copy, so re-read it afterwards.

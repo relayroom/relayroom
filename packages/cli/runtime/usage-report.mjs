@@ -68,13 +68,52 @@ function resolveDir(payload) {
 }
 const AGENT = arg("agent", "claude")
 
-// Rough $/MTok by model family (input, output) - approximate, for an at-a-glance
-// cost estimate. Token counts are exact; this is only the $ conversion.
+// Cache tokens are not input tokens at the base rate, and for agent workloads they
+// are usually the LARGEST bucket - charging them at full price overstates the cost
+// several-fold. A cache READ bills at ~0.1x the base input rate; a cache WRITE bills
+// at 1.25x (5-minute TTL). A 1-hour-TTL write is 2x, which the transcript's
+// cache_creation_input_tokens field cannot distinguish, so writes are estimated at
+// the 5-minute rate and a 1-hour-heavy workload reads slightly low.
+const CACHE_READ_RATE = 0.1
+const CACHE_WRITE_RATE = 1.25
+
+/**
+ * $/MTok [input, output] per Claude model, matched by ID PREFIX.
+ *
+ * Prefix, not family: `includes("opus")` priced every Opus generation at the 4.1
+ * rate, which is 3x the current one - and matching on the family name is what let
+ * that stay invisible. A prefix still covers the two suffixes a transcript really
+ * carries: a dated snapshot (`-20251001`) and a context tag (`[1m]`, which bills at
+ * the standard rate on these models).
+ *
+ * Only rates that have been checked belong here. A model that is not listed gets no
+ * dollar figure at all (see priceFor) - the token counts still report, and the gap
+ * is visible. An unlisted model showing tokens with no cost is a prompt to add a
+ * verified rate; a wrong number looks exactly like a right one.
+ */
+const CLAUDE_PRICES = [
+  ["claude-opus-4-8", [5, 25]],
+  ["claude-opus-4-7", [5, 25]],
+  ["claude-opus-4-6", [5, 25]],
+  ["claude-sonnet-5", [3, 15]],
+  ["claude-sonnet-4-6", [3, 15]],
+  ["claude-haiku-4-5", [1, 5]],
+  // Deliberately absent: Opus 4.5 and older, Sonnet 4.5 and older, Haiku 3.x. Their
+  // current rates have not been verified here, and guessing is what produced the bug
+  // this table replaces. Sonnet 5's promotional rate is also absent on purpose - a
+  // date-dependent price would go stale silently, and the list rate errs high.
+]
+
+/**
+ * The $/MTok pair for a model, or null when it is not one we have a verified rate
+ * for. Token counts are exact; this is only the dollar conversion, and the caller
+ * omits cost_usd entirely when this returns null.
+ */
 function priceFor(model = "") {
   const m = model.toLowerCase()
-  if (m.includes("opus")) return [15, 75]
-  if (m.includes("sonnet")) return [3, 15]
-  if (m.includes("haiku")) return [1, 5]
+  for (const [id, price] of CLAUDE_PRICES) if (m.startsWith(id)) return price
+  // Non-Claude agents: left as they were. These have not been re-verified, and the
+  // Claude rates are the ones this hook actually reports today.
   if (m.includes("codex") || m.includes("gpt-5") || m.startsWith("o3") || m.startsWith("o4")) return [1.25, 10]
   if (m.includes("gpt-4")) return [2.5, 10]
   if (m.includes("gemini") && m.includes("flash")) return [0.3, 2.5]
@@ -112,7 +151,10 @@ function claudeAssistantText(row) {
 
 function parseClaude(transcriptPath) {
   const lines = readFileSync(transcriptPath, "utf8").split("\n").filter(Boolean)
-  let inTok = 0, outTok = 0, cacheTok = 0, model, title, summary, startedAt, endedAt
+  // Writes and reads are tracked apart because they bill at different rates; the
+  // two are summed back into one `cache_tokens` for the wire format, which has a
+  // single field.
+  let inTok = 0, outTok = 0, cacheWrite = 0, cacheRead = 0, model, title, summary, startedAt, endedAt
   for (let i = lines.length - 1; i >= 0; i--) {
     let row
     try { row = JSON.parse(lines[i]) } catch { continue }
@@ -128,7 +170,8 @@ function parseClaude(transcriptPath) {
       if (u) {
         inTok += u.input_tokens ?? 0
         outTok += u.output_tokens ?? 0
-        cacheTok += (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0)
+        cacheWrite += u.cache_creation_input_tokens ?? 0
+        cacheRead += u.cache_read_input_tokens ?? 0
         model ??= row.message.model
         if (!endedAt && row.timestamp) endedAt = row.timestamp // latest assistant
       }
@@ -140,7 +183,7 @@ function parseClaude(transcriptPath) {
       }
     }
   }
-  return { inTok, outTok, cacheTok, model, title, summary, startedAt, endedAt }
+  return { inTok, outTok, cacheWrite, cacheRead, model, title, summary, startedAt, endedAt }
 }
 
 // ── Codex: rollout JSONL with `token_count` events; use the last turn's delta ──
@@ -181,8 +224,9 @@ function parseCodex(transcriptPath) {
   // Adding reasoning_output_tokens again double-counts output. Use output directly;
   // only fall back to reasoning when no output field is present.
   const outTok = u.output_tokens ?? u.completion_tokens ?? u.reasoning_output_tokens ?? 0
-  const cacheTok = u.cached_input_tokens ?? u.cache_read_input_tokens ?? 0
-  return { inTok, outTok, cacheTok, model }
+  // Codex reports only cache READS; there is no write field to separate out.
+  const cacheRead = u.cached_input_tokens ?? u.cache_read_input_tokens ?? 0
+  return { inTok, outTok, cacheWrite: 0, cacheRead, model }
 }
 
 // ── Gemini: JSONL transcript. Each assistant ("gemini") line carries `model` and a
@@ -205,10 +249,10 @@ function parseGemini(transcriptPath) {
     const input = tk.input ?? 0
     const cached = tk.cached ?? 0
     const inTok = Math.max(0, input - cached)         // fresh (non-cached) input
-    const cacheTok = cached                            // cache read
+    const cacheRead = cached                           // reads only; no write field
     const outTok = (tk.output ?? 0) + (tk.thoughts ?? 0) // visible output + thinking
-    if (inTok + outTok + cacheTok <= 0) continue
-    return { inTok, outTok, cacheTok, model: row.model }
+    if (inTok + outTok + cacheRead <= 0) continue
+    return { inTok, outTok, cacheWrite: 0, cacheRead, model: row.model }
   }
   return null
 }
@@ -253,12 +297,21 @@ async function main() {
   dbg({ stage: "parsed", agent: AGENT, parsed: parsed ?? null })
   if (!parsed) return
 
-  const { inTok, outTok, cacheTok, model, title, summary, startedAt, endedAt } = parsed
+  const { inTok, outTok, cacheWrite, cacheRead, model, title, summary, startedAt, endedAt } = parsed
+  // One number for the wire format, which has a single cache field; the split is a
+  // costing detail, and widening the payload would need the server and dashboard too.
+  const cacheTok = cacheWrite + cacheRead
   if (inTok + outTok + cacheTok <= 0) { dbg({ stage: "zero-usage", agent: AGENT }); return } // nothing to report
 
   let cost
   const p = priceFor(model)
-  if (p) cost = +(((inTok + cacheTok) / 1e6) * p[0] + (outTok / 1e6) * p[1]).toFixed(6)
+  if (p) {
+    const inputCost =
+      (inTok / 1e6) * p[0] +
+      (cacheWrite / 1e6) * p[0] * CACHE_WRITE_RATE +
+      (cacheRead / 1e6) * p[0] * CACHE_READ_RATE
+    cost = +(inputCost + (outTok / 1e6) * p[1]).toFixed(6)
+  }
 
   const usage = { input_tokens: inTok, output_tokens: outTok, cache_tokens: cacheTok }
   if (model) usage.model = model

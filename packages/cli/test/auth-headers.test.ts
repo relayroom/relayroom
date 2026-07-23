@@ -191,6 +191,120 @@ function runGuard(cwd: string): Promise<{ code: number; stderr: string }> {
   })
 }
 
+describe("generated rr.sh: update --self", () => {
+  let dir: string
+  let bin: string
+  let hub: ReturnType<typeof recordingHub>
+  let url: string
+  let savedTmux: string | undefined
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), "relayroom-self-"))
+    bin = mkdtempSync(join(tmpdir(), "relayroom-bin-"))
+    hub = recordingHub(MD_HANDLER)
+    url = `http://127.0.0.1:${await hub.port}`
+    savedTmux = process.env.TMUX
+    delete process.env.TMUX
+    // A stub `relayroom` that records the argv rr.sh hands it, instead of
+    // regenerating the worktree for real.
+    writeFileSync(
+      join(bin, "relayroom"),
+      `#!/bin/sh\nprintf '%s\\n' "$*" >> "${join(dir, "cli-argv.log")}"\nexit 0\n`,
+      { mode: 0o755 },
+    )
+  })
+
+  afterEach(() => {
+    hub.server.close()
+    if (savedTmux !== undefined) process.env.TMUX = savedTmux
+    for (const d of [dir, bin]) rmSync(d, { recursive: true, force: true })
+  })
+
+  it("passes the worktree's own agent through, not the claude default", async () => {
+    await init({ dir, code: "c1", part: "core", server: url, token: "t", agent: "codex", tmuxCheck: false })
+    await new Promise<void>((resolve) => {
+      execFile(
+        "bash",
+        [join(dir, "rr.sh"), "update", "--self"],
+        { cwd: dir, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` }, timeout: 20_000 },
+        () => resolve(),
+      )
+    })
+    const argv = readFileSync(join(dir, "cli-argv.log"), "utf8")
+    // Without --agent, init would default to claude and write a CLAUDE.md into a
+    // worktree driven by codex.
+    expect(argv).toContain("--agent codex")
+  })
+})
+
+describe("generated rr.sh: global MCP config takeover warning", () => {
+  let dir: string
+  let home: string
+  let bin: string
+  let hub: ReturnType<typeof recordingHub>
+  let url: string
+  let savedTmux: string | undefined
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), "relayroom-i1-"))
+    home = mkdtempSync(join(tmpdir(), "relayroom-home-"))
+    bin = mkdtempSync(join(tmpdir(), "relayroom-bin-"))
+    hub = recordingHub(MD_HANDLER)
+    url = `http://127.0.0.1:${await hub.port}`
+    savedTmux = process.env.TMUX
+    delete process.env.TMUX
+    // A stub `codex` so the test never runs (or configures) the real one.
+    writeFileSync(join(bin, "codex"), "#!/bin/sh\nexit 0\n", { mode: 0o755 })
+  })
+
+  afterEach(() => {
+    hub.server.close()
+    if (savedTmux !== undefined) process.env.TMUX = savedTmux
+    for (const d of [dir, home, bin]) rmSync(d, { recursive: true, force: true })
+  })
+
+  /** codex keeps ONE machine-global config, with the part baked into the MCP URL. */
+  const writeCodexConfig = (part: string) => {
+    mkdirSync(join(home, ".codex"), { recursive: true })
+    writeFileSync(
+      join(home, ".codex", "config.toml"),
+      `[mcp_servers.relayroom]\nurl = "http://hub/mcp/c1?part=${part}"\n`,
+    )
+  }
+
+  const runMcpAdd = (extraEnv: Record<string, string> = {}) =>
+    new Promise<{ stdout: string; stderr: string }>((resolve) => {
+      execFile(
+        "bash",
+        [join(dir, "rr.sh"), "codex", "mcp-add"],
+        { cwd: dir, env: { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`, ...extraEnv }, timeout: 20_000 },
+        (_err, stdout, stderr) => resolve({ stdout: String(stdout), stderr: String(stderr) }),
+      )
+    })
+
+  it("warns when the global config belongs to another part", async () => {
+    await init({ dir, code: "c1", part: "core", server: url, token: "t", agent: "codex", tmuxCheck: false })
+    writeCodexConfig("web")
+    const { stderr } = await runMcpAdd()
+    expect(stderr).toContain("GLOBAL")
+    expect(stderr).toContain("'web'")
+    expect(stderr).toContain("EVERY codex worktree")
+  })
+
+  it("stays quiet when the global config already names this part", async () => {
+    await init({ dir, code: "c1", part: "core", server: url, token: "t", agent: "codex", tmuxCheck: false })
+    writeCodexConfig("core")
+    const { stderr } = await runMcpAdd()
+    expect(stderr).not.toContain("GLOBAL")
+  })
+
+  it("stays quiet when nothing is registered yet", async () => {
+    await init({ dir, code: "c1", part: "core", server: url, token: "t", agent: "codex", tmuxCheck: false })
+    const { stderr } = await runMcpAdd()
+    expect(stderr).not.toContain("GLOBAL")
+  })
+})
+
 describe("ask guard: role lookup", () => {
   let dir: string
   let hub: ReturnType<typeof recordingHub>
