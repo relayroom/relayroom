@@ -700,7 +700,11 @@ export async function init(opts: InitOpts): Promise<void> {
 
   // Record the prior name when the target changes so rr.sh can auto-rename a
   // still-running session from the old name to the new one (zero manual steps).
-  const previousTarget = saved.target && target && saved.target !== target ? saved.target : undefined
+  // `null` (not undefined) when the target did NOT change: writeConfig treats null as
+  // "remove this key", so a previousTarget written by an earlier rename is dropped once
+  // it has served its purpose. Left in place it lingers forever, and rr.sh keeps trying
+  // to rename any session that happens to carry the old name on every `up`.
+  const previousTarget = saved.target && target && saved.target !== target ? saved.target : null
 
   // Write the machine-local connection identity so the pager, usage hook, and a
   // compacted agent can recover it without re-passing flags. gitignore it.
