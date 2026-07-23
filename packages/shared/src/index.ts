@@ -37,7 +37,15 @@ export type EventType = z.infer<typeof eventType>
 export const agentRole = z.enum(['main', 'default'])
 export type AgentRole = z.infer<typeof agentRole>
 
-export const projectAccessLevel = z.enum(['readonly_all', 'readonly', 'write'])
+/**
+ * `project_access.level`. These are the grants the dashboard actually issues, and
+ * `owner` is load-bearing: it decides who may manage a project's members, and the
+ * last-owner guards (demote, remove, ban) count rows at this level.
+ *
+ * `readonly_all` used to be listed here and never existed anywhere else: no UI
+ * option, no label, no migration, no write path.
+ */
+export const projectAccessLevel = z.enum(['readonly', 'write', 'owner'])
 export type ProjectAccessLevel = z.infer<typeof projectAccessLevel>
 
 export const connectionStatus = z.enum(['connected', 'expired', 'revoked'])
