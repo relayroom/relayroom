@@ -25,7 +25,7 @@ import { shouldWake } from '../src/wake/issuance'
 import { runEligibilitySweep } from '../src/wake/sweep'
 import { ACTIVE_WAKE_STATES } from '../src/wake/state'
 
-const TEST_DATABASE_URL = 'postgres://hub:hub@localhost:48802/hub_test'
+import { TEST_DATABASE_URL } from '../../../test/db-url'
 const db: Db = createDb(TEST_DATABASE_URL)
 const bus = createBus({ connectionString: TEST_DATABASE_URL })
 

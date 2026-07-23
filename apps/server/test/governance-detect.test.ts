@@ -15,7 +15,7 @@ import {
   runGovernanceDetection,
 } from '../src/governance/detect'
 
-const TEST_DATABASE_URL = 'postgres://hub:hub@localhost:48802/hub_test'
+import { TEST_DATABASE_URL } from '../../../test/db-url'
 const db: Db = createDb(TEST_DATABASE_URL)
 
 const SENDER = 'user_sender_08'

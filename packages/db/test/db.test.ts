@@ -4,7 +4,9 @@ import { createDb } from '../src/client'
 import { getOrCreateAgent, getOrCreateProject } from '../src/bootstrap'
 import { messages, threads } from '../src/schema'
 
-const db = createDb('postgres://hub:hub@localhost:48802/hub_test')
+import { TEST_DATABASE_URL } from '../../../test/db-url'
+
+const db = createDb(TEST_DATABASE_URL)
 afterAll(() => db.$client.end())
 
 describe('bootstrap + round trip', () => {

@@ -11,7 +11,7 @@ import { createDb, type Db } from '@relayroom/db'
 import { configurations } from '@relayroom/db'
 import { invalidateWakeFlagCache, isWakeBudgetEnabled } from '../src/wake/flag'
 
-const TEST_DATABASE_URL = 'postgres://hub:hub@localhost:48802/hub_test'
+import { TEST_DATABASE_URL } from '../../../test/db-url'
 const db: Db = createDb(TEST_DATABASE_URL)
 
 const KEY = 'wake_budget_enabled'

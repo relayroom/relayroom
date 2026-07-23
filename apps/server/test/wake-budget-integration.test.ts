@@ -50,7 +50,7 @@ import { ACTIVE_WAKE_STATES } from '../src/wake/state'
 import { reconcileWakeLedger } from '../src/wake/reconcile'
 import { runGovernanceDetection } from '../src/governance/detect'
 
-const TEST_DATABASE_URL = 'postgres://hub:hub@localhost:48802/hub_test'
+import { TEST_DATABASE_URL } from '../../../test/db-url'
 const db: Db = createDb(TEST_DATABASE_URL)
 const rawSql = postgres(TEST_DATABASE_URL)
 

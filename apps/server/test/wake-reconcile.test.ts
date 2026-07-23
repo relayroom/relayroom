@@ -19,7 +19,7 @@ import { ACTIVE_WAKE_STATES } from '../src/wake/state'
 import { createApp } from '../src/app'
 import { createBus } from '../src/bus'
 
-const TEST_DATABASE_URL = 'postgres://hub:hub@localhost:48802/hub_test'
+import { TEST_DATABASE_URL } from '../../../test/db-url'
 const db: Db = createDb(TEST_DATABASE_URL)
 
 const OWNER = 'user_owner_05r'

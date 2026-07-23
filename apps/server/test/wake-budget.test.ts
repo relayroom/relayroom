@@ -12,7 +12,7 @@ import {
 } from '@relayroom/db'
 import { projectFloor, reserve, settle, sweepEligible, WINDOW_MS } from '../src/wake/budget'
 
-const TEST_DATABASE_URL = 'postgres://hub:hub@localhost:48802/hub_test'
+import { TEST_DATABASE_URL } from '../../../test/db-url'
 const db: Db = createDb(TEST_DATABASE_URL)
 
 // 고정 owner/project/agent fixture. 각 테스트가 깨끗한 상태에서 시작하도록 truncate.
