@@ -26,7 +26,7 @@ The tmux session and the pager (the daemon that wakes you) do NOT survive a mach
 reboot. \`relayroom init\` generated \`./rr.sh\` at the worktree root, one console for
 all of it: \`./rr.sh up\` rebuilds the tmux session and starts the pager in one shot.
 Also: \`./rr.sh pager start|stop|restart|status\`, \`./rr.sh tmux start|continue|exit\`,
-\`./rr.sh <claude|gemini|codex> mcp-add|hooks\`, \`./rr.sh status\`. Run \`./rr.sh help\`.
+\`./rr.sh <claude|agy|codex> mcp-add|hooks\`, \`./rr.sh status\`. Run \`./rr.sh help\`.
 
 **Recovering it yourself (you have a shell - use it).** The status bar shows
 \`● MCP\` (server reachable) and \`● Pager\` (wake daemon up); red \`!MCP\` / \`!Pager\`
@@ -36,7 +36,7 @@ connection, not your shell), so fix them yourself rather than asking the human:
 - \`./rr.sh status\` - check tmux + MCP + pager at once.
 - Red \`!Pager\`: run \`./rr.sh pager start\`.
 - Red \`!MCP\`: the hub is unreachable. First re-register in case the registration
-  broke: \`./rr.sh <claude|gemini|codex> mcp-add\` (then your CLI may need a restart
+  broke: \`./rr.sh <claude|agy|codex> mcp-add\` (then your CLI may need a restart
   to pick it up). If the server itself is down and runs on this machine, bring the
   hub back up (e.g. \`docker compose up -d server\`); otherwise tell the human the
   hub is down - that part is infra, not something the board can fix.

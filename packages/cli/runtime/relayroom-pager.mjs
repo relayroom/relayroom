@@ -166,7 +166,7 @@ const releaseLease = () => {
   if (!CODE) return
   fetch(`${SERVER}/mcp/${encodeURIComponent(CODE)}/heartbeat`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: authHeaders({ "content-type": "application/json" }),
     body: JSON.stringify({ part: PART, holder: HOLDER, release: true }),
   }).catch(() => {})
 }
@@ -639,10 +639,19 @@ async function heartbeat() {
   try {
     const res = await fetch(`${SERVER}/mcp/${encodeURIComponent(CODE)}/heartbeat`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: authHeaders({ "content-type": "application/json" }),
       body: JSON.stringify({ part: PART, holder: HOLDER, host: hostname(), relayroomMd: existsSync(join(DIR, "RELAYROOM.md")), version: VERSION }),
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     })
+    // A rejected heartbeat is silent otherwise: presence, the status color, the lease
+    // state and the update marker all just stop updating. Log it, but only when the
+    // status CHANGES - this runs every 30s, and a hub that is down would otherwise
+    // fill the log with the same line.
+    if (!res.ok && res.status !== lastHeartbeatStatus) {
+      log(`heartbeat rejected: ${res.status}${res.status === 401 || res.status === 403 ? " (token missing or expired - re-run ./rr.sh setup)" : ""}`)
+    }
+    if (res.ok && lastHeartbeatStatus !== 200) log("heartbeat ok again")
+    lastHeartbeatStatus = res.status
     if (res.ok) {
       const json = await res.json().catch(() => ({}))
       // leaseHeld:false => another pager took over; stop nudging until next claim.
@@ -686,6 +695,9 @@ async function heartbeat() {
   } catch { /* best-effort */ }
 }
 let lastColor = ""
+// Last HTTP status the heartbeat saw, so a persistent failure logs once rather than
+// every 30s. Starts at 200 so a healthy first beat says nothing.
+let lastHeartbeatStatus = 200
 
 // One-time tmux status-bar wiring for this session. The agent ships an `rr.sh
 // statusline` subcommand that prints "<part> | inbox: N | ● MCP | ● Pager", but

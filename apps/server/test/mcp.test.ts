@@ -1051,6 +1051,57 @@ describe('wake-loop fix: close / scoping / search', () => {
     const rows = JSON.parse(res.text) as Array<{ subject: string }>
     expect(rows.some(r => r.subject.includes('deployment plan zeta'))).toBe(true)
   })
+
+  it('returns the NEWEST matches when there are more than the limit', async () => {
+    resetLoopBreaker()
+    const { projectId, connectCode, rawToken } = await setupCaller()
+
+    // 15 matching threads, oldest first. Inserted directly so the timestamps are
+    // explicit and the send-rate loop-breaker stays out of it.
+    const base = Date.now() - 15 * 60_000
+    for (let i = 1; i <= 15; i++) {
+      await db.insert(threads).values({
+        projectId,
+        subject: `rollout note ${String(i).padStart(2, '0')}`,
+        createdAt: new Date(base + i * 60_000),
+      })
+    }
+
+    const res = await callTool(connectCode, rawToken, 'other', 'search',
+      { query: 'rollout note', limit: 10 })
+    expect(res.isError).toBe(false)
+    const rows = JSON.parse(res.text) as Array<{ subject: string }>
+    expect(rows).toHaveLength(10)
+
+    // Newest first, and the five oldest are the ones dropped. Ordering by thread id
+    // (uuidv7 => oldest first) used to return 01..10 and hide everything recent.
+    expect(rows[0]!.subject).toBe('rollout note 15')
+    expect(rows.at(-1)!.subject).toBe('rollout note 06')
+    expect(rows.some(r => r.subject.endsWith('01'))).toBe(false)
+  })
+
+  it('matches on message body and returns one row per thread', async () => {
+    resetLoopBreaker()
+    const { projectId, connectCode, rawToken } = await setupCaller()
+    const [agent] = await db.insert(agents)
+      .values({ projectId, part: 'writer' }).returning({ id: agents.id })
+    const [thread] = await db.insert(threads)
+      .values({ projectId, subject: 'unrelated subject' }).returning({ id: threads.id })
+
+    // Three messages in ONE thread all match. A join would emit three rows for it.
+    for (let i = 0; i < 3; i++) {
+      await db.insert(messages).values({
+        threadId: thread!.id,
+        fromAgentId: agent!.id,
+        body: `mentions kryptonite ${i}`,
+      })
+    }
+
+    const res = await callTool(connectCode, rawToken, 'other', 'search', { query: 'kryptonite' })
+    expect(res.isError).toBe(false)
+    const rows = JSON.parse(res.text) as Array<{ threadId: string }>
+    expect(rows.filter(r => r.threadId === thread!.id)).toHaveLength(1)
+  })
 })
 
 describe('/.well-known/oauth-protected-resource', () => {
