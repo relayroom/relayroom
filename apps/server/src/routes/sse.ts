@@ -15,7 +15,10 @@ export function createSseRoute(db: Db, bus: Bus) {
     const queryCode = c.req.query('code')
     const queryPart = c.req.query('part')
     // Opportunistically attach token context if a valid bearer token is present.
-    await tryAttachTokenContext(db, c)
+    // The requested part is handed in so the token resolves to THAT connection: a
+    // token can hold connections for several parts, and picking one arbitrarily
+    // meant a caller could be told it was some other part and refused.
+    await tryAttachTokenContext(db, c, queryPart)
     const ctx = getAgentTokenContext(c)
 
     // Tenant-safe delivery filter. We ALWAYS filter by the AUTHORITATIVE projectId
@@ -41,8 +44,13 @@ export function createSseRoute(db: Db, bus: Bus) {
       if (queryProject !== undefined && queryProject !== ctx.projectSlug) {
         return c.json({ error: `token is scoped to project '${ctx.projectSlug}'` }, 403)
       }
+      // Invariant guard. tryAttachTokenContext was given queryPart, so a context
+      // that came back for a different part means the resolution above is broken;
+      // deny rather than stream someone else's events. The message says what is
+      // actually true - the token is scoped to a PROJECT, never to a part, and the
+      // old wording sent people looking for a part scope that does not exist.
       if (queryPart !== undefined && queryPart !== ctx.agentPart) {
-        return c.json({ error: `token is scoped to part '${ctx.agentPart}'` }, 403)
+        return c.json({ error: `this token has no connection for part '${queryPart}'` }, 403)
       }
       const { projectId, agentPart } = ctx
       matches = event => event.projectId === projectId && event.part === agentPart
