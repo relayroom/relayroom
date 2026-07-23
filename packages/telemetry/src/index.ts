@@ -21,7 +21,9 @@ import { computeRollups, type Rollup } from "./aggregate";
  * RelayRoom HQ collector so we can see adoption (instance count, version) and
  * coarse usage buckets. Privacy rules:
  *  - CONTENT 0: never message bodies, prompts, responses, names, tokens-as-text.
- *  - OFF by default: nothing is transmitted until an admin opts in (mode set).
+ *  - ANONYMOUS by default: with no admin choice recorded, beacons are sent but
+ *    carry no install id, so they cannot be linked across time. An admin can opt
+ *    into `community` (adds a stable install id) or `off` (sends nothing).
  *  - FAILURE HARMLESS: every send is timeout-bounded and never throws; telemetry
  *    must never affect the running hub.
  *  - WATERMARK BACKFILL: per-day rollups are recomputed from the core DB, so a
