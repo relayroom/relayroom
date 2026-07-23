@@ -191,6 +191,52 @@ function runGuard(cwd: string): Promise<{ code: number; stderr: string }> {
   })
 }
 
+describe("generated rr.sh: update --self", () => {
+  let dir: string
+  let bin: string
+  let hub: ReturnType<typeof recordingHub>
+  let url: string
+  let savedTmux: string | undefined
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), "relayroom-self-"))
+    bin = mkdtempSync(join(tmpdir(), "relayroom-bin-"))
+    hub = recordingHub(MD_HANDLER)
+    url = `http://127.0.0.1:${await hub.port}`
+    savedTmux = process.env.TMUX
+    delete process.env.TMUX
+    // A stub `relayroom` that records the argv rr.sh hands it, instead of
+    // regenerating the worktree for real.
+    writeFileSync(
+      join(bin, "relayroom"),
+      `#!/bin/sh\nprintf '%s\\n' "$*" >> "${join(dir, "cli-argv.log")}"\nexit 0\n`,
+      { mode: 0o755 },
+    )
+  })
+
+  afterEach(() => {
+    hub.server.close()
+    if (savedTmux !== undefined) process.env.TMUX = savedTmux
+    for (const d of [dir, bin]) rmSync(d, { recursive: true, force: true })
+  })
+
+  it("passes the worktree's own agent through, not the claude default", async () => {
+    await init({ dir, code: "c1", part: "core", server: url, token: "t", agent: "codex", tmuxCheck: false })
+    await new Promise<void>((resolve) => {
+      execFile(
+        "bash",
+        [join(dir, "rr.sh"), "update", "--self"],
+        { cwd: dir, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` }, timeout: 20_000 },
+        () => resolve(),
+      )
+    })
+    const argv = readFileSync(join(dir, "cli-argv.log"), "utf8")
+    // Without --agent, init would default to claude and write a CLAUDE.md into a
+    // worktree driven by codex.
+    expect(argv).toContain("--agent codex")
+  })
+})
+
 describe("generated rr.sh: global MCP config takeover warning", () => {
   let dir: string
   let home: string

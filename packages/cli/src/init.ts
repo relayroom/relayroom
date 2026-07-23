@@ -323,7 +323,9 @@ self_update_if_pending() {
     for _d in "$HOME"/.npm/_npx/*/; do [ -e "$_d/node_modules/@relayroom/cli/package.json" ] && rm -rf "$_d" 2>/dev/null || true; done
   fi
   # Regenerate rr.sh + config from the (now-current) CLI, then re-exec the new script.
-  $CLI init --code "$CODE" --part "$PART" --server "$SERVER" --no-tmux-check >/dev/null 2>&1 || true
+  # --agent matters: without it init falls back to "claude" and wires @RELAYROOM.md
+  # into a CLAUDE.md that a codex/agy-only worktree has no use for.
+  $CLI init --code "$CODE" --part "$PART" --server "$SERVER" --agent "$AGENT" --no-tmux-check >/dev/null 2>&1 || true
   export RR_SELF_UPDATED=1
   exec "$ROOT/rr.sh" "$@"
 }
@@ -536,7 +538,7 @@ case "\${1:-help}" in
         # --no-tmux-check: regenerating rr.sh is maintenance, not launching the agent,
         # so it must work from anywhere (you usually update AFTER exiting tmux). The
         # tmux guard only matters for first-time \`relayroom init\`, which keeps it.
-        $CLI init --code "$CODE" --part "$PART" --server "$SERVER" --no-tmux-check ;;
+        $CLI init --code "$CODE" --part "$PART" --server "$SERVER" --agent "$AGENT" --no-tmux-check ;;
       *)
         # Re-pull just RELAYROOM.md from the hub - no npm needed (the CLI updates via
         # npm). The running agent caches the old copy, so re-read it afterwards.
