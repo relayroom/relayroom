@@ -1,7 +1,20 @@
 import "server-only"
 
-// Baked at image build (Dockerfile ARG RELAYROOM_VERSION). Falls back for local dev.
-export const CURRENT_VERSION = process.env.RELAYROOM_VERSION ?? "0.3.22"
+import pkg from "../package.json"
+
+// Baked at image build (Dockerfile ARG RELAYROOM_VERSION); falls back to the
+// package version for local dev and for images built without that build-arg.
+//
+// package.json is the single source of truth: changesets keeps the whole fixed
+// group (cli, install, db, shared, telemetry, server, web) in lockstep, so
+// reading it here makes version drift structurally impossible. Do not hardcode
+// a literal - a hardcoded fallback silently rots at whatever release last
+// remembered to bump it.
+//
+// `||`, not `??`: the Dockerfile declares ARG RELAYROOM_VERSION with no default,
+// so an image built without the build-arg sets the env to an empty string rather
+// than leaving it undefined. Empty must fall through too.
+export const CURRENT_VERSION = process.env.RELAYROOM_VERSION || pkg.version
 
 export interface VersionInfo {
   current: string

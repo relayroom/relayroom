@@ -19,9 +19,13 @@ COPY packages/telemetry packages/telemetry
 RUN chown -R node:node /app
 USER node
 
-# Baked release version: the single source the running app reports via telemetry
-# (RELAYROOM_VERSION). CI passes the release tag; defaults to the lockstep baseline.
-ARG RELAYROOM_VERSION=0.3.2
+# Baked release version: what the running app reports via telemetry. CI passes the
+# release tag (release-images.yml), so official images are correct. NO default here on
+# purpose - a hardcoded one silently rots (it sat at 0.3.2 through the 0.4.0 release and
+# every source build reported that). Empty means "not baked", and the consumer falls
+# back to the package.json version instead. Consumers must test it with `||`, not `??`:
+# the ENV below expands to an empty STRING, which `??` would pass through.
+ARG RELAYROOM_VERSION=
 ENV RELAYROOM_VERSION=${RELAYROOM_VERSION}
 
 EXPOSE 48801

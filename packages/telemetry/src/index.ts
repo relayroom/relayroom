@@ -5,6 +5,10 @@ import { and, desc, eq, isNull, sql } from "drizzle-orm";
 // loads migrate.ts (a runtime-only, server/CLI migration path).
 import { configurations } from "@relayroom/db/schema";
 import type { Db, DbOrTx } from "@relayroom/db/client";
+// Single source of truth for the reported version: this package's own version,
+// which changesets bumps in lockstep with the rest of the fixed group. A plain
+// JSON import (no runtime file read) so bundlers inline it and tsx resolves it.
+import pkg from "../package.json";
 
 // Stable lock key for serializing first-creates of global telemetry config.
 // pg_advisory_xact_lock keys are bigints; this is an arbitrary telemetry-namespace
@@ -26,7 +30,9 @@ import { computeRollups, type Rollup } from "./aggregate";
 
 const ENDPOINT =
   process.env.RELAYROOM_TELEMETRY_URL ?? "https://relayroom.dev/api/telemetry";
-const CE_VERSION = process.env.RELAYROOM_VERSION ?? "0.3.2";
+// `||`, not `??`: the images pass RELAYROOM_VERSION through as a build ARG, so an
+// unset ARG arrives as an empty string, which `??` would happily report as "".
+const CE_VERSION = process.env.RELAYROOM_VERSION || pkg.version;
 const EDITION = (process.env.RELAYROOM_EDITION ?? "ce") as "ce" | "ee";
 const SEND_TIMEOUT_MS = 8_000;
 const TICK_MS = 24 * 60 * 60 * 1000; // 24h
