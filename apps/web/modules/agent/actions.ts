@@ -3,6 +3,9 @@
 import { and, eq, inArray, isNull, or } from "drizzle-orm"
 import { randomBytes } from "node:crypto"
 import type { ApiResult, ApiResultWithItem } from "@relayroom/shared"
+// The client id and the scope FORMAT both come from shared: this module mints the
+// tokens and apps/server enforces them, so neither value may be restated here.
+import { INTERNAL_AGENT_CLIENT_ID, projectScope } from "@relayroom/shared"
 import {
   updateAgentSchema,
   type UpdateAgentInput,
@@ -356,9 +359,6 @@ async function recordMainChange(args: {
  *     The token is shown once to the user; they paste it into their agent config.
  *  5. Return ApiResultWithItem<{ token, connectionId }>.
  */
-/** RelayRoom internal OAuth client ID used for programmatic token issuance. */
-const INTERNAL_CLIENT_ID = "relayroom-internal-agent-client"
-
 /** Token TTL: 1 year (agents are long-lived). MCP OAuth flow will manage rotation. */
 const TOKEN_TTL_MS = 365 * 24 * 60 * 60 * 1000
 
@@ -368,14 +368,14 @@ async function ensureInternalOAuthClient() {
   const existing = await db
     .select({ clientId: better_auth_oauth_application.clientId })
     .from(better_auth_oauth_application)
-    .where(eq(better_auth_oauth_application.clientId, INTERNAL_CLIENT_ID))
+    .where(eq(better_auth_oauth_application.clientId, INTERNAL_AGENT_CLIENT_ID))
     .limit(1)
 
   if (existing.length === 0) {
     await db.insert(better_auth_oauth_application).values({
       id: `internal-client-${Date.now()}`,
       name: "RelayRoom Internal Agent Client",
-      clientId: INTERNAL_CLIENT_ID,
+      clientId: INTERNAL_AGENT_CLIENT_ID,
       clientSecret: null,
       redirectUrls: "urn:ietf:wg:oauth:2.0:oob",
       type: "internal",
@@ -494,9 +494,9 @@ export async function connectAgent(
       refreshToken: null,
       accessTokenExpiresAt: expiresAt,
       refreshTokenExpiresAt: null,
-      clientId: INTERNAL_CLIENT_ID,
+      clientId: INTERNAL_AGENT_CLIENT_ID,
       userId: session.user.id,
-      scopes: `project:${project.id}`,
+      scopes: projectScope(project.id),
       createdAt: now,
       updatedAt: now,
     })
