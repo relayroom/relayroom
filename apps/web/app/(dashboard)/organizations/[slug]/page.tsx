@@ -33,6 +33,7 @@ import {
 import { InviteForm } from "./invite-form"
 import { PendingInvitations } from "./pending-invitations"
 import { getTimeAgo } from "@/lib/time-ago"
+import { getDateFormatters } from "@/lib/date-format.server"
 
 export const dynamic = "force-dynamic"
 
@@ -42,10 +43,11 @@ interface Props {
 
 export default async function OrganizationDetailPage({ params }: Props) {
   const { slug } = await params
-  const [session, t, timeAgo] = await Promise.all([
+  const [session, t, timeAgo, { formatDate }] = await Promise.all([
     requireDashboardAccess(),
     getTranslations("org"),
     getTimeAgo(),
+    getDateFormatters(),
   ])
 
   // Fetch org by slug
@@ -144,7 +146,7 @@ export default async function OrganizationDetailPage({ params }: Props) {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground font-mono">
-                      {member.createdAt.toLocaleDateString()}
+                      {formatDate(member.createdAt.toISOString())}
                     </TableCell>
                   </TableRow>
                 ))}

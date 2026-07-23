@@ -6,7 +6,7 @@ import { requireDashboardAccess } from "@/lib/auth-session"
 import { resolveActiveOrgId } from "@/lib/active-org"
 import { getProjectBySlug } from "@/modules/project/queries"
 import { getThread } from "@/modules/thread/queries"
-import { formatDateTime } from "@/lib/format"
+import { getDateFormatters } from "@/lib/date-format.server"
 import { Badge } from "@/components/ui/badge"
 import { Markdown } from "@/components/markdown"
 import { resolveAgentColor } from "@/components/agent/agent-appearance"
@@ -32,6 +32,7 @@ interface Props {
 export default async function ThreadDetailPage({ params }: Props) {
   await requireDashboardAccess()
   const t = await getTranslations("project")
+  const { formatDateTime } = await getDateFormatters()
 
   const { slug, id } = await params
   const orgId = await resolveActiveOrgId()
