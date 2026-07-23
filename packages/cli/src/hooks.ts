@@ -1,7 +1,6 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { homedir } from "node:os"
-import { DEFAULT_SERVER } from "./constants"
 import { type AgentId } from "./providers"
 import { runtimePath } from "./runtime"
 
@@ -71,12 +70,26 @@ function defaultSettings(agent: AgentId): string {
  * turn's token usage to RelayRoom. `|| true` keeps a failed report from ever
  * blocking the agent; `--agent` tells the reporter which transcript format to
  * parse.
+ *
+ * The connect code is deliberately NOT baked in. It is a capability key (the
+ * server authenticates /usage, /unread, /relayroom-md and the wake endpoints
+ * with it), and this command lands in `.claude/settings.json` / `.gemini/
+ * settings.json` - project files that teams commit, unlike everything else the
+ * CLI writes, which init gitignores. The reporter resolves code/part from the
+ * worktree's `.relayroom/config.json` (gitignored, chmod 600) instead, which is
+ * already the recovery path for a restarted agent.
+ *
+ * Dropping it also fixes Codex: its hooks.json is GLOBAL, so a baked-in code
+ * made every project on the machine report as whichever one ran install last.
+ * Resolved from the turn's own directory, each project now reports as itself.
  */
 export function hookCommand(opts: HookOpts): string {
   const agent = opts.agent ?? "claude"
-  const server = opts.server ?? DEFAULT_SERVER
   const script = usageScriptPath()
-  return `node "${script}" --agent ${agent} --code "${opts.code}" --part "${opts.part}" --server "${server}" || true`
+  // --server stays: it is not a secret, and an explicit --server must keep
+  // winning over the saved config for a hook installed against another hub.
+  const server = opts.server ? ` --server "${opts.server}"` : ""
+  return `node "${script}" --agent ${agent}${server} || true`
 }
 
 interface HookGroup {

@@ -35,16 +35,26 @@ function arg(name, fb) {
   const i = process.argv.indexOf(`--${name}`)
   return i !== -1 && process.argv[i + 1] ? process.argv[i + 1] : fb
 }
-// Fall back to .relayroom/config.json so the hook works even when the command did
-// not bake in --code/--part (written by `relayroom init`).
-const CFG = (() => {
-  try { return JSON.parse(readFileSync(join(arg("dir", process.cwd()), ".relayroom", "config.json"), "utf8")) || {} }
+/** `.relayroom/config.json` for a worktree, or {} when there is none. */
+function readCfg(dir) {
+  try { return JSON.parse(readFileSync(join(dir, ".relayroom", "config.json"), "utf8")) || {} }
   catch { return {} }
-})()
+}
+/**
+ * Which worktree this turn belongs to: an explicit --dir, else the directory the
+ * agent reports in its hook payload, else this process's cwd. The payload's own
+ * `cwd` matters for Codex, whose hooks.json is machine-global and therefore fires
+ * for every project - the identity has to come from the turn, not from the hook.
+ * Identity itself (code/part) is NOT baked into the hook command: the connect code
+ * is a capability key and that command lands in a file teams commit.
+ */
+function resolveDir(payload) {
+  const explicit = arg("dir")
+  if (explicit) return explicit
+  if (payload && typeof payload.cwd === "string" && payload.cwd) return payload.cwd
+  return process.cwd()
+}
 const AGENT = arg("agent", "claude")
-const CODE = arg("code", CFG.code)
-const PART = arg("part", CFG.part)
-const SERVER = arg("server", CFG.server ?? "http://localhost:48801")
 
 // Rough $/MTok by model family (input, output) - approximate, for an at-a-glance
 // cost estimate. Token counts are exact; this is only the $ conversion.
@@ -192,15 +202,30 @@ function parseGemini(transcriptPath) {
 }
 
 async function main() {
-  if (!CODE || !PART) return // misconfigured hook - stay silent
-
   let payload = {}
   try {
     const stdin = readFileSync(0, "utf8")
     if (stdin.trim()) payload = JSON.parse(stdin)
   } catch { /* no/!json stdin */ }
+
+  // Identity comes from the worktree, so it can only be resolved once the payload
+  // (which names that worktree) has been read.
+  const dir = resolveDir(payload)
+  const cfg = readCfg(dir)
+  const CODE = arg("code", cfg.code)
+  const PART = arg("part", cfg.part)
+  const SERVER = arg("server", cfg.server ?? "http://localhost:48801")
+
   const transcriptPath = payload.transcript_path
-  dbg({ stage: "payload", agent: AGENT, hasCode: !!CODE, payloadKeys: Object.keys(payload), transcriptPath: transcriptPath ?? null })
+  dbg({ stage: "payload", agent: AGENT, dir, hasCode: !!CODE, payloadKeys: Object.keys(payload), transcriptPath: transcriptPath ?? null })
+  if (!CODE || !PART) {
+    // Was silent, which made a misconfigured hook look like a working one that
+    // simply had nothing to report. One stderr line: hooks run with `|| true`, so
+    // this can never block the agent.
+    dbg({ stage: "no-identity", agent: AGENT, dir })
+    console.error(`relayroom usage: no connect code/part for ${dir} - run \`relayroom init\` there (or pass --dir)`)
+    return
+  }
 
   // Claude and Gemini need the transcript path from the hook payload; Codex can
   // fall back to its newest rollout file if the path is absent.

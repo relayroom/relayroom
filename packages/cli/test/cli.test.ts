@@ -48,12 +48,15 @@ describe("mcpAddSpec", () => {
 })
 
 describe("hookCommand", () => {
-  it("embeds agent/code/part/server and never blocks the agent", () => {
+  it("embeds agent/server, keeps identity out of the file, and never blocks the agent", () => {
     const cmd = hookCommand({ agent: "claude", code: "c1", part: "backend", server: "http://localhost:48801" })
     expect(cmd).toContain("usage-report.mjs")
     expect(cmd).toContain("--agent claude")
-    expect(cmd).toContain(`--code "c1"`)
-    expect(cmd).toContain(`--part "backend"`)
+    expect(cmd).toContain(`--server "http://localhost:48801"`)
+    // The connect code is a capability key and this command is written into a
+    // settings file teams commit; the reporter reads identity from the worktree.
+    expect(cmd).not.toContain("c1")
+    expect(cmd).not.toContain("--part")
     expect(cmd.endsWith("|| true")).toBe(true)
   })
 })
