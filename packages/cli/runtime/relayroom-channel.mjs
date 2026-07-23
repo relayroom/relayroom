@@ -98,6 +98,14 @@ let initialized = false
 const SUPPORTED_PROTOCOLS = new Set(["2025-06-18", "2025-03-26", "2024-11-05"])
 const LATEST_PROTOCOL = "2025-06-18"
 
+// The version we advertise in the MCP handshake, read from the package we ship
+// inside - the same way the pager reports its version on each heartbeat. A literal
+// here would be a second copy of the release number that nothing bumps.
+const VERSION = (() => {
+  try { return JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version || null }
+  catch { return null }
+})()
+
 function handleRpc(msg) {
   // Requests carry an id and need a response; notifications (no id) do not.
   const { id, method } = msg
@@ -113,7 +121,9 @@ function handleRpc(msg) {
       result: {
         protocolVersion,
         capabilities: { experimental: { "claude/channel": {} } },
-        serverInfo: { name: "relayroom-channel", version: "0.1.0" },
+        // serverInfo.version must be a string; fall back only if package.json could
+        // not be read (a broken install), which is also what the CLI banner does.
+        serverInfo: { name: "relayroom-channel", version: VERSION ?? "0.0.0-dev" },
         instructions:
           'RelayRoom delivers new-message wakes here as <channel source="relayroom">. ' +
           "When one arrives, use the RelayRoom `inbox` MCP tool to read it (NOT curl/shell). " +
