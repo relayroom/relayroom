@@ -60,7 +60,7 @@ Use GitHub issues. For bugs, include the version or commit, your platform, repro
 
 RelayRoom is a young project, so the model is intentionally lightweight:
 
-- **Maintainers** review and merge PRs, set technical direction, and cut releases. They have the final say on scope and design.
+- **Maintainers** review and merge PRs, set technical direction, and cut releases (see [RELEASING.md](RELEASING.md)). They have the final say on scope and design.
 - **Contributors** open PRs and issues. Anyone can be a contributor.
 - **Triagers** keep the issue tracker healthy: labeling, reproducing, closing duplicates, and routing issues to the right area. Active contributors can be invited to triage.
 
