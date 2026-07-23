@@ -10,6 +10,7 @@ import {
   better_auth_invitation,
 } from "@relayroom/db/auth-schema"
 import { projects, projectAccess } from "@relayroom/db/schema"
+import { decideProjectAccess, type ProjectAccessLevel } from "@relayroom/shared"
 import { SIGN_IN_PATH, PENDING_PATH } from "@/constants/service"
 import { getErrorTranslations } from "./action-i18n"
 
@@ -236,15 +237,6 @@ export function notBannedFromProject(
   )`
 }
 
-/** Ranking for project_access.level comparisons (AC-1). Higher = more authority. */
-const PROJECT_ACCESS_RANK: Record<"readonly" | "write" | "owner", number> = {
-  readonly: 0,
-  write: 1,
-  owner: 2,
-}
-
-type ProjectAccessLevel = keyof typeof PROJECT_ACCESS_RANK
-
 /**
  * Authorize a project MUTATION by `project_access.level`, not merely org
  * membership (AC-1/AC-2). `requireOrgAccess`-style helpers only proved the caller
@@ -263,6 +255,13 @@ type ProjectAccessLevel = keyof typeof PROJECT_ACCESS_RANK
  * hold a verified session (they call `getServerSession()` beforehand), and
  * keeping session resolution out of this function means it depends only on
  * its (mockable, cross-module) inputs in tests.
+ *
+ * The rule itself now lives in `decideProjectAccess` (@relayroom/shared), so the
+ * MCP server can apply the same one. It could not import this function: this is
+ * Next-bound - it resolves translations and uses the web app's db handle - which
+ * is why a project-level gate was previously impossible to add server-side. What
+ * stays here is everything that is web-specific: looking the facts up, and
+ * turning a refusal into a translated message.
  */
 export async function requireProjectAccess(
   userId: string,
@@ -281,43 +280,44 @@ export async function requireProjectAccess(
     .limit(1)
   if (!project) return { ok: false, message: t("project.notFound") }
 
-  const [member] = await db
-    .select({ role: better_auth_member.role })
-    .from(better_auth_member)
-    .where(
-      and(
-        eq(better_auth_member.organizationId, project.organizationId),
-        eq(better_auth_member.userId, userId),
-      ),
-    )
-    .limit(1)
-  if (!member) return { ok: false, message: t("auth.noOrgAccess") }
-
-  // A member banned from THIS project has no authority, regardless of role/level.
-  if (await isBannedFromProject(projectId, userId)) {
-    return { ok: false, message: t("project.banned") }
-  }
-
-  let level: ProjectAccessLevel
-  if (member.role === "owner" || member.role === "admin") {
-    level = "owner"
-  } else {
-    const [pa] = await db
-      .select({ level: projectAccess.level })
+  // The grant row carries both facts the decision needs about this project, so
+  // it is read once: a ban and a level taken from two reads could disagree.
+  const [[member], [grant]] = await Promise.all([
+    db
+      .select({ role: better_auth_member.role })
+      .from(better_auth_member)
+      .where(
+        and(
+          eq(better_auth_member.organizationId, project.organizationId),
+          eq(better_auth_member.userId, userId),
+        ),
+      )
+      .limit(1),
+    db
+      .select({ level: projectAccess.level, bannedAt: projectAccess.bannedAt })
       .from(projectAccess)
       .where(and(eq(projectAccess.projectId, projectId), eq(projectAccess.userId, userId)))
-      .limit(1)
-    if (!pa || !(pa.level in PROJECT_ACCESS_RANK)) {
-      return { ok: false, message: t("project.accessDenied") }
-    }
-    level = pa.level as ProjectAccessLevel
+      .limit(1),
+  ])
+
+  const decision = decideProjectAccess(
+    { orgRole: member?.role, bannedAt: grant?.bannedAt, grantLevel: grant?.level },
+    minLevel,
+  )
+
+  if (!decision.ok) {
+    // The shared rule returns a reason, not copy - that is what lets the server
+    // reuse it. Turning reasons into text is this layer's job.
+    const message =
+      decision.reason === "not_org_member"
+        ? t("auth.noOrgAccess")
+        : decision.reason === "banned"
+          ? t("project.banned")
+          : t("project.accessDenied")
+    return { ok: false, message }
   }
 
-  if (PROJECT_ACCESS_RANK[level] < PROJECT_ACCESS_RANK[minLevel]) {
-    return { ok: false, message: t("project.accessDenied") }
-  }
-
-  return { ok: true, orgId: project.organizationId, level }
+  return { ok: true, orgId: project.organizationId, level: decision.level }
 }
 
 /**
