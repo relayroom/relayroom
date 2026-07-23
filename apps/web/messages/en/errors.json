@@ -74,7 +74,10 @@
     "recipientRequired": "Select the agents to address."
   },
   "knowledge": {
-    "listFailed": "We could not load the knowledge entries."
+    "listFailed": "We could not load the knowledge entries.",
+    "notFound": "This entry does not exist or you do not have access to it.",
+    "invalidTarget": "That is not a valid entry.",
+    "promoteFailed": "We could not confirm this entry."
   },
   "event": {
     "notFound": "This event does not exist or you do not have access to it.",

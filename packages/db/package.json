@@ -9,7 +9,8 @@
     "./client": "./src/client.ts",
     "./schema": "./src/schema.ts",
     "./auth-schema": "./src/auth-schema.ts",
-    "./governance": "./src/governance.ts"
+    "./governance": "./src/governance.ts",
+    "./knowledge": "./src/knowledge.ts"
   },
   "scripts": {
     "test": "vitest run",

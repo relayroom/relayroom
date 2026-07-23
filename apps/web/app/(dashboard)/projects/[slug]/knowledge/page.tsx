@@ -2,7 +2,7 @@ import { notFound } from "next/navigation"
 import Link from "next/link"
 import { getTranslations } from "next-intl/server"
 import { BrainIcon, CheckCircle2Icon, AlertTriangleIcon } from "lucide-react"
-import { requireDashboardAccess } from "@/lib/auth-session"
+import { requireDashboardAccess, requireProjectAccess } from "@/lib/auth-session"
 import { resolveActiveOrgId } from "@/lib/active-org"
 import { getProjectBySlug } from "@/modules/project/queries"
 import {
@@ -15,6 +15,7 @@ import {
 import { getDateFormatters } from "@/lib/date-format.server"
 import { Badge } from "@/components/ui/badge"
 import { Pagination } from "@/components/ui/pagination"
+import { PromoteButton } from "./promote-button"
 
 export const dynamic = "force-dynamic"
 
@@ -33,7 +34,7 @@ function titleKey(value: string): string {
 }
 
 export default async function KnowledgePage({ params, searchParams }: Props) {
-  await requireDashboardAccess()
+  const session = await requireDashboardAccess()
   const [t, { formatDateTime }] = await Promise.all([
     getTranslations("project"),
     getDateFormatters(),
@@ -53,6 +54,10 @@ export default async function KnowledgePage({ params, searchParams }: Props) {
   // bookmark should still show the list.
   const stateFilter = sp.state && isKnowledgeState(sp.state) ? sp.state : undefined
   const page = Math.max(1, Number.parseInt(sp.page ?? "1", 10) || 1)
+
+  // Whether to OFFER the action. The action re-checks on its own - a Server
+  // Action is reachable without the button, so this only decides what is drawn.
+  const canPromote = (await requireProjectAccess(session.user.id, project.id, "owner")).ok
 
   const [result, counts] = await Promise.all([
     listKnowledge(project.id, { state: stateFilter, page, limit: PAGE_SIZE }),
@@ -138,6 +143,8 @@ export default async function KnowledgePage({ params, searchParams }: Props) {
               <KnowledgeItem
                 key={entry.id}
                 entry={entry}
+                projectId={project.id}
+                canPromote={canPromote}
                 t={t}
                 formatDateTime={formatDateTime}
               />
@@ -170,10 +177,14 @@ function stateVariant(state: string): "default" | "secondary" | "destructive" | 
 
 function KnowledgeItem({
   entry,
+  projectId,
+  canPromote,
   t,
   formatDateTime,
 }: {
   entry: KnowledgeRow
+  projectId: string
+  canPromote: boolean
   t: Awaited<ReturnType<typeof getTranslations<"project">>>
   formatDateTime: (iso: string) => string
 }) {
@@ -189,6 +200,11 @@ function KnowledgeItem({
         <Badge variant={stateVariant(entry.validationState)} className="shrink-0 text-xs">
           {t(`knowledge.state${titleKey(entry.validationState)}` as Parameters<typeof t>[0])}
         </Badge>
+        {/* Only a candidate can be promoted; the other three states are not
+            waiting on a decision, so no button is offered for them. */}
+        {canPromote && entry.validationState === "candidate" && (
+          <PromoteButton projectId={projectId} knowledgeId={entry.id} />
+        )}
       </div>
 
       <p className="line-clamp-3 whitespace-pre-wrap text-sm text-muted-foreground">{entry.body}</p>

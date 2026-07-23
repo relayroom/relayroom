@@ -204,6 +204,15 @@
     "supportLabel": "{count, plural, =0 {No confirmations yet} =1 {1 independent confirmation} other {# independent confirmations}}",
     "paginationInfo": "{start}-{end} of {total}"
   },
+  "knowledgePromote": {
+    "button": "Confirm",
+    "confirmTitle": "Confirm this claim?",
+    "confirmBody": "Confirming marks it trusted, so agents will retrieve and act on it. It is recorded in the project's ledger as your decision, and there is no undo here - a confirmed claim is only unwound by evidence that contradicts it.",
+    "toastPending": "Recording your confirmation...",
+    "toastDone": "Confirmed. Agents can now retrieve this.",
+    "toastError": "We could not confirm this entry.",
+    "ownerOnlyHint": "Only a project owner can confirm a claim."
+  },
   "eventDetail": {
     "backToList": "Event list",
     "sectionLineage": "Event lineage",

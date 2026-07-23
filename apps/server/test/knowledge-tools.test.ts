@@ -29,19 +29,21 @@ afterAll(async () => {
 const SFX = randomBytes(5).toString('hex')
 const USER = `kt-user-${SFX}`
 const READER = `kt-reader-${SFX}`
+const ORG_OWNER = `kt-orgowner-${SFX}`
 const ORG = `kt-org-${SFX}`
 const CODE = `kt-cc-${SFX}`
 const TOKEN = randomBytes(24).toString('hex')
 const READER_TOKEN = randomBytes(24).toString('hex')
+const ORG_OWNER_TOKEN = randomBytes(24).toString('hex')
 let projectId: string
 
-async function seedUser(id: string) {
+async function seedUser(id: string, orgRole = 'member') {
   await rawSql`
     INSERT INTO better_auth_user (id, name, email, email_verified, created_at, updated_at)
     VALUES (${id}, ${id}, ${id + '@kt.test'}, true, NOW(), NOW())`
   await rawSql`
     INSERT INTO better_auth_member (id, organization_id, user_id, role, created_at)
-    VALUES (${'kt-mem-' + randomBytes(4).toString('hex')}, ${ORG}, ${id}, 'member', NOW())`
+    VALUES (${'kt-mem-' + randomBytes(4).toString('hex')}, ${ORG}, ${id}, ${orgRole}, NOW())`
 }
 
 async function mintToken(raw: string, userId: string) {
@@ -64,6 +66,10 @@ beforeAll(async () => {
     VALUES (${ORG}, 'Knowledge Org', NOW())`
   await seedUser(USER)
   await seedUser(READER)
+  // An org owner with NO project_access row: the case the interim gate refused and
+  // the shared helper allows, because an org manager administers every project in
+  // the org without needing a grant in each one.
+  await seedUser(ORG_OWNER, 'owner')
 
   const [proj] = await db.insert(projects).values({
     organizationId: ORG, slug: `kt-${SFX}`, name: 'Knowledge Project', connectCode: CODE,
@@ -72,11 +78,13 @@ beforeAll(async () => {
 
   await db.insert(agents).values({ projectId, part: 'writer', ownerUserId: USER })
   await db.insert(agents).values({ projectId, part: 'reader', ownerUserId: READER })
+  await db.insert(agents).values({ projectId, part: 'orgowner', ownerUserId: ORG_OWNER })
   // The writer has write access; the reader is a member with none granted.
   await db.insert(projectAccess).values({ projectId, userId: USER, level: 'write' })
 
   await mintToken(TOKEN, USER)
   await mintToken(READER_TOKEN, READER)
+  await mintToken(ORG_OWNER_TOKEN, ORG_OWNER)
 })
 
 beforeEach(() => {
@@ -150,6 +158,18 @@ describe('learn', () => {
       .from(knowledge)
       .where(and(eq(knowledge.projectId, projectId), eq(knowledge.sourceKind, 'learn')))
     expect(rows.every(r => r.state === 'candidate')).toBe(true)
+  })
+
+  it('accepts an org owner who has no project_access row', async () => {
+    // The rule lives in decideProjectAccess, shared with the dashboard, so an org
+    // manager is an owner everywhere in the org. This is the behaviour the interim
+    // gate did not have, and the reason it was marked as replace-me rather than
+    // extend-me.
+    const r = await callTool('orgowner', ORG_OWNER_TOKEN, 'learn', {
+      title: 'org owners can record lessons', body: 'without a per-project grant', kind: 'fact',
+    })
+    expect(r.isError).toBe(false)
+    expect(JSON.parse(r.text).validationState).toBe('candidate')
   })
 
   it('refuses a caller without write access', async () => {
