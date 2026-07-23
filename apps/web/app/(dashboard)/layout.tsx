@@ -41,8 +41,8 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   // attention count; getGovernanceAlertCount returns 0 for non-managers.
   const [attentionCount, openThreadCount, governanceCount] = activeOrgId
     ? await Promise.all([
-        getAttentionCount(activeOrgId),
-        getOpenThreadCount(activeOrgId),
+        getAttentionCount(activeOrgId, session.user.id),
+        getOpenThreadCount(activeOrgId, session.user.id),
         getGovernanceAlertCount(activeOrgId, session.user.id),
       ])
     : [0, 0, 0]

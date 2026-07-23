@@ -1,7 +1,7 @@
 import { headers } from "next/headers"
 import { redirect } from "next/navigation"
 import { cache } from "react"
-import { and, count, eq } from "drizzle-orm"
+import { and, count, eq, sql, type AnyColumn, type SQL } from "drizzle-orm"
 import { auth } from "./auth"
 import { db } from "./db"
 import {
@@ -210,6 +210,31 @@ export const isBannedFromProject = cache(
     return row?.bannedAt != null
   },
 )
+
+/**
+ * SQL predicate form of `isBannedFromProject`, negated: true for projects the
+ * user is NOT banned from.
+ *
+ * `isBannedFromProject` answers for ONE known project, so it fits a page/action
+ * gate that has already resolved which project it is about. It does not fit a
+ * listing, where the project set is what the query is computing - checking it per
+ * row means a round trip per row, and the rows must be filtered inside the query
+ * anyway so that LIMIT and counts stay correct. This is the same rule expressed
+ * where a list query can apply it.
+ *
+ * Pass the `project.id` column of the query being filtered.
+ */
+export function notBannedFromProject(
+  projectIdColumn: AnyColumn | SQL,
+  userId: string,
+): SQL {
+  return sql`not exists (
+    select 1 from ${projectAccess}
+    where ${projectAccess.projectId} = ${projectIdColumn}
+      and ${projectAccess.userId} = ${userId}
+      and ${projectAccess.bannedAt} is not null
+  )`
+}
 
 /** Ranking for project_access.level comparisons (AC-1). Higher = more authority. */
 const PROJECT_ACCESS_RANK: Record<"readonly" | "write" | "owner", number> = {

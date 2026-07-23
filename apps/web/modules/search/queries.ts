@@ -36,9 +36,8 @@ function likeArg(q: string): string {
 /**
  * Search threads (subject / message body / tags), events (type / note /
  * spawned label), and agents (part / nickname / badge) across the projects the
- * user can access (any project_access level = read-only or above). Scoped at the
- * SQL level, so a user never sees content from projects they are not a member
- * of. Each category is capped; ordered most-recent first.
+ * user can access. Scoped at the SQL level, so a user never sees content from
+ * projects they cannot reach. Each category is capped; ordered most-recent first.
  */
 export async function searchDashboard(
   userId: string,
@@ -47,9 +46,36 @@ export async function searchDashboard(
   const q = query.trim()
   if (q.length < 2) return EMPTY
   const like = likeArg(q)
-  // Projects the user has ACTIVE access to (the search scope). Exclude banned rows -
-  // a banned member must not keep reading threads/messages/agents via search.
-  const scope = sql`(SELECT project_id FROM project_access WHERE user_id = ${userId} AND banned_at IS NULL)`
+  // The search scope must be the SAME notion of "projects this user can reach"
+  // that requireProjectAccess (lib/auth-session.ts) enforces, or search silently
+  // disagrees with the rest of the dashboard. Two rules there, both reproduced here:
+  //
+  //   1. an explicit project_access row grants access, and
+  //   2. an org owner/admin counts as a project owner even with NO row, so that
+  //      nobody who administers a project is locked out of it.
+  //
+  // Scoping on rule 1 alone meant an org admin who neither created the project nor
+  // was granted a row could open and manage it in the UI while search returned
+  // nothing for it. Either way a project-scope ban wins and removes the project.
+  const scope = sql`(
+    SELECT p.id FROM project p
+    WHERE NOT EXISTS (
+        SELECT 1 FROM project_access pa
+        WHERE pa.project_id = p.id AND pa.user_id = ${userId} AND pa.banned_at IS NOT NULL
+      )
+      AND (
+        EXISTS (
+          SELECT 1 FROM project_access pa
+          WHERE pa.project_id = p.id AND pa.user_id = ${userId}
+        )
+        OR EXISTS (
+          SELECT 1 FROM better_auth_member m
+          WHERE m.organization_id = p.organization_id
+            AND m.user_id = ${userId}
+            AND m.role IN ('owner', 'admin')
+        )
+      )
+  )`
 
   try {
     const [threadRes, eventRes, agentRes] = await Promise.all([

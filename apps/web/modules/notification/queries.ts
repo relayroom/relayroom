@@ -3,6 +3,7 @@ import { alias } from "drizzle-orm/pg-core"
 import type { ApiResultWithItems } from "@relayroom/shared"
 import { NEEDS_HUMAN_TAG } from "@relayroom/shared"
 import { db } from "@/modules/drizzle/db"
+import { notBannedFromProject } from "@/lib/auth-session"
 import { governanceAlerts, projects, projectAccess, threads, agents } from "@relayroom/db/schema"
 import { better_auth_member, better_auth_user } from "@relayroom/db/auth-schema"
 
@@ -14,13 +15,22 @@ import { better_auth_member, better_auth_user } from "@relayroom/db/auth-schema"
  * response). Scoped to the org, so it reflects the active workspace. Returns 0
  * on any error so the topbar never breaks.
  */
-export async function getOpenThreadCount(orgId: string): Promise<number> {
+export async function getOpenThreadCount(
+  orgId: string,
+  viewerUserId?: string,
+): Promise<number> {
   try {
     const [row] = await db
       .select({ n: count() })
       .from(threads)
       .innerJoin(projects, eq(threads.projectId, projects.id))
-      .where(and(eq(projects.organizationId, orgId), eq(threads.status, "open")))
+      .where(
+        and(
+          eq(projects.organizationId, orgId),
+          eq(threads.status, "open"),
+          ...(viewerUserId ? [notBannedFromProject(projects.id, viewerUserId)] : []),
+        ),
+      )
     return row?.n ?? 0
   } catch (err) {
     console.error("[getOpenThreadCount]", err)
@@ -35,7 +45,10 @@ export async function getOpenThreadCount(orgId: string): Promise<number> {
  * replies (auto) or dismisses it. Distinct from getOpenThreadCount, which is the
  * ambient, agent-driven activity metric shown in the sidebar.
  */
-export async function getAttentionCount(orgId: string): Promise<number> {
+export async function getAttentionCount(
+  orgId: string,
+  viewerUserId?: string,
+): Promise<number> {
   try {
     const [row] = await db
       .select({ n: count() })
@@ -46,6 +59,7 @@ export async function getAttentionCount(orgId: string): Promise<number> {
           eq(projects.organizationId, orgId),
           notInArray(threads.status, ["closed", "canceled"]),
           sql`${NEEDS_HUMAN_TAG} = ANY(${threads.tags})`,
+          ...(viewerUserId ? [notBannedFromProject(projects.id, viewerUserId)] : []),
         ),
       )
     return row?.n ?? 0
@@ -115,10 +129,15 @@ async function selectInboxThreads(where: SQL): Promise<InboxThread[]> {
  */
 export async function getOpenThreadsForOrg(
   orgId: string,
+  viewerUserId?: string,
 ): Promise<ApiResultWithItems<InboxThread>> {
   try {
     const rows = await selectInboxThreads(
-      and(eq(projects.organizationId, orgId), eq(threads.status, "open"))!,
+      and(
+        eq(projects.organizationId, orgId),
+        eq(threads.status, "open"),
+        ...(viewerUserId ? [notBannedFromProject(projects.id, viewerUserId)] : []),
+      )!,
     )
     return { result: true, totalCount: rows.length, items: rows }
   } catch (err) {
@@ -267,6 +286,7 @@ export async function getGovernanceAlertsForManager(
  */
 export async function getAttentionThreadsForOrg(
   orgId: string,
+  viewerUserId?: string,
 ): Promise<ApiResultWithItems<InboxThread>> {
   try {
     const rows = await selectInboxThreads(
@@ -274,6 +294,7 @@ export async function getAttentionThreadsForOrg(
         eq(projects.organizationId, orgId),
         notInArray(threads.status, ["closed", "canceled"]),
         sql`${NEEDS_HUMAN_TAG} = ANY(${threads.tags})`,
+        ...(viewerUserId ? [notBannedFromProject(projects.id, viewerUserId)] : []),
       )!,
     )
     return { result: true, totalCount: rows.length, items: rows }
