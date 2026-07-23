@@ -22,18 +22,34 @@ export interface VersionInfo {
   updateAvailable: boolean
 }
 
-function parts(v: string): number[] {
-  return v.replace(/^v/, "").split(".").map((n) => Number.parseInt(n, 10) || 0)
+/**
+ * Parse "1.2.3" (or "v1.2.3", or "1.2.3-rc.1") into [major, minor, patch].
+ *
+ * Returns null - never a zero-filled tuple - when the string is not a parseable
+ * release version. Callers must treat null as "unknown". The previous
+ * `Number.parseInt(n, 10) || 0` collapsed both an unparseable segment and a
+ * missing one into 0, so an unknown version silently became 0.0.0 and compared
+ * as older than every real release.
+ */
+function parts(v: string): [number, number, number] | null {
+  const m = /^v?(\d+)\.(\d+)\.(\d+)/.exec(v.trim())
+  if (!m) return null
+  return [Number(m[1]), Number(m[2]), Number(m[3])]
 }
 
-/** True if `latest` is a higher semver than `current` (major.minor.patch). */
+/**
+ * True if `latest` is a higher semver than `current` (major.minor.patch).
+ *
+ * Unknown on either side is not "older" - it is unknown, and we say no. A false
+ * "update available" tells someone already on the newest release to go upgrade,
+ * which is worse than staying quiet about an upgrade that does exist.
+ */
 function isNewer(latest: string, current: string): boolean {
   const a = parts(latest)
   const b = parts(current)
+  if (!a || !b) return false
   for (let i = 0; i < 3; i++) {
-    const x = a[i] ?? 0
-    const y = b[i] ?? 0
-    if (x !== y) return x > y
+    if (a[i] !== b[i]) return a[i] > b[i]
   }
   return false
 }
