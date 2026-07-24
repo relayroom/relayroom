@@ -83,7 +83,8 @@
     "noAgentsTipBody": "Add a main agent first to get this project started.",
     "aboutLabel": "About",
     "expand": "Expand",
-    "collapse": "Collapse"
+    "collapse": "Collapse",
+    "agentsTitle": "Connected agents"
   },
   "threads": {
     "pageTitle": "Threads",

@@ -1,6 +1,7 @@
 "use client"
 
 import { useMemo, useState } from "react"
+import { LoadError } from "@/components/load-error"
 import { useRouter } from "next/navigation"
 import { useTranslations } from "next-intl"
 import { useForm } from "react-hook-form"
@@ -34,6 +35,12 @@ interface Props {
   /** The project's own claims - the picker never offers another project's id. */
   claims: ClaimOption[]
   mappings: MappingRow[]
+  /**
+   * Set when the claim list failed to load. Without it an empty picker reads as
+   * "this project has no claims to map", which is a statement about the data we
+   * did not manage to read.
+   */
+  claimsError?: string
 }
 
 /**
@@ -44,7 +51,7 @@ interface Props {
  * composite FK reject one anyway. The check name is free text because the CI
  * author, not us, owns what a check is called.
  */
-export function CheckMapManager({ projectId, claims, mappings }: Props) {
+export function CheckMapManager({ projectId, claims, mappings, claimsError }: Props) {
   const t = useTranslations("project")
   const router = useRouter()
   const { confirm, confirmDialog } = useConfirm()
@@ -130,6 +137,7 @@ export function CheckMapManager({ projectId, claims, mappings }: Props) {
           <Label htmlFor="knowledgeId" className="text-xs">
             {t("knowledgeAttest.mapClaimLabel")}
           </Label>
+          {claimsError && <LoadError variant="inline" className="mb-2" message={claimsError} />}
           <select
             id="knowledgeId"
             className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"

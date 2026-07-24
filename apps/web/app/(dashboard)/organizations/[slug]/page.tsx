@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation"
+import { LoadError } from "@/components/load-error"
 import Link from "next/link"
 import { eq } from "drizzle-orm"
 import { PlusIcon, FolderOpenIcon, BotIcon, UsersIcon } from "lucide-react"
@@ -204,7 +205,9 @@ export default async function OrganizationDetailPage({ params }: Props) {
           </Button>
         </CardHeader>
         <CardContent>
-          {orgProjects.length === 0 ? (
+          {!projectsResult.result ? (
+            <LoadError variant="inline" message={projectsResult.message} />
+          ) : orgProjects.length === 0 ? (
             <div className="rounded-md border border-dashed border-border p-8 text-center space-y-2">
               <p className="text-sm text-muted-foreground">{t("detail.projectsEmpty")}</p>
               <Button render={<Link href="/projects/new" />} size="sm" variant="ghost">

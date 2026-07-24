@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { getUsageSeriesForProject } from "@/modules/usage/queries"
 import { ProjectDescriptionCard } from "./project-description-card"
+import { LoadError } from "@/components/load-error"
 import { UsageChart } from "@/components/dashboard/usage-chart"
 import { ThreadListItem } from "@/components/thread/thread-list-item"
 import { EventListItem } from "@/components/event/event-list-item"
@@ -83,8 +84,10 @@ export default async function ProjectOverviewPage({ params }: Props) {
 
   return (
     <div className="py-6 px-4 xs:px-6 space-y-6 max-w-6xl mx-auto">
-      {/* First-run tip: no agents yet → guide to add the main agent */}
-      {agents.length === 0 && (
+      {/* First-run tip: no agents yet → guide to add the main agent. Gated on the
+          read succeeding: on failure this would greet an established project with
+          "you have no agents yet". */}
+      {agentsResult.result && agents.length === 0 && (
         <div className="flex flex-col gap-3 rounded-lg border border-amber-300/50 bg-amber-50/60 p-4 sm:flex-row sm:items-center sm:justify-between dark:border-amber-900/50 dark:bg-amber-950/20">
           <div className="flex items-start gap-2.5">
             <InfoIcon className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
@@ -190,11 +193,15 @@ export default async function ProjectOverviewPage({ params }: Props) {
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-sm">
-                {t("overview.connectedAgents", { count: agents.length })}
+                {agentsResult.result
+                  ? t("overview.connectedAgents", { count: agents.length })
+                  : t("overview.agentsTitle")}
               </CardTitle>
             </CardHeader>
             <CardContent className="pt-0">
-              {agents.length === 0 ? (
+              {!agentsResult.result ? (
+                <LoadError variant="inline" message={agentsResult.message} />
+              ) : agents.length === 0 ? (
                 <p className="text-xs text-muted-foreground py-2">
                   {t("overview.noAgents")}{" "}
                   <Link
@@ -260,7 +267,9 @@ export default async function ProjectOverviewPage({ params }: Props) {
               </Link>
             </CardHeader>
             <CardContent className="pt-0">
-              {threads.length === 0 ? (
+              {!threadsResult.result ? (
+                <LoadError variant="inline" message={threadsResult.message} />
+              ) : threads.length === 0 ? (
                 <p className="text-xs text-muted-foreground py-2">{t("overview.noThreads")}</p>
               ) : (
                 <div className="divide-y divide-border">
@@ -291,7 +300,9 @@ export default async function ProjectOverviewPage({ params }: Props) {
               </Link>
             </CardHeader>
             <CardContent className="pt-0">
-              {events.length === 0 ? (
+              {!eventsResult.result ? (
+                <LoadError variant="inline" message={eventsResult.message} />
+              ) : events.length === 0 ? (
                 <p className="text-xs text-muted-foreground py-2">{t("overview.noEvents")}</p>
               ) : (
                 <div className="divide-y divide-border">

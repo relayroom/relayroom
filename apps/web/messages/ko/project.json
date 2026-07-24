@@ -83,7 +83,8 @@
     "noAgentsTipBody": "메인 에이전트를 먼저 추가해 프로젝트를 시작하세요.",
     "aboutLabel": "설명",
     "expand": "펼치기",
-    "collapse": "접기"
+    "collapse": "접기",
+    "agentsTitle": "연결된 에이전트"
   },
   "threads": {
     "pageTitle": "스레드",
