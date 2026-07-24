@@ -53,11 +53,10 @@ export async function listMyOrganizations(
         createdAt: better_auth_organization.createdAt,
       })
       .from(better_auth_organization)
-      .where(
-        orgIds.length === 1
-          ? eq(better_auth_organization.id, orgIds[0]!)
-          : inArray(better_auth_organization.id, orgIds),
-      )
+      // No one/many split: inArray handles both, and a split branch is only ever
+      // half-exercised (see the uuid = text bug this pattern caused in the
+      // dashboard summary).
+      .where(inArray(better_auth_organization.id, orgIds))
 
     // Member counts per org
     const memberCounts = await db
@@ -66,11 +65,7 @@ export async function listMyOrganizations(
         memberCount: count(),
       })
       .from(better_auth_member)
-      .where(
-        orgIds.length === 1
-          ? eq(better_auth_member.organizationId, orgIds[0]!)
-          : inArray(better_auth_member.organizationId, orgIds),
-      )
+      .where(inArray(better_auth_member.organizationId, orgIds))
       .groupBy(better_auth_member.organizationId)
 
     const countByOrgId = Object.fromEntries(

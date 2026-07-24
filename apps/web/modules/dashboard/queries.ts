@@ -1,4 +1,4 @@
-import { and, count, desc, eq, isNull, ne, sql } from "drizzle-orm"
+import { and, count, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm"
 
 // The virtual 'human' participant (server HUMAN_PART) is not a connectable agent,
 // so it is excluded from dashboard agent counts and the status summary.
@@ -102,9 +102,13 @@ export async function getDashboardSummary(
         .from(agents)
         .where(
           and(
-            projectIds.length === 1
-              ? eq(agents.projectId, projectIds[0]!)
-              : sql`${agents.projectId} = ANY(ARRAY[${sql.join(projectIds.map((id) => sql`${id}`), sql`, `)}]::text[])`,
+            // inArray, not a hand-built ANY(ARRAY[...]): agent.project_id is uuid,
+            // and the old literal cast to ::text[] made Postgres reject the whole
+            // query with "operator does not exist: uuid = text". Drizzle casts to
+            // the column's own type. There is also no one/many split any more - the
+            // single-id branch was the only one exercised by an org with one
+            // project, so the other side rotted unnoticed until an org had two.
+            inArray(agents.projectId, projectIds),
             isNull(agents.deletedAt),
             ne(agents.part, HUMAN_PART),
           ),
