@@ -4,6 +4,33 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.5.1] - 2026-07-24
+
+Patch release. No database migration. The CLI packages are unchanged and move only
+because the whole set releases in lockstep.
+
+### Fixed
+- **The dashboard summary failed for any organization with two or more projects.**
+  It selected agents one way for a single project and another way for several, and the
+  second path compared a `uuid` column against a `text[]`, which Postgres refuses
+  outright. The query threw, and the projects, agents and organizations widgets went
+  dark together. A single-project organization took the other path and was unaffected,
+  which is how this survived: **the broken branch was load-bearing in production and had
+  never once run in a test.** The split is gone rather than patched, since it was not an
+  optimisation - it was the reason one side could rot unnoticed. The new tests default to
+  two projects, because the cases anyone would write first are exactly the two that pass
+  against the old code.
+
+  This is older than 0.5.0. It became visible only because 0.5.0 stopped rendering failed
+  reads as a loading state, so the dashboard finally said it had failed instead of
+  animating a skeleton indefinitely.
+
+### Changed
+- **The knowledge proposals and CI-attestation pages now use the same container width as
+  the rest of the app.** They were written as though a form page should be narrow, but
+  this app's settings pages are already full width, so they simply looked misaligned
+  beside their neighbours.
+
 ## [0.5.0] - 2026-07-24
 
 Project Knowledge. Migrations `0015` through `0019` apply on startup.
