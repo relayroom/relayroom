@@ -600,3 +600,66 @@ export const knowledgeMetricDaily = pgTable('knowledge_metric_daily', {
 }, t => [
   primaryKey({ columns: [t.projectId, t.day] }),
 ])
+
+// ── knowledge_proposal (L4) ────────────────────────────────────────────────────
+// The reflection proposer's review queue. A recurring failure signature becomes a
+// PROPOSED knowledge or playbook diff that a human approves; nothing here ever
+// auto-applies (self-modifying playbook was named a risk). Each row is an argument
+// - evidence, a hypothesis, and what would disconfirm it - not a bare edit, so a
+// person can judge it. The proposer (server) writes pending rows; the dashboard
+// decides them.
+export const knowledgeProposals = pgTable('knowledge_proposal', {
+  id: uuidPk(),
+  projectId: uuid('project_id').notNull()
+    .references(() => projects.id, { onDelete: 'cascade' }),
+  status: text('status').notNull().default('pending'), // pending | approved | rejected | superseded
+  target: text('target').notNull(),                    // knowledge | playbook
+  evidence: jsonb('evidence').$type<{ signature?: string; eventIds?: string[]; knowledgeIds?: string[]; count?: number; agents?: number }>()
+    .notNull().default(sql`'{}'::jsonb`),
+  hypothesis: text('hypothesis').notNull(),
+  disconfirming: text('disconfirming'),                // the condition that would make this wrong
+  // target=knowledge: { title, body, kind, claimType }. target=playbook: { patch }
+  // against the human-editable body only, never the L5 dynamic block.
+  change: jsonb('change').$type<Record<string, unknown>>().notNull(),
+  triggerSignature: text('trigger_signature'),         // the error signature that fired it
+  createdByJob: text('created_by_job').notNull().default('proposer'),
+  decidedByUserId: text('decided_by_user_id')
+    .references(() => better_auth_user.id, { onDelete: 'set null' }),
+  decidedAt: timestamp('decided_at', { withTimezone: true }),
+  // The approve/reject audit row. A plain forward FK - knowledgeAudits is defined
+  // above and nothing points back, so no deferral is needed (unlike the self-refs).
+  auditId: uuid('audit_id').references(() => knowledgeAudits.id, { onDelete: 'set null' }),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, t => [
+  index('knowledge_proposal_project_status_idx').on(t.projectId, t.status),
+  // One OPEN proposal per (project, signature). A partial unique index on
+  // status='pending' stops the proposer re-queuing a signature that already has a
+  // pending proposal, while still allowing a re-propose after one is decided.
+  uniqueIndex('knowledge_proposal_open_signature_idx')
+    .on(t.projectId, t.triggerSignature).where(sql`status = 'pending'`),
+  check('knowledge_proposal_status_ck', sql`${t.status} in ('pending','approved','rejected','superseded')`),
+  check('knowledge_proposal_target_ck', sql`${t.target} in ('knowledge','playbook')`),
+])
+
+// ── playbook_version (L4) ──────────────────────────────────────────────────────
+// Append-only history of the human-editable RELAYROOM.md body, so a rollback is a
+// NEW version whose content equals a prior one - never a destructive overwrite.
+// `projects.relayroomMd` stays the live served copy; this is the ledger behind it.
+// It snapshots only the authored body, never the L5 dynamic trusted-facts block.
+export const playbookVersions = pgTable('playbook_version', {
+  id: uuidPk(),
+  projectId: uuid('project_id').notNull()
+    .references(() => projects.id, { onDelete: 'cascade' }),
+  version: integer('version').notNull(),               // monotonic per project, starts at 1
+  content: text('content').notNull(),                  // full snapshot of the authored body at this version
+  contentHash: text('content_hash').notNull(),         // sha256 of content; the hash rr.sh reports (L5)
+  note: text('note'),                                  // what changed / proposal ref
+  proposalId: uuid('proposal_id')
+    .references(() => knowledgeProposals.id, { onDelete: 'set null' }),
+  createdByUserId: text('created_by_user_id')
+    .references(() => better_auth_user.id, { onDelete: 'set null' }),
+  createdAt: createdAt(),
+}, t => [
+  uniqueIndex('playbook_version_project_version_idx').on(t.projectId, t.version),
+])
