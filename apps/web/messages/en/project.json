@@ -685,6 +685,7 @@
     "handoffNote": "One CLI is the recommended default. Each time a CLI runs out of budget and hands the baton to the next, the new CLI starts with an empty context and re-reads RELAYROOM.md and the work so far. So every handoff costs tokens in proportion to the accumulated context - the longer the history, the bigger the bill, and it can eat the savings you were chasing. Only worth it if you understand that cost. For long tasks, leave periodic summaries so handoffs stay cheap.",
     "switchHint": "To switch: in the same tmux session, quit the current CLI and start another. Leave the pager running - it wakes whichever CLI is in front.",
     "multiToggle": "I want to connect multiple CLIs (check to enable multi-select)",
-    "bypassToggle": "Bypass mode (skip all approval prompts on launch)"
+    "bypassToggle": "Bypass mode: skip all approval prompts on launch",
+    "bypassHint": "On by default. Nobody watches this session, so an agent stopped at an approval prompt waits forever. Unchecking restores every permission check - and the agent will sit at the first one until you answer it yourself."
   }
 }
