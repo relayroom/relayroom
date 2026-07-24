@@ -7,7 +7,7 @@
  * attestation fails closed rather than a forged one passing. Everything about it
  * is therefore deliberate and must not be "tidied":
  *
- *   - the SEVEN fields appear in this FIXED order, never sorted, never the object's
+ *   - the EIGHT fields appear in this FIXED order, never sorted, never the object's
  *     insertion order;
  *   - no whitespace between tokens;
  *   - values are JSON-escaped (JSON.stringify per value), so a quote or backslash
@@ -16,7 +16,7 @@
  * It is NOT `JSON.stringify(wholeObject)`: that would leave field order at the
  * mercy of how the object was built and would silently include any extra key. This
  * lists the fields explicitly, which is the point - an attestation carrying an
- * eighth field signs the same seven, and the eighth cannot influence the signature.
+ * ninth field signs the same eight, and the ninth cannot influence the signature.
  */
 import { createHmac, timingSafeEqual } from 'node:crypto'
 
