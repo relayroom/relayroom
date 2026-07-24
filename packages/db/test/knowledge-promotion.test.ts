@@ -175,6 +175,51 @@ describe('knowledge promotion transaction', () => {
     })
   })
 
+  it('returns the validation id and stored counted, for the attest response', async () => {
+    // The attest endpoint answers { validationId, counted }; both come from here so
+    // nothing outside core re-derives them.
+    const { project, entry } = await seed('validation-id')
+    const result = await recordKnowledgeSignal(db, support({
+      projectId: project.id, knowledgeId: entry.id,
+      issuer: 'ci_attest', issuerId: 'ci', sourceFingerprint: 'fp-1', counted: true, actorKind: 'ci',
+    }))
+    expect(result.recorded).toBe(true)
+    expect(result.counted).toBe(true)
+    expect(result.validationId).toEqual(expect.any(String))
+
+    const [row] = await db.select().from(knowledgeValidations)
+      .where(eq(knowledgeValidations.id, result.validationId!))
+    expect(row!.knowledgeId).toBe(entry.id)
+  })
+
+  it('returns the ORIGINAL validation on a replay, not null', async () => {
+    // A replayed attestation is idempotent: recorded is false, but the response
+    // still names the validation it collided with, and reports the stored counted
+    // rather than whatever the replay happened to pass.
+    const { project, entry } = await seed('validation-replay')
+    const first = await recordKnowledgeSignal(db, support({
+      projectId: project.id, knowledgeId: entry.id,
+      issuer: 'ci_attest', issuerId: 'ci', sourceFingerprint: 'fp-x', counted: true, actorKind: 'ci',
+    }))
+    const replay = await recordKnowledgeSignal(db, support({
+      projectId: project.id, knowledgeId: entry.id,
+      issuer: 'ci_attest', issuerId: 'ci', sourceFingerprint: 'fp-x', counted: false, actorKind: 'ci',
+    }))
+    expect(replay.recorded).toBe(false)
+    expect(replay.validationId).toBe(first.validationId)
+    expect(replay.counted).toBe(true) // the stored value wins, not the replay's false
+  })
+
+  it('reports counted=false for an unmapped attestation', async () => {
+    const { project, entry } = await seed('validation-uncounted')
+    const result = await recordKnowledgeSignal(db, support({
+      projectId: project.id, knowledgeId: entry.id,
+      issuer: 'ci_attest', issuerId: 'ci', sourceFingerprint: 'fp-u', counted: false, actorKind: 'ci',
+    }))
+    expect(result).toMatchObject({ recorded: true, counted: false })
+    expect(result.validationId).toEqual(expect.any(String))
+  })
+
   it('lets an agent error event demote a candidate', async () => {
     // L1: demotion is the safe direction, so an agent-sourced error_event may
     // trigger it (promotion by the same issuer never can - covered above). A
@@ -272,7 +317,9 @@ describe('knowledge promotion transaction', () => {
     const result = await recordKnowledgeSignal(db, support({
       projectId: project.id, knowledgeId: '00000000-0000-0000-0000-000000000000',
     }))
-    expect(result).toMatchObject({ ok: false, recorded: false, state: null, changed: false })
+    expect(result).toMatchObject({
+      ok: false, recorded: false, state: null, changed: false, validationId: null, counted: null,
+    })
   })
 
   it('does not resurrect a contradicted entry', async () => {
