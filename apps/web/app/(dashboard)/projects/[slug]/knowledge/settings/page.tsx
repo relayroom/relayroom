@@ -7,9 +7,11 @@ import { resolveActiveOrgId } from "@/lib/active-org"
 import { getProjectBySlug } from "@/modules/project/queries"
 import { listKnowledge } from "@/modules/knowledge/queries"
 import { getAttestStatus, listCheckMappings } from "@/modules/knowledge/attest-queries"
+import { listPurgeableThreads } from "@/modules/knowledge/purge-queries"
 import { getDateFormatters } from "@/lib/date-format.server"
 import { AttestSecretCard } from "./attest-secret-card"
 import { CheckMapManager, type ClaimOption, type MappingRow } from "./check-map-manager"
+import { ThreadPurgeManager } from "./thread-purge-manager"
 
 export const dynamic = "force-dynamic"
 
@@ -64,12 +66,13 @@ export default async function KnowledgeSettingsPage({ params }: Props) {
     )
   }
 
-  const [status, mappings, claimsResult] = await Promise.all([
+  const [status, mappings, claimsResult, purgeableThreads] = await Promise.all([
     getAttestStatus(project.id),
     listCheckMappings(project.id),
     // Candidate + trusted claims are the plausible mapping targets; a paged list
     // is enough for the picker (very large projects would want search, noted).
     listKnowledge(project.id, { limit: 100 }),
+    listPurgeableThreads(project.id),
   ])
 
   const claims: ClaimOption[] = (claimsResult.result ? claimsResult.items : [])
@@ -114,6 +117,10 @@ export default async function KnowledgeSettingsPage({ params }: Props) {
       {status.keyId !== null && (
         <CheckMapManager projectId={project.id} claims={claims} mappings={mappingRows} />
       )}
+
+      {/* Purge is independent of attestation - it is about removing what a thread
+          produced, regardless of how anything gets promoted. */}
+      <ThreadPurgeManager projectId={project.id} threads={purgeableThreads} />
     </div>
   )
 }

@@ -280,6 +280,22 @@
     "metricP50Hint": "Median hours from a claim being recorded to being promoted. It measures how fast the loop settles, not whether it is right.",
     "p50Hours": "{hours}h median"
   },
+  "knowledgePurge": {
+    "title": "Purge knowledge from a thread",
+    "description": "Deleting a thread does not remove the knowledge distilled from it - that is a separate copy. This removes it explicitly. Entries whose only source is the thread are deleted; entries citing it and others keep, with just this thread's provenance stripped.",
+    "empty": "No thread has produced knowledge yet.",
+    "colThread": "Thread",
+    "colEntries": "Entries",
+    "untitledThread": "(untitled thread)",
+    "purgeButton": "Purge",
+    "previewLoading": "Checking what this affects...",
+    "confirmTitle": "Purge knowledge derived from this thread?",
+    "confirmBody": "{deleted, plural, =0 {No entries will be deleted} =1 {1 entry will be deleted} other {# entries will be deleted}}, and {detached, plural, =0 {none detached} =1 {1 entry will keep with this thread removed from its sources} other {# entries will keep with this thread removed from their sources}}. This cannot be undone.",
+    "confirmBodyNothing": "This thread has no derived knowledge left to purge.",
+    "pending": "Purging...",
+    "done": "Purged: {deleted} deleted, {detached} detached.",
+    "doneNothing": "Nothing to purge."
+  },
   "eventDetail": {
     "backToList": "Event list",
     "sectionLineage": "Event lineage",

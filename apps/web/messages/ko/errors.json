@@ -77,7 +77,8 @@
     "listFailed": "지식 목록을 불러오는 데 실패했습니다.",
     "notFound": "이 항목이 없거나 접근 권한이 없습니다.",
     "invalidTarget": "올바른 항목이 아닙니다.",
-    "promoteFailed": "이 항목을 확인 처리하지 못했습니다."
+    "promoteFailed": "이 항목을 확인 처리하지 못했습니다.",
+    "purgeFailed": "파생 지식을 삭제하지 못했습니다."
   },
   "attest": {
     "checkNameRequired": "CI 체크 이름을 입력하세요.",
