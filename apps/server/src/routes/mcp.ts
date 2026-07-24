@@ -63,6 +63,8 @@ import { shouldWake } from '../wake/issuance'
 import { isWakeBudgetEnabled } from '../wake/flag'
 import { CapabilityError, getCapabilities, resolveUrgent } from '../priority/capability'
 import { seedOwnerWakeBudget } from '../budget/seed-owner-budget'
+import { markProjectDirty } from '../knowledge/extractor-sweep'
+import { redact } from '../knowledge/redaction'
 import { recordKnowledgeSignal } from '@relayroom/db'
 import { tokenScopeAllowsProject } from '../lib/token-scope'
 
@@ -1185,6 +1187,10 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
         for (const a of affected) {
           if (await openUnreadCount(db, a.agentId) === 0) await settleCaughtUp(db, a.agentId)
         }
+        // A closed thread is extractor input. Mark the project dirty so the leased
+        // sweep turns it into a candidate. Durable marker; the sweep is what does the
+        // work. (FEAT-0004 L3.)
+        await markProjectDirty(db, ctx.projectId)
       }
       return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, threadId: thread.id, status: 'closed' }) }] }
     },
@@ -1423,11 +1429,25 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
 
       const sourceRefs = args.sourceThreadId ? [{ threadId: args.sourceThreadId }] : []
 
+      // Redaction denylist applied BEFORE the row is written - the same gate the
+      // extractor uses. A human pasting a lesson can paste a secret with it, so the
+      // learn path is not exempt (FEAT-0004 L3). A body redacted to nothing is
+      // rejected rather than stored empty.
+      const [proj] = await db.select({ config: projects.knowledgeConfig })
+        .from(projects).where(eq(projects.id, ctx.projectId)).limit(1)
+      const patterns = proj?.config?.redactionPatterns ?? []
+      const title = redact(args.title, patterns).text
+      const body = redact(args.body, patterns).text
+      if (body.trim() === '') {
+        return { content: [{ type: 'text' as const,
+          text: 'error: the body was empty after redaction; nothing was recorded' }], isError: true }
+      }
+
       const [row] = await db.insert(knowledge).values({
         projectId: ctx.projectId,
         kind: args.kind,
-        title: args.title,
-        body: args.body,
+        title,
+        body,
         sourceKind: 'learn',
         sourceRefs,
         // ALWAYS candidate. There is no argument this tool can take, and no branch

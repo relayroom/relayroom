@@ -17,6 +17,8 @@ import { invalidateWakeFlagCache } from '../src/wake/flag'
 import { ensurePending } from '../src/wake/state'
 import type { HubBusEvent } from '@relayroom/shared'
 import { makeTestApp, TEST_DATABASE_URL } from './helpers'
+import { runExtractorSweep } from '../src/knowledge/extractor-sweep'
+import { knowledge } from '@relayroom/db'
 
 const { app, db, bus } = makeTestApp()
 const rawSql = postgres(TEST_DATABASE_URL)
@@ -1115,6 +1117,35 @@ describe('wake-loop fix: close / scoping / search', () => {
     expect(res.isError).toBe(false)
     const rows = JSON.parse(res.text) as Array<{ threadId: string }>
     expect(rows.filter(r => r.threadId === thread!.id)).toHaveLength(1)
+  })
+})
+
+describe('close marks the project for extraction (FEAT-0004 L3)', () => {
+  beforeAll(async () => { await ensureInternalClient() })
+  it('closing a thread makes the extractor produce a candidate from it', async () => {
+    resetLoopBreaker()
+    const { projectId, connectCode, rawToken } = await setupCaller()
+    await ensureAgents(projectId, 'peer')
+
+    const sent = await callTool(connectCode, rawToken, 'sender', 'send',
+      { subject: 'how to roll back a migration', body: 'run the down script then redeploy', to: ['peer'] })
+    const { threadId } = JSON.parse(sent.text) as { threadId: string }
+
+    // Before close: not dirty, nothing extracted.
+    expect((await runExtractorSweep(db, { projectId })).candidates).toBe(0)
+
+    // Close via the tool - this is the server closer that must set the marker.
+    await callTool(connectCode, rawToken, 'sender', 'close', { threadId })
+
+    // The leased sweep now turns the closed thread into a candidate.
+    const r = await runExtractorSweep(db, { projectId })
+    expect(r.candidates).toBe(1)
+    const rows = await db.select().from(knowledge)
+      .where(eq(knowledge.projectId, projectId))
+    const fromThread = rows.filter(k => k.sourceKind === 'thread')
+    expect(fromThread).toHaveLength(1)
+    expect(fromThread[0]!.validationState).toBe('candidate')
+    expect(fromThread[0]!.title).toBe('how to roll back a migration')
   })
 })
 

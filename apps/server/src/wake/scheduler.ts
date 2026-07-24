@@ -26,6 +26,8 @@ import { autoCloseIdleThreads } from './autoclose'
 import { resolveStaleAlerts, runGovernanceDetection } from '../governance/detect'
 import { runKnowledgeRetention } from '../knowledge/retention'
 import { runKnowledgeMetricsRollup } from '../knowledge/metrics-rollup'
+import { runExtractorSweep } from '../knowledge/extractor-sweep'
+import { runKnowledgeGarbageCollection } from '../knowledge/retention'
 
 export const RECONCILE_INTERVAL_MS = 60_000 // 1 min: phantom detection (ledger catch-up)
 export const SWEEP_INTERVAL_MS = 30_000 // 30 s: recover suppressed parts (window freed)
@@ -40,6 +42,13 @@ export const KNOWLEDGE_RETENTION_INTERVAL_MS = 15 * 60_000
 // trailing window and upserts, so a frequent tick just keeps the recent days
 // (whose precision is still accumulating) fresh. Cheap relative to a day.
 export const KNOWLEDGE_METRICS_INTERVAL_MS = 60 * 60_000
+// 60s: extractor sweep. Frequent because it is the loop's intake latency (a closed
+// thread becomes a candidate within a tick); idempotent and lease-guarded, so a
+// short interval is cheap.
+export const KNOWLEDGE_EXTRACTOR_INTERVAL_MS = 60_000
+// 6h: retention GC. Ageing-out is not time-critical; a relaxed interval keeps it off
+// the hot path.
+export const KNOWLEDGE_GC_INTERVAL_MS = 6 * 60 * 60_000
 
 export interface WakeJobs {
   stop(): void
@@ -48,6 +57,8 @@ export interface WakeJobs {
 export interface StartWakeJobsOptions {
   knowledgeRetentionMs?: number
   knowledgeMetricsMs?: number
+  knowledgeExtractorMs?: number
+  knowledgeGcMs?: number
   reconcileMs?: number
   sweepMs?: number
   governanceMs?: number
@@ -68,6 +79,8 @@ export function startWakeJobs(db: Db, bus: Bus, opts: StartWakeJobsOptions = {})
   const autocloseMs = opts.autocloseMs ?? AUTOCLOSE_INTERVAL_MS
   const knowledgeRetentionMs = opts.knowledgeRetentionMs ?? KNOWLEDGE_RETENTION_INTERVAL_MS
   const knowledgeMetricsMs = opts.knowledgeMetricsMs ?? KNOWLEDGE_METRICS_INTERVAL_MS
+  const knowledgeExtractorMs = opts.knowledgeExtractorMs ?? KNOWLEDGE_EXTRACTOR_INTERVAL_MS
+  const knowledgeGcMs = opts.knowledgeGcMs ?? KNOWLEDGE_GC_INTERVAL_MS
 
   // Per-job re-entrancy guard: skip a tick if the PREVIOUS run of the same job is
   // still in flight. A slow reconcile/sweep otherwise overlaps itself (setInterval
@@ -102,6 +115,9 @@ export function startWakeJobs(db: Db, bus: Bus, opts: StartWakeJobsOptions = {})
   // retention: re-entrancy guard + throwing-callback protection, and it is not a
   // wake job but this is the only scheduler the process has.
   timers.push(setInterval(safe('knowledge-metrics', () => runKnowledgeMetricsRollup(db)), knowledgeMetricsMs))
+  // Extractor + retention GC (FEAT-0004 L3). Same scheduler, same re-entrancy guard.
+  timers.push(setInterval(safe('knowledge-extractor', () => runExtractorSweep(db)), knowledgeExtractorMs))
+  timers.push(setInterval(safe('knowledge-gc', () => runKnowledgeGarbageCollection(db)), knowledgeGcMs))
   timers.push(
     setInterval(
       safe('governance', async () => {

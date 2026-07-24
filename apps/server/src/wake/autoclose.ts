@@ -9,6 +9,7 @@
 import { and, inArray, isNull, sql } from 'drizzle-orm'
 import type { Db } from '@relayroom/db'
 import { messageRecipients, messages, threads } from '@relayroom/db'
+import { markProjectDirty } from '../knowledge/extractor-sweep'
 
 /** A thread with no activity for this long is auto-closed. */
 export const THREAD_IDLE_CLOSE_MS = 30 * 60_000 // 30 min
@@ -44,6 +45,11 @@ export async function autoCloseIdleThreads(
 
   if (closed.length === 0) return 0
   const ids = closed.map(r => r.id)
+  // Every project that owns a just-closed thread is now extractor-dirty. Mark them so
+  // the leased sweep produces candidates. (FEAT-0004 L3.) Distinct projects only.
+  const dirtied = await db.selectDistinct({ projectId: threads.projectId })
+    .from(threads).where(inArray(threads.id, ids))
+  for (const { projectId } of dirtied) await markProjectDirty(db, projectId)
   // Clear unread ONLY on threads we actually closed, so no wake path (pending-wake
   // counts raw unread) keeps waking a participant for a resolved conversation.
   await db.update(messageRecipients).set({ readAt: new Date() }).where(and(
