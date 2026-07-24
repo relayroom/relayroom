@@ -25,6 +25,7 @@ import { expireStale } from './state'
 import { autoCloseIdleThreads } from './autoclose'
 import { resolveStaleAlerts, runGovernanceDetection } from '../governance/detect'
 import { runKnowledgeRetention } from '../knowledge/retention'
+import { runKnowledgeMetricsRollup } from '../knowledge/metrics-rollup'
 
 export const RECONCILE_INTERVAL_MS = 60_000 // 1 min: phantom detection (ledger catch-up)
 export const SWEEP_INTERVAL_MS = 30_000 // 30 s: recover suppressed parts (window freed)
@@ -35,6 +36,10 @@ export const AUTOCLOSE_INTERVAL_MS = 5 * 60_000 // 5 min: auto-close idle thread
 // filters expires_at itself, so an expired entry is already unreadable and this
 // only settles the stored state and the audit ledger behind it.
 export const KNOWLEDGE_RETENTION_INTERVAL_MS = 15 * 60_000
+// 1h: daily metrics rollup. Runs often but is idempotent - it recomputes the
+// trailing window and upserts, so a frequent tick just keeps the recent days
+// (whose precision is still accumulating) fresh. Cheap relative to a day.
+export const KNOWLEDGE_METRICS_INTERVAL_MS = 60 * 60_000
 
 export interface WakeJobs {
   stop(): void
@@ -42,6 +47,7 @@ export interface WakeJobs {
 
 export interface StartWakeJobsOptions {
   knowledgeRetentionMs?: number
+  knowledgeMetricsMs?: number
   reconcileMs?: number
   sweepMs?: number
   governanceMs?: number
@@ -61,6 +67,7 @@ export function startWakeJobs(db: Db, bus: Bus, opts: StartWakeJobsOptions = {})
   const expiryMs = opts.expiryMs ?? EXPIRY_INTERVAL_MS
   const autocloseMs = opts.autocloseMs ?? AUTOCLOSE_INTERVAL_MS
   const knowledgeRetentionMs = opts.knowledgeRetentionMs ?? KNOWLEDGE_RETENTION_INTERVAL_MS
+  const knowledgeMetricsMs = opts.knowledgeMetricsMs ?? KNOWLEDGE_METRICS_INTERVAL_MS
 
   // Per-job re-entrancy guard: skip a tick if the PREVIOUS run of the same job is
   // still in flight. A slow reconcile/sweep otherwise overlaps itself (setInterval
@@ -91,6 +98,10 @@ export function startWakeJobs(db: Db, bus: Bus, opts: StartWakeJobsOptions = {})
   // scheduler, and it already gives every tick the re-entrancy guard and the
   // throwing-callback protection this needs too.
   timers.push(setInterval(safe('knowledge-retention', () => runKnowledgeRetention(db)), knowledgeRetentionMs))
+  // Daily knowledge metrics (FEAT-0001 L2). Same scheduler for the same reasons as
+  // retention: re-entrancy guard + throwing-callback protection, and it is not a
+  // wake job but this is the only scheduler the process has.
+  timers.push(setInterval(safe('knowledge-metrics', () => runKnowledgeMetricsRollup(db)), knowledgeMetricsMs))
   timers.push(
     setInterval(
       safe('governance', async () => {
