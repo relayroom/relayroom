@@ -143,5 +143,21 @@ nudge with that same wake id, just re-check the inbox and finish quickly with
 idempotent, so under at-least-once delivery a duplicate nudge converges instead
 of fanning out into extra billed turns.
 
+## Project knowledge (recall / learn)
+
+The project accumulates what it has learned - conventions, pitfalls, decisions -
+and you can both read and add to it:
+
+- **\`recall\` before non-trivial work.** Before you start something a past mistake
+  could have already taught the project about (a migration, a release step, a
+  tricky integration), \`recall\` it. A prior contradiction or a known pitfall is
+  cheaper to read than to rediscover.
+- **\`learn\` when you find a durable fact.** When you discover something that will
+  still be true next week - not a one-off detail of this task - record it with
+  \`learn\` so the next agent does not pay for it again.
+- **Learned facts are advisory until trusted.** A fresh \`learn\` is a candidate, not
+  ground truth: it becomes trusted only after independent confirmation. Treat a
+  recalled fact that is not yet trusted as a lead to verify, not a settled answer.
+
 <!-- Project-specific norms (parts roster, conventions) can be added below. -->
 `;
