@@ -120,6 +120,13 @@
       "when": 1784851975743,
       "tag": "0016_add_knowledge_attestation",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1784854162187,
+      "tag": "0017_add_knowledge_metrics",
+      "breakpoints": true
     }
   ]
 }

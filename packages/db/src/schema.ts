@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm'
 import {
   boolean,
   check,
+  date,
   index,
   integer,
   jsonb,
@@ -551,4 +552,42 @@ export const knowledgeNonces = pgTable('knowledge_nonce', {
   seenAt: timestamp('seen_at', { withTimezone: true }).notNull().defaultNow(),
 }, t => [
   primaryKey({ columns: [t.projectId, t.nonce] }),
+])
+
+// ── knowledge_metric_daily (L2) ────────────────────────────────────────────────
+// One row per project per UTC day: the compounding metrics the Learning panel
+// shows. The server's rollup job writes these; nothing here computes them.
+//
+// Two decisions are load-bearing and both come from the design's honesty rules:
+//   - Raw numerator AND denominator are stored, never just the ratio. A ratio
+//     alone cannot be re-aggregated (you cannot average yesterday's and today's
+//     rates to get the two-day rate) and it hides sample size - and the panel
+//     must render "not enough data" below a threshold, which needs the count.
+//   - normalizationVersion travels with every row, so a later change to how a
+//     metric is DEFINED is visible as a break in the series instead of silently
+//     rewriting history. It is not a computed value; it labels which definition
+//     produced these counts.
+// The per-metric windows (repeat_error's 7-day lookback, precision's 14-day
+// lookahead) are the rollup's concern, not the schema's: a row holds only that
+// day's raw counts. Every count is nullable - a metric with no denominator that
+// day is null, which the panel reads as "no data", distinct from a real zero.
+export const knowledgeMetricDaily = pgTable('knowledge_metric_daily', {
+  projectId: uuid('project_id').notNull()
+    .references(() => projects.id, { onDelete: 'cascade' }),
+  day: date('day').notNull(),                                   // the UTC day these counts cover
+  normalizationVersion: integer('normalization_version').notNull().default(1),
+  // repeat_error_rate: error events whose signature already appeared in the prior 7 days.
+  repeatErrorNum: integer('repeat_error_num'),
+  repeatErrorDen: integer('repeat_error_den'),
+  // recall_hit_rate: recall_log rows where usedKnowledgeId is set.
+  recallHitNum: integer('recall_hit_num'),
+  recallHitDen: integer('recall_hit_den'),
+  // knowledge_precision: trusted entries contradicted within 14d of promotion.
+  precisionNum: integer('precision_num'),
+  precisionDen: integer('precision_den'),
+  candidateToTrustedP50Hours: real('candidate_to_trusted_p50_hours'),
+  trustedCount: integer('trusted_count'),
+  candidateCount: integer('candidate_count'),
+}, t => [
+  primaryKey({ columns: [t.projectId, t.day] }),
 ])
