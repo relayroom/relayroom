@@ -9,9 +9,9 @@
 import { randomBytes } from 'node:crypto'
 import { afterAll, describe, expect, it } from 'vitest'
 import { and, eq } from 'drizzle-orm'
-import { agents, knowledge, messages, projects, threads } from '@relayroom/db'
+import { agents, knowledge, markProjectKnowledgeDirty, messages, projects, threads } from '@relayroom/db'
 import postgres from 'postgres'
-import { isProjectDirty, markProjectDirty, runExtractorSweep } from '../src/knowledge/extractor-sweep'
+import { isProjectDirty, runExtractorSweep } from '../src/knowledge/extractor-sweep'
 import { makeTestApp, TEST_DATABASE_URL } from './helpers'
 
 const { db, bus } = makeTestApp()
@@ -58,7 +58,7 @@ describe('extractor output', () => {
   it('writes a candidate per closed thread - never trusted', async () => {
     const p = await project()
     await thread(p.id, p.agentId, 'closed', [{ body: 'the lesson' }])
-    await markProjectDirty(db, p.id)
+    await markProjectKnowledgeDirty(db, p.id)
 
     const r = await runExtractorSweep(db, { projectId: p.id })
     expect(r.candidates).toBe(1)
@@ -73,7 +73,7 @@ describe('extractor output', () => {
     const p = await project()
     await thread(p.id, p.agentId, 'answered', [{ body: 'answered lesson' }])
     await thread(p.id, p.agentId, 'open', [{ body: 'still open' }])
-    await markProjectDirty(db, p.id)
+    await markProjectKnowledgeDirty(db, p.id)
 
     await runExtractorSweep(db, { projectId: p.id })
     expect(await candidatesFor(p.id)).toHaveLength(1)
@@ -82,7 +82,7 @@ describe('extractor output', () => {
   it('applies redaction before writing the candidate', async () => {
     const p = await project(['sk-[a-z0-9]+'])
     await thread(p.id, p.agentId, 'closed', [{ body: 'rotate sk-abc123 now' }])
-    await markProjectDirty(db, p.id)
+    await markProjectKnowledgeDirty(db, p.id)
     await runExtractorSweep(db, { projectId: p.id })
     const [row] = await candidatesFor(p.id)
     expect(row!.body).not.toContain('sk-abc123')
@@ -91,10 +91,10 @@ describe('extractor output', () => {
   it('is idempotent - a thread is extracted once, not again on a re-run', async () => {
     const p = await project()
     await thread(p.id, p.agentId, 'closed', [{ body: 'once' }])
-    await markProjectDirty(db, p.id)
+    await markProjectKnowledgeDirty(db, p.id)
 
     await runExtractorSweep(db, { projectId: p.id })
-    await markProjectDirty(db, p.id) // dirtied again
+    await markProjectKnowledgeDirty(db, p.id) // dirtied again
     const r2 = await runExtractorSweep(db, { projectId: p.id })
     expect(r2.candidates).toBe(0) // already has a candidate citing it
     expect(await candidatesFor(p.id)).toHaveLength(1)
@@ -105,18 +105,18 @@ describe('durable marker', () => {
   it('clears the marker after a successful sweep', async () => {
     const p = await project()
     await thread(p.id, p.agentId, 'closed', [{ body: 'x' }])
-    await markProjectDirty(db, p.id)
+    await markProjectKnowledgeDirty(db, p.id)
     expect(await isProjectDirty(db, p.id)).toBe(true)
     await runExtractorSweep(db, { projectId: p.id })
     expect(await isProjectDirty(db, p.id)).toBe(false)
   })
 
   it('catches a thread even when no NOTIFY was sent - the marker is enough', async () => {
-    // markProjectDirty sets only the durable column (no bus emit). The sweep must
+    // markProjectKnowledgeDirty sets only the durable column (no bus emit). The sweep must
     // still find and extract the thread: correctness rests on the marker, not NOTIFY.
     const p = await project()
     await thread(p.id, p.agentId, 'closed', [{ body: 'missed the notify' }])
-    await markProjectDirty(db, p.id)
+    await markProjectKnowledgeDirty(db, p.id)
     const r = await runExtractorSweep(db, { projectId: p.id })
     expect(r.candidates).toBe(1)
   })
@@ -124,7 +124,7 @@ describe('durable marker', () => {
   it('does not process a project that is not dirty', async () => {
     const p = await project()
     await thread(p.id, p.agentId, 'closed', [{ body: 'never marked' }])
-    // no markProjectDirty
+    // no markProjectKnowledgeDirty
     const r = await runExtractorSweep(db, { projectId: p.id })
     expect(r.projects).toBe(0)
     expect(await candidatesFor(p.id)).toHaveLength(0)
@@ -138,7 +138,7 @@ describe('single writer per project', () => {
     // FAIL and skip the project (processed=0) rather than duplicate its work.
     const p = await project()
     await thread(p.id, p.agentId, 'closed', [{ body: 'contested' }])
-    await markProjectDirty(db, p.id)
+    await markProjectKnowledgeDirty(db, p.id)
 
     // A raw connection holds the lock (namespace + hashtext must match the sweep's).
     const holder = postgres(TEST_DATABASE_URL, { max: 1 })
@@ -177,13 +177,13 @@ describe('clear-if-unchanged', () => {
     // Set an OLD marker, then the sweep will read it; but before we run, we cannot
     // interleave inside the sweep from the test, so instead assert the SQL guard
     // directly: clearing with a stale expected-value is a no-op.
-    await markProjectDirty(db, p.id)
+    await markProjectKnowledgeDirty(db, p.id)
     const [{ dirty_at: oldTs }] = await rawSql<{ dirty_at: Date }[]>`
       select knowledge_dirty_at as dirty_at from project where id = ${p.id}`
 
     // Bump the marker to a newer instant (a new close).
     await rawSql`select pg_sleep(0.01)`
-    await markProjectDirty(db, p.id)
+    await markProjectKnowledgeDirty(db, p.id)
 
     // A clear guarded on the OLD ts must affect nothing.
     const cleared = await rawSql`

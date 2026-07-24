@@ -63,9 +63,8 @@ import { shouldWake } from '../wake/issuance'
 import { isWakeBudgetEnabled } from '../wake/flag'
 import { CapabilityError, getCapabilities, resolveUrgent } from '../priority/capability'
 import { seedOwnerWakeBudget } from '../budget/seed-owner-budget'
-import { markProjectDirty } from '../knowledge/extractor-sweep'
 import { redact } from '../knowledge/redaction'
-import { recordKnowledgeSignal } from '@relayroom/db'
+import { markProjectKnowledgeDirty, recordKnowledgeSignal } from '@relayroom/db'
 import { tokenScopeAllowsProject } from '../lib/token-scope'
 
 // ── Token budget helpers ───────────────────────────────────────────────────────
@@ -1166,7 +1165,15 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
         return { content: [{ type: 'text' as const, text: 'error: thread not found' }], isError: true }
       }
       if (thread.status !== 'closed' && thread.status !== 'canceled') {
-        await db.update(threads).set({ status: 'closed' }).where(eq(threads.id, args.threadId))
+        // Close and raise the extractor marker in ONE transaction: a closed thread is
+        // extractor input, so a close that committed without the marker would leave a
+        // thread that never becomes a candidate and never errors. markProjectKnowledgeDirty
+        // is the single cross-package setter (@relayroom/db); it writes now() as the
+        // transaction clock, so the two commit together or not at all. (FEAT-0004 L3.)
+        await db.transaction(async (tx) => {
+          await tx.update(threads).set({ status: 'closed' }).where(eq(threads.id, args.threadId))
+          await markProjectKnowledgeDirty(tx, ctx.projectId)
+        })
         // Recipients who still had unread in this thread - they may now be caught up.
         const affected = await db.selectDistinct({ agentId: messageRecipients.agentId })
           .from(messageRecipients)
@@ -1187,10 +1194,6 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
         for (const a of affected) {
           if (await openUnreadCount(db, a.agentId) === 0) await settleCaughtUp(db, a.agentId)
         }
-        // A closed thread is extractor input. Mark the project dirty so the leased
-        // sweep turns it into a candidate. Durable marker; the sweep is what does the
-        // work. (FEAT-0004 L3.)
-        await markProjectDirty(db, ctx.projectId)
       }
       return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, threadId: thread.id, status: 'closed' }) }] }
     },

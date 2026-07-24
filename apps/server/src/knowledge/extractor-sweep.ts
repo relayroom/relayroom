@@ -8,8 +8,8 @@
  *   thread -> closed/answered   sets project.knowledge_dirty_at = now()  (+ optional NOTIFY)
  *   this sweep:
  *     claim dirty projects, ONE WRITER PER PROJECT via a pg advisory lock
- *     snapshot ts = knowledge_dirty_at; write candidates
- *     clear: knowledge_dirty_at = NULL WHERE it still equals ts  (no clobber if re-dirtied mid-run)
+ *     snapshot ts = knowledge_dirty_at::text (full precision); write candidates
+ *     clear: knowledge_dirty_at = NULL WHERE ::text still equals ts  (no clobber if re-dirtied mid-run)
  *
  * Correctness rests on the DURABLE MARKER, not the NOTIFY. A missed NOTIFY is caught
  * on the next sweep because the marker persists; the NOTIFY is only latency. That is
@@ -67,7 +67,6 @@ export async function runExtractorSweep(
   const dirty = await db
     .select({
       id: projects.id,
-      dirtyAt: projects.knowledgeDirtyAt,
       config: projects.knowledgeConfig,
     })
     .from(projects)
@@ -90,17 +89,27 @@ export async function runExtractorSweep(
       `)
       if (!locked) return null // someone else is on it; the marker stays for them
 
+      // Snapshot the marker UNDER THE LOCK, as text. markProjectKnowledgeDirty writes
+      // now() at microsecond precision; reading it back through a JS Date truncates to
+      // milliseconds, so a Date-valued equality clear below would NEVER match and the
+      // marker would never clear. Comparing text to text keeps full precision. This is
+      // the "clearing-sweep precision trap" the setter is deliberately built to avoid.
+      const [snap] = await tx.execute<{ dirty_at: string | null }>(sql`
+        select knowledge_dirty_at::text as dirty_at from ${projects} where ${projects.id} = ${project.id}
+      `)
+      const dirtyAt = snap?.dirty_at
+      if (!dirtyAt) return null // cleared out from under us before we locked; nothing to do
+
       const n = await extractProject(tx, project.id, redactionPatterns)
 
-      // Clear ONLY if the marker still equals the value we started from. A thread
-      // that closed while we were processing bumped knowledge_dirty_at to a newer
-      // instant; clearing unconditionally would drop that work. Leaving the marker
-      // means the next sweep re-runs - idempotent, since already-extracted threads
-      // are skipped.
-      await tx
-        .update(projects)
-        .set({ knowledgeDirtyAt: null })
-        .where(and(eq(projects.id, project.id), eq(projects.knowledgeDirtyAt, project.dirtyAt!)))
+      // Clear ONLY if the marker still equals the snapshot we took. A thread that
+      // closed while we were processing bumped knowledge_dirty_at to a newer instant;
+      // clearing unconditionally would drop that work. Leaving the marker means the
+      // next sweep re-runs - idempotent, since already-extracted threads are skipped.
+      await tx.execute(sql`
+        update ${projects} set knowledge_dirty_at = null
+        where ${projects.id} = ${project.id} and knowledge_dirty_at::text = ${dirtyAt}
+      `)
       return n
     })
     if (written !== null) {
@@ -183,20 +192,11 @@ async function extractProject(
 }
 
 /**
- * Mark a project's knowledge as needing extraction. Call on a thread's transition
- * to closed/answered. Best-effort NOTIFY as latency optimization; correctness is the
- * durable column.
- *
- * NOTE: this is the SERVER-side setter. The canonical setter that web also uses is
- * `markProjectKnowledgeDirty` in @relayroom/db (so the rule lives in one place across
- * packages); this wraps it for the server's own closers once that lands. Until then
- * the two server closers call the column update directly here.
+ * True when a project currently has the dirty marker set (diagnostics/tests). The
+ * marker is RAISED by `markProjectKnowledgeDirty` in @relayroom/db - the single
+ * cross-package setter every closer (server close tool, autoclose, web) shares, so
+ * the rule lives in one place. This module only reads and clears it.
  */
-export async function markProjectDirty(db: Db, projectId: string): Promise<void> {
-  await db.update(projects).set({ knowledgeDirtyAt: new Date() }).where(eq(projects.id, projectId))
-}
-
-/** True when a project currently has the dirty marker set (diagnostics/tests). */
 export async function isProjectDirty(db: Db, projectId: string): Promise<boolean> {
   const [row] = await db
     .select({ id: projects.id })
