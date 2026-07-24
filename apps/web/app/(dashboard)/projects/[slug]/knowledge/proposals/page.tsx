@@ -52,7 +52,7 @@ export default async function ProposalsPage({ params, searchParams }: Props) {
   const access = await requireProjectAccess(session.user.id, project.id, "owner")
   if (!access.ok) {
     return (
-      <div className="py-6 px-4 xs:px-6 max-w-3xl mx-auto space-y-4">
+      <div className="py-6 px-4 xs:px-6 max-w-6xl mx-auto space-y-4">
         <Link href={backHref} className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
           <ArrowLeftIcon className="h-3 w-3" />
           {t("knowledgeProposals.backToKnowledge")}
@@ -105,7 +105,7 @@ export default async function ProposalsPage({ params, searchParams }: Props) {
       : `/projects/${slug}/knowledge/proposals?status=${key}`
 
   return (
-    <div className="py-6 px-4 xs:px-6 max-w-3xl mx-auto space-y-4">
+    <div className="py-6 px-4 xs:px-6 max-w-6xl mx-auto space-y-4">
       <div>
         <Link href={backHref} className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
           <ArrowLeftIcon className="h-3 w-3" />
