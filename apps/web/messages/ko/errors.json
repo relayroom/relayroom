@@ -79,6 +79,12 @@
     "invalidTarget": "올바른 항목이 아닙니다.",
     "promoteFailed": "이 항목을 확인 처리하지 못했습니다."
   },
+  "attest": {
+    "checkNameRequired": "CI 체크 이름을 입력하세요.",
+    "rotateFailed": "시크릿을 회전하지 못했습니다.",
+    "mapFailed": "매핑을 변경하지 못했습니다.",
+    "mappingNotFound": "그 매핑이 더 이상 존재하지 않습니다."
+  },
   "event": {
     "notFound": "이벤트를 찾을 수 없습니다.",
     "listFailed": "이벤트 목록을 불러오는 데 실패했습니다.",
