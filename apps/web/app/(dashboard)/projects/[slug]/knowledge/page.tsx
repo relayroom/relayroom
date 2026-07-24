@@ -12,10 +12,12 @@ import {
   KNOWLEDGE_STATES,
   type KnowledgeRow,
 } from "@/modules/knowledge/queries"
+import { getMetricWindow } from "@/modules/knowledge/metrics-queries"
 import { getDateFormatters } from "@/lib/date-format.server"
 import { Badge } from "@/components/ui/badge"
 import { Pagination } from "@/components/ui/pagination"
 import { PromoteButton } from "./promote-button"
+import { LearningPanel } from "./learning-panel"
 
 export const dynamic = "force-dynamic"
 
@@ -59,10 +61,15 @@ export default async function KnowledgePage({ params, searchParams }: Props) {
   // Action is reachable without the button, so this only decides what is drawn.
   const canPromote = (await requireProjectAccess(session.user.id, project.id, "owner")).ok
 
-  const [result, counts] = await Promise.all([
+  const [result, counts, metricRows] = await Promise.all([
     listKnowledge(project.id, { state: stateFilter, page, limit: PAGE_SIZE }),
     countKnowledgeByState(project.id),
+    getMetricWindow(project.id),
   ])
+
+  // Today's UTC date, computed once and passed down so the panel's honesty logic
+  // stays pure (it never reads a clock itself).
+  const todayUtc = new Date().toISOString().slice(0, 10)
 
   const entries = result.result ? result.items : []
   const totalCount = result.result ? result.totalCount : 0
@@ -99,6 +106,10 @@ export default async function KnowledgePage({ params, searchParams }: Props) {
           </Link>
         )}
       </div>
+
+      {/* Learning panel: the loop's health over the project's own data, above the
+          list because it frames what the list is for. */}
+      <LearningPanel rows={metricRows} todayUtc={todayUtc} />
 
       {/* State filter */}
       <div className="flex items-center gap-1 overflow-x-auto border-b border-border">
