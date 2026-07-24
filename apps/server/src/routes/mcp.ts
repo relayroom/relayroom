@@ -1796,6 +1796,101 @@ async function renderCurrentMainSection(db: Db, projectId: string): Promise<stri
   }
 }
 
+// ── RELAYROOM.md "Trusted project facts" dynamic block (FEAT-0006 L5) ─────────
+
+/** Max trusted facts rendered into the served-playbook block. Chosen here (03 does
+ *  not specify), tunable. */
+export const TRUSTED_FACTS_CAP = 10
+
+/**
+ * Auto-eligibility threshold. With no explicit `knowledgeConfig.dynamicFactsBlock`,
+ * the block appears only once a project has at least this many trusted facts, so a
+ * brand-new project (03 line 104) sees no clutter. Chosen here, not in 03; tunable.
+ */
+export const TRUSTED_FACTS_AUTO_THRESHOLD = 3
+
+type FactsConfig = { dynamicFactsBlock?: boolean } | null | undefined
+
+/**
+ * Whether to render the trusted-facts block:
+ *   - explicit false   -> never (opt-out)
+ *   - no trusted facts  -> never (nothing to show)
+ *   - explicit true    -> yes (opt-in)
+ *   - unset (default)  -> only once >= TRUSTED_FACTS_AUTO_THRESHOLD trusted facts exist
+ * `trustedCount` is the number of trusted rows actually found (capped at the query
+ * limit); since the threshold is below TRUSTED_FACTS_CAP, that count is enough to
+ * decide eligibility without a second COUNT.
+ */
+export function shouldRenderTrustedFacts(config: FactsConfig, trustedCount: number): boolean {
+  if (config?.dynamicFactsBlock === false) return false
+  if (trustedCount <= 0) return false
+  if (config?.dynamicFactsBlock === true) return true
+  return trustedCount >= TRUSTED_FACTS_AUTO_THRESHOLD
+}
+
+/** One trusted fact reduced to a single playbook line: the block is a pointer into
+ *  the knowledge table, not a copy of it, so the body collapses to its first
+ *  non-empty line, capped. */
+function trustedFactLine(f: { title: string; body: string; kind: string }): string {
+  const firstLine = f.body.split(/\r?\n/).map(s => s.trim()).find(s => s !== '') ?? ''
+  const capped = firstLine.length > 200 ? `${firstLine.slice(0, 197)}...` : firstLine
+  const title = f.title.trim()
+  return capped ? `- **${title}** - ${capped} _(${f.kind})_` : `- **${title}** _(${f.kind})_`
+}
+
+/**
+ * Renders the "## Trusted project facts (top N)" block appended to the served
+ * RELAYROOM.md. DERIVED, part-agnostic content - the project's trusted knowledge,
+ * highest-confidence first, capped at N. It is NOT part of the authored body: the
+ * proposer (L4) never writes here and playbook_version.content excludes it, and it
+ * carries a generated-not-authored marker so a reader can tell. Best-effort: returns
+ * '' on any failure so the base markdown still serves.
+ */
+async function renderTrustedFactsSection(db: Db, projectId: string, config: FactsConfig): Promise<string> {
+  try {
+    const rows = await db
+      .select({ title: knowledge.title, body: knowledge.body, kind: knowledge.kind })
+      .from(knowledge)
+      .where(and(eq(knowledge.projectId, projectId), eq(knowledge.validationState, 'trusted')))
+      .orderBy(desc(knowledge.confidence), desc(knowledge.promotedAt))
+      .limit(TRUSTED_FACTS_CAP)
+
+    if (!shouldRenderTrustedFacts(config, rows.length)) return ''
+
+    const header = `\n## Trusted project facts (top ${TRUSTED_FACTS_CAP})\n\n`
+    const note = '<!-- Generated from this project\'s trusted knowledge. Not part of the authored playbook; edit via the dashboard, not here. -->\n\n'
+    const lines = rows.map(trustedFactLine).join('\n')
+    return `${header}${note}${lines}\n`
+  }
+  catch (err) {
+    console.error('[relayroom-md] trusted facts section failed', err)
+    return ''
+  }
+}
+
+/**
+ * Assemble the served RELAYROOM.md and the hash rr.sh reads (FEAT-0006 L5).
+ *
+ * `normsHash` is sha256 over the NORMS - the authored body plus the derived
+ * trusted-facts block - and deliberately EXCLUDES the "Current main agent" section.
+ * That section is operational state (who is driving right now), not a norm an agent
+ * must be "current" on; a main handoff must not read as a playbook-norms change.
+ * `rr.sh update` reports this hash so an operator/agent can tell the norms shifted.
+ * `content` is the full served text with norms FIRST, so the hashed portion is a
+ * legible prefix of what is served.
+ */
+async function renderServedPlaybook(
+  db: Db,
+  project: { id: string; relayroomMd: string | null; knowledgeConfig: FactsConfig },
+): Promise<{ content: string; normsHash: string }> {
+  const base = project.relayroomMd ?? DEFAULT_RELAYROOM_MD
+  const facts = await renderTrustedFactsSection(db, project.id, project.knowledgeConfig)
+  const norms = base + facts
+  const normsHash = createHash('sha256').update(norms).digest('hex')
+  const content = norms + (await renderCurrentMainSection(db, project.id))
+  return { content, normsHash }
+}
+
 // ── CLI update check (npm registry, cached) ─────────────────────────────────
 // The pager reports its CLI version on each heartbeat; we hand back the latest
 // version published to npm so the tmux status line can nudge for an update. npm
@@ -1968,20 +2063,40 @@ export function createMcpRoute(db: Db, bus: Bus) {
     })
     if (denied) return denied
     const [project] = await db
-      .select({ id: projects.id, slug: projects.slug, relayroomMd: projects.relayroomMd })
+      .select({ id: projects.id, slug: projects.slug, relayroomMd: projects.relayroomMd, knowledgeConfig: projects.knowledgeConfig })
       .from(projects)
       .where(and(eq(projects.connectCode, connectCode), isNull(projects.archivedAt)))
       .limit(1)
     if (!project) return c.json({ error: 'unknown connect code' }, 404)
 
-    const base = project.relayroomMd ?? DEFAULT_RELAYROOM_MD
-    const md = base + (await renderCurrentMainSection(db, project.id))
+    const { content, normsHash } = await renderServedPlaybook(db, project)
     // Expose the project slug so `relayroom init` can name the tmux session
-    // deterministically (RR-<slug>-<part>) without a second round trip.
-    return c.text(md, 200, {
+    // deterministically (RR-<slug>-<part>) without a second round trip, and the
+    // playbook-norms hash so `rr.sh update` can report drift without a re-fetch (L5).
+    return c.text(content, 200, {
       'content-type': 'text/markdown; charset=utf-8',
       'x-relayroom-project-slug': project.slug,
+      'x-relayroom-playbook-hash': normsHash,
     })
+  })
+
+  // Lightweight playbook-norms hash for `rr.sh update` drift checks (FEAT-0006 L5):
+  // the sha256 of the served norms (authored body + trusted-facts block) without
+  // downloading the whole document. Same connect-code trust model as /relayroom-md.
+  route.get('/:connectCode/relayroom-md/hash', async (c) => {
+    const connectCode = c.req.param('connectCode')
+    const denied = await authorizeRuntime(db, c, {
+      connectCode, part: null, enforcement: 'grace', endpoint: 'GET /relayroom-md/hash',
+    })
+    if (denied) return denied
+    const [project] = await db
+      .select({ id: projects.id, relayroomMd: projects.relayroomMd, knowledgeConfig: projects.knowledgeConfig })
+      .from(projects)
+      .where(and(eq(projects.connectCode, connectCode), isNull(projects.archivedAt)))
+      .limit(1)
+    if (!project) return c.json({ error: 'unknown connect code' }, 404)
+    const { normsHash } = await renderServedPlaybook(db, project)
+    return c.json({ hash: normsHash })
   })
 
   // Authoritative role lookup (read-only). The Claude AskUserQuestion guard calls
