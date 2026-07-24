@@ -72,5 +72,10 @@
     "minutes": "{count}분 전",
     "hours": "{count}시간 전",
     "days": "{count}일 전"
+  },
+  "loadError": {
+    "title": "불러오지 못했습니다",
+    "body": "불러오는 중 문제가 생겼습니다. 변경된 것은 없습니다.",
+    "retry": "다시 시도"
   }
 }
