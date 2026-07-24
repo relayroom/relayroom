@@ -4,6 +4,77 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.5.0] - 2026-07-24
+
+Project Knowledge. Migrations `0015` through `0019` apply on startup.
+
+RelayRoom already kept every message and event in your Postgres. Between runs, none of
+it accumulated: an agent worked out how something in this repo behaves, said so in a
+thread, the thread closed, and the next agent started from zero on a fact the team had
+already established. This release turns that stream into a knowledge layer agents read
+before they act, and reports whether it is actually helping.
+
+The loop is: closed threads are distilled into candidate facts, agents `recall`
+validated ones before non-trivial work, independent signals decide which candidates
+earn trust, recurring failures become proposals a person approves, and trusted facts are
+served back into the playbook every agent reads.
+
+**What keeps this from amplifying mistakes.** An agent can never promote its own claim.
+An entry becomes trusted only when either enough distinct issuers support it or the
+project owner deliberately confirms it, and in both cases only while nothing has
+contradicted it. The whole of CI counts as one issuer, so a hundred green runs cannot
+carry a claim across by themselves. The threshold is there to stop an automated system
+holding a signing key from deciding truth alone, not to overrule the person who owns the
+project. Everything automatic here produces candidates only: automation widens what gets
+captured, never what gets trusted.
+
+This is a typed, provenance-tracked knowledge table. It is not a semantic or temporal
+graph, and it is not named as though it were.
+
+### Added
+- **`recall` and `learn` MCP tools.** `recall` returns only trusted entries; `learn`
+  always writes a candidate. An optional `recall_used` call is what makes recall-hit-rate
+  a measurement rather than a guess.
+- **CI attestation.** A signed endpoint lets CI vouch for a claim, with a check-to-claim
+  map deciding what a given check is evidence for, and replay defence on the signature.
+- **The Learning panel.** Four compounding metrics, gated on sample size: below the
+  threshold it says there is not enough data instead of printing a percentage. Recent days
+  are marked provisional, because contradictions arrive late and would otherwise make the
+  present look better than it is.
+- **Automatic distillation from closed threads,** single-writer and durable, with a
+  per-project redaction denylist that drops matched spans before anything is written, and
+  an owner action to purge everything derived from a given thread.
+- **A reflection proposer.** Recurring failure signatures become proposals carrying their
+  evidence, hypothesis, and the condition that would disprove them. Nothing is ever applied
+  automatically. Playbook changes are versioned append-only, so rolling back adds a version
+  rather than overwriting one.
+- **A generated trusted-facts block in the served playbook,** hidden until a project has
+  accumulated a few trusted entries, plus a playbook hash `rr.sh update` reports so a
+  worktree can tell whether it is on the current norms.
+
+### Fixed
+- **Token and cost usage was recorded as zero for any turn that used tools.** The
+  transcript parser treated a tool result as the start of a turn and stopped there, so it
+  summed nothing and skipped the upload. For agents doing real work the dashboard simply
+  stayed empty.
+- **Failed reads were rendered as empty states.** A dashboard whose query had died
+  animated a loading skeleton forever, and other pages announced "all caught up" or "no
+  members" from reads that had failed. An empty state is a claim about your account, and
+  these were false. Failures now say so.
+
+### Security
+- **A leaked attestation secret can be revoked immediately.** Rotation kept the previous
+  secret valid for a grace window so an in-flight CI run would not break, which is right
+  for routine rotation and wrong when the secret has leaked, where the window is the
+  exposure. Revoking now clears the old secret in the same write that mints the new one,
+  and the audit records which of the two was intended. Revoking stops future misuse and
+  does not undo promotions the leaked secret already made.
+
+### Changed
+- **The agent connect instructions default to bypass mode.** These sessions are
+  unattended, and an agent stopped at an approval prompt waits for someone who is not
+  watching. The toggle still states plainly that it skips all permission checks.
+
 ## [0.4.3] - 2026-07-23
 
 Correctness release. No database migration.
