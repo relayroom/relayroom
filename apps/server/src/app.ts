@@ -4,6 +4,7 @@ import { cors } from 'hono/cors'
 import type { Bus } from './bus'
 import { createMcpRoute, getAuthBase, getServerBase } from './routes/mcp'
 import { createSseRoute } from './routes/sse'
+import { createAttestRoute } from './routes/attest'
 
 /**
  * Allowed browser origins for /api/* CORS. Defaults to the dashboard (auth base).
@@ -44,5 +45,10 @@ export function createApp(db: Db, bus: Bus) {
   app.route('/mcp', createMcpRoute(db, bus))
 
   app.route('/api/sse', createSseRoute(db, bus))
+
+  // CI attestation promotion channel (FEAT-0001 L1). A plain HTTP route, NOT an MCP
+  // tool: agents reach the tools with a connect code and cannot reach this, which is
+  // what keeps promotion out of a work agent's hands. Signed per-project secret.
+  app.route('/api/knowledge/attest', createAttestRoute(db))
   return app
 }
