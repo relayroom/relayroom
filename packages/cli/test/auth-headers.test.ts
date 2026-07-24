@@ -134,6 +134,89 @@ describe("generated rr.sh: update", () => {
   })
 })
 
+describe("instruction file: recall/learn nudge (L5)", () => {
+  let dir: string
+  let hub: ReturnType<typeof recordingHub>
+  let url: string
+  let savedTmux: string | undefined
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), "relayroom-instr-"))
+    hub = recordingHub(MD_HANDLER)
+    url = `http://127.0.0.1:${await hub.port}`
+    savedTmux = process.env.TMUX
+    delete process.env.TMUX
+  })
+
+  afterEach(() => {
+    hub.server.close()
+    if (savedTmux !== undefined) process.env.TMUX = savedTmux
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  const NUDGE = "call `recall` before non-trivial work"
+
+  it("injects the recall/learn line into the CLI's instruction file", async () => {
+    await init({ dir, code: "c1", part: "core", server: url, token: "t", agent: "claude", tmuxCheck: false })
+    expect(readFileSync(join(dir, "CLAUDE.md"), "utf8")).toContain(NUDGE)
+  })
+
+  it("does not duplicate the line when init runs again", async () => {
+    // ensureLine is idempotent by construction; re-init (the common case) must not
+    // stack the nudge.
+    await init({ dir, code: "c1", part: "core", server: url, token: "t", agent: "claude", tmuxCheck: false })
+    await init({ dir, code: "c1", part: "core", server: url, token: "t", agent: "claude", tmuxCheck: false })
+    const claudeMd = readFileSync(join(dir, "CLAUDE.md"), "utf8")
+    expect(claudeMd.split(NUDGE).length - 1).toBe(1)
+  })
+})
+
+describe("generated rr.sh: playbook hash (L5)", () => {
+  let dir: string
+  let hub: ReturnType<typeof recordingHub>
+  let url: string
+  let savedTmux: string | undefined
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), "relayroom-hash-"))
+    // The hub returns the served-playbook hash as a response header on the fetch.
+    hub = recordingHub(() => ({
+      status: 200,
+      body: "# RELAYROOM.md\n",
+      headers: { "x-relayroom-project-slug": "demo", "x-relayroom-playbook-hash": "sha256:abc123" },
+    }))
+    url = `http://127.0.0.1:${await hub.port}`
+    savedTmux = process.env.TMUX
+    delete process.env.TMUX
+  })
+
+  afterEach(() => {
+    hub.server.close()
+    if (savedTmux !== undefined) process.env.TMUX = savedTmux
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it("reports the playbook hash the server exposes after an update", async () => {
+    await init({ dir, code: "c1", part: "core", server: url, token: "t", tmuxCheck: false })
+    const { code, stdout } = await run("bash", [join(dir, "rr.sh"), "update"], { cwd: dir })
+    expect(code).toBe(0)
+    expect(stdout).toContain("playbook hash: sha256:abc123")
+  })
+
+  it("stays silent when an older server sends no hash header", async () => {
+    // Forward-compatible: the hash line is additive, so a server that predates it
+    // must not turn update into a failure or print an empty hash.
+    hub.server.close()
+    hub = recordingHub(MD_HANDLER) // no hash header
+    url = `http://127.0.0.1:${await hub.port}`
+    await init({ dir, code: "c1", part: "core", server: url, token: "t", tmuxCheck: false })
+    const { code, stdout } = await run("bash", [join(dir, "rr.sh"), "update"], { cwd: dir })
+    expect(code).toBe(0)
+    expect(stdout).toContain("RELAYROOM.md updated")
+    expect(stdout).not.toContain("playbook hash:")
+  })
+})
+
 describe("generated rr.sh: statusline unread count", () => {
   let dir: string
   let hub: ReturnType<typeof recordingHub>

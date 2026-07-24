@@ -573,15 +573,28 @@ case "\${1:-help}" in
         # empty TOKEN would send \`Authorization: Bearer \` , and the server rejects a
         # present-but-invalid bearer outright (it does not fall back), so a worktree
         # with no token issued yet would stop being able to update at all.
+        # Dump response headers so we can also report the served-playbook hash (L5).
+        _hdrs="$(mktemp 2>/dev/null || echo /tmp/rr-md-hdrs.$$)"
         if [ -n "$TOKEN" ]; then
-          _rrmd() { curl -fsS -H "Authorization: Bearer $TOKEN" "$SERVER/mcp/$CODE/relayroom-md" -o "$ROOT/RELAYROOM.md"; }
+          _rrmd() { curl -fsS -D "$_hdrs" -H "Authorization: Bearer $TOKEN" "$SERVER/mcp/$CODE/relayroom-md" -o "$ROOT/RELAYROOM.md"; }
         else
-          _rrmd() { curl -fsS "$SERVER/mcp/$CODE/relayroom-md" -o "$ROOT/RELAYROOM.md"; }
+          _rrmd() { curl -fsS -D "$_hdrs" "$SERVER/mcp/$CODE/relayroom-md" -o "$ROOT/RELAYROOM.md"; }
         fi
         if _rrmd; then
           rm -f "$ROOT/.relayroom/.update" 2>/dev/null || true
           echo "RELAYROOM.md updated from the hub. Re-read it now - the running agent still has the old copy."
-        else echo "rr.sh: failed to fetch RELAYROOM.md from $SERVER" >&2; exit 1; fi ;;
+          # The hash the server exposes for the served playbook, so an operator/agent
+          # can tell the worktree is on the current norms. The header name is the
+          # contract with the server; an older server that does not send it just
+          # means we print nothing.
+          # One awk, no pipeline, and \`|| true\`: this script runs under
+          # \`set -euo pipefail\`, so a \`grep | ...\` that finds nothing fails the whole
+          # pipeline and would abort the update on exactly the servers we mean to
+          # stay compatible with. awk exits 0 on no match.
+          _ph="$(awk 'tolower(\$1) == "x-relayroom-playbook-hash:" { sub(/\\r\$/, "", \$2); print \$2; exit }' "$_hdrs" 2>/dev/null || true)"
+          if [ -n "$_ph" ]; then echo "playbook hash: $_ph"; fi
+          rm -f "$_hdrs" 2>/dev/null || true
+        else rm -f "$_hdrs" 2>/dev/null || true; echo "rr.sh: failed to fetch RELAYROOM.md from $SERVER" >&2; exit 1; fi ;;
     esac ;;
   statusline) sl ;;
   help|-h|--help) usage ;;
@@ -596,6 +609,11 @@ const INSTRUCTION_FILES: Record<string, string> = {
   // agy (Antigravity) reads the ~/.gemini config root, so it keeps GEMINI.md.
   agy: "GEMINI.md",
 }
+
+/** The L5 recall/learn nudge, injected once into each instruction file. Exact
+ *  single line so ensureLine's presence check keeps it idempotent across re-inits. */
+const KNOWLEDGE_INSTRUCTION =
+  "RelayRoom: call `recall` before non-trivial work, and `learn` when you discover a durable fact."
 
 export interface InitOpts {
   code?: string
@@ -846,6 +864,11 @@ export async function init(opts: InitOpts): Promise<void> {
       ) {
         console.log(existed ? `referenced @RELAYROOM.md in ${file}` : `created ${file} referencing @RELAYROOM.md`)
       }
+      // The recall/learn nudge lives directly in the CLI's own instruction file,
+      // not only in the referenced RELAYROOM.md, because that file is the one every
+      // coding CLI reads on startup without an extra hop. ensureLine is idempotent,
+      // so re-running init never duplicates it (L5).
+      ensureLine(path, KNOWLEDGE_INSTRUCTION, { create: true })
     }
     for (const name of Object.values(INSTRUCTION_FILES)) {
       if (selected.includes(name)) continue
