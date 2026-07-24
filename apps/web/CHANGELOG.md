@@ -1,5 +1,23 @@
 # @relayroom/web
 
+## 0.5.1
+
+### Patch Changes
+
+- c6282a7: Fix the dashboard failing to load for any organization with more than one project.
+
+  The agent-status lookup built its own `ANY(ARRAY[...]::text[])` filter against `agent.project_id`, which is a uuid column, so Postgres rejected the query with "operator does not exist: uuid = text". `getDashboardSummary` caught it and reported a failure, which took the projects, agents and organizations widgets down together.
+
+  It only appeared with two or more projects: the code branched on `projectIds.length === 1` and the single-project branch used a plain equality that worked fine, so the broken side went unnoticed until an organization had a second project. The filter is now `inArray`, which casts to the column's own type and removes the one/many split entirely - the split was the reason half the code path was never exercised. The same needless split has been collapsed in the organization queries. Regression tests now cover two and three projects, not just one.
+
+- 8e66858: Widen the knowledge Proposals and CI attestation pages to match every other page.
+
+  Both were laid out at `max-w-3xl` while the knowledge tab they sit under, the other project tabs, and the dashboard all use `max-w-6xl`, so moving between tabs made the content jump narrower for no reason. They now use the same width as their siblings.
+
+  - @relayroom/db@0.5.1
+  - @relayroom/shared@0.5.1
+  - @relayroom/telemetry@0.5.1
+
 ## 0.5.0
 
 ### Minor Changes
