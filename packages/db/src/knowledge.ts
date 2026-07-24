@@ -23,11 +23,111 @@
 import { and, eq, gt, inArray, sql } from 'drizzle-orm'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 import type { PgDatabase } from 'drizzle-orm/pg-core'
-import { knowledge, knowledgeAudits, knowledgeValidations } from './schema'
+import { knowledge, knowledgeAudits, knowledgeValidations, projects } from './schema'
 
 /** Driver-agnostic db handle, or a transaction. See governance.ts. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type KnowledgeDb = PgDatabase<any, any, any>
+
+/**
+ * Mark a project as having new closed-thread material for the extractor to sweep.
+ *
+ * Every place a thread reaches a resolved state has to call this, and those places
+ * live in two packages: the Hono close tool and the autoclose sweep in apps/server,
+ * and the dashboard's status change in apps/web. It sits in @relayroom/db so both
+ * import the one setter - the same reason decideProjectAccess and the promotion
+ * transaction live here. If instead the servers kept a private copy, the web
+ * closer would quietly not mark, and every thread closed from the dashboard would
+ * never be extracted, with no error to notice.
+ *
+ * It only WRITES now() - it never reads the marker back, so the microsecond
+ * precision trap that the clearing side must avoid does not touch this side.
+ * `now()` is the transaction's clock, so calling it inside the same transaction
+ * that closes the thread ties the two together.
+ */
+export async function markProjectKnowledgeDirty(db: KnowledgeDb, projectId: string): Promise<void> {
+  await db.update(projects).set({ knowledgeDirtyAt: sql`now()` }).where(eq(projects.id, projectId))
+}
+
+export interface PurgeResult {
+  /** Entries whose sole source was this thread; removed entirely. */
+  deleted: number
+  /** Entries citing this thread and others; this thread stripped from sourceRefs. */
+  detached: number
+}
+
+/**
+ * Purge (or, with `dryRun`, count) the knowledge derived from a thread.
+ *
+ * An entry's `sourceRefs` is a provenance ledger and an ARRAY: one distilled lesson
+ * can cite several threads. So purging thread A is not a blanket delete of anything
+ * that mentions A:
+ *   - an entry whose ONLY source was A is deleted;
+ *   - an entry citing A and something else survives, with A stripped from its
+ *     sourceRefs (detached).
+ * Deleting on any-match would lose knowledge another thread contributed; detaching
+ * only would leave a sourceRef pointing at a purged thread, so provenance would
+ * lie. Doing both is the only outcome that leaves no reference to A anywhere and
+ * loses no multi-source knowledge.
+ *
+ * The two counts are returned separately because the action is irreversible and the
+ * dashboard preview must say exactly "N deleted, M detached" - collapsing them
+ * would mislead the person confirming. `dryRun` computes those counts and writes
+ * nothing, so the preview and the delete are the SAME function and cannot diverge
+ * on what "derived from thread X" means. It is one transaction: a partial purge
+ * would leave some entries detached and some not, and a retry would report
+ * different numbers.
+ *
+ * This lives beside recordKnowledgeSignal for the same reason: the dashboard's
+ * purge action calls it directly (its sibling `promoteKnowledge` already calls
+ * recordKnowledgeSignal the same way), after checking owner access itself. A
+ * button is not a gate, so the caller re-checks; there is no HTTP hop to add one.
+ *
+ * projectId is required and matched, so one project cannot purge another's
+ * knowledge by naming its thread id.
+ */
+export async function purgeKnowledgeFromThread(
+  db: KnowledgeDb,
+  projectId: string,
+  threadId: string,
+  opts: { dryRun?: boolean } = {},
+): Promise<PurgeResult> {
+  // A dry run still runs in a transaction so its counts are a consistent snapshot,
+  // but it writes nothing.
+  return db.transaction(async tx => {
+    // Every entry in this project that cites the thread. `@>` containment finds an
+    // array element that includes {threadId}; the sole-vs-multi split is then decided
+    // per row in JS, where the array semantics are clearest.
+    const rows = await tx
+      .select({ id: knowledge.id, sourceRefs: knowledge.sourceRefs })
+      .from(knowledge)
+      .where(and(
+        eq(knowledge.projectId, projectId),
+        sql`${knowledge.sourceRefs} @> ${JSON.stringify([{ threadId }])}::jsonb`,
+      ))
+
+    let deleted = 0
+    let detached = 0
+    for (const row of rows) {
+      const remaining = (row.sourceRefs ?? []).filter(ref => ref.threadId !== threadId)
+      if (remaining.length === 0) {
+        deleted++
+        if (!opts.dryRun) {
+          await tx.delete(knowledge).where(eq(knowledge.id, row.id))
+        }
+      }
+      else {
+        detached++
+        if (!opts.dryRun) {
+          await tx.update(knowledge)
+            .set({ sourceRefs: remaining, updatedAt: sql`now()` })
+            .where(eq(knowledge.id, row.id))
+        }
+      }
+    }
+    return { deleted, detached }
+  })
+}
 
 /**
  * Distinct promoting issuer identities required for automatic promotion. Two, so

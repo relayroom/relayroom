@@ -280,6 +280,22 @@
     "metricP50Hint": "주장이 기록되고 승격되기까지의 중앙값 시간(시)입니다. 루프가 얼마나 빨리 안정되는지를 재는 것이지, 옳은지를 재는 것은 아닙니다.",
     "p50Hours": "중앙값 {hours}시간"
   },
+  "knowledgePurge": {
+    "title": "thread에서 파생된 지식 삭제",
+    "description": "thread를 삭제해도 거기서 증류된 지식은 지워지지 않습니다 - 별도 사본이기 때문입니다. 이 기능이 그걸 명시적으로 지웁니다. 출처가 이 thread뿐인 항목은 삭제되고, 이 thread와 다른 출처를 함께 인용하는 항목은 이 thread의 출처만 벗겨낸 채 남습니다.",
+    "empty": "아직 지식을 만든 thread가 없습니다.",
+    "colThread": "thread",
+    "colEntries": "항목",
+    "untitledThread": "(제목 없는 thread)",
+    "purgeButton": "삭제",
+    "previewLoading": "영향 범위를 확인하는 중...",
+    "confirmTitle": "이 thread에서 파생된 지식을 삭제할까요?",
+    "confirmBody": "{deleted, plural, =0 {삭제되는 항목 없음} other {#개 항목이 삭제}}되고, {detached, plural, =0 {출처만 벗겨지는 항목은 없음} other {#개 항목은 이 thread를 출처에서 제거한 채 유지}}됩니다. 되돌릴 수 없습니다.",
+    "confirmBodyNothing": "이 thread에는 삭제할 파생 지식이 남아 있지 않습니다.",
+    "pending": "삭제하는 중...",
+    "done": "삭제 완료: {deleted}개 삭제, {detached}개 출처 제거.",
+    "doneNothing": "삭제할 것이 없습니다."
+  },
   "eventDetail": {
     "backToList": "이벤트 목록",
     "sectionLineage": "이벤트 계보",

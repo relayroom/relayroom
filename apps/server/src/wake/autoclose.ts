@@ -8,7 +8,7 @@
  */
 import { and, inArray, isNull, sql } from 'drizzle-orm'
 import type { Db } from '@relayroom/db'
-import { messageRecipients, messages, threads } from '@relayroom/db'
+import { markProjectKnowledgeDirty, messageRecipients, messages, threads } from '@relayroom/db'
 
 /** A thread with no activity for this long is auto-closed. */
 export const THREAD_IDLE_CLOSE_MS = 30 * 60_000 // 30 min
@@ -28,30 +28,42 @@ export async function autoCloseIdleThreads(
   // Re-checking inside the UPDATE means a thread that got a message in that window is
   // no longer idle and is left open. The cutoff is computed in SQL via make_interval
   // (binding a JS Date inside a raw sql fragment mis-serializes with postgres-js).
-  const closed = await db
-    .update(threads)
-    .set({ status: 'closed' })
-    .where(
-      and(
-        inArray(threads.status, ACTIVE_STATUSES as unknown as string[]),
-        sql`coalesce(
-          (select max(m.created_at) from ${messages} m where m.thread_id = ${threads.id}),
-          ${threads.createdAt}
-        ) < now() - make_interval(secs => ${idleMs / 1000})`,
-      ),
-    )
-    .returning({ id: threads.id })
+  // Close, mark, and clear unread in ONE transaction. The close and the extractor
+  // marker must commit together: a batch that closed threads but crashed before
+  // marking would leave closed threads that never become candidates and never error
+  // (the same atomicity the close tool needs). markProjectKnowledgeDirty is the single
+  // cross-package setter (@relayroom/db).
+  return db.transaction(async (tx) => {
+    const closed = await tx
+      .update(threads)
+      .set({ status: 'closed' })
+      .where(
+        and(
+          inArray(threads.status, ACTIVE_STATUSES as unknown as string[]),
+          sql`coalesce(
+            (select max(m.created_at) from ${messages} m where m.thread_id = ${threads.id}),
+            ${threads.createdAt}
+          ) < now() - make_interval(secs => ${idleMs / 1000})`,
+        ),
+      )
+      .returning({ id: threads.id })
 
-  if (closed.length === 0) return 0
-  const ids = closed.map(r => r.id)
-  // Clear unread ONLY on threads we actually closed, so no wake path (pending-wake
-  // counts raw unread) keeps waking a participant for a resolved conversation.
-  await db.update(messageRecipients).set({ readAt: new Date() }).where(and(
-    isNull(messageRecipients.readAt),
-    inArray(
-      messageRecipients.messageId,
-      db.select({ id: messages.id }).from(messages).where(inArray(messages.threadId, ids)),
-    ),
-  ))
-  return closed.length
+    if (closed.length === 0) return 0
+    const ids = closed.map(r => r.id)
+    // Every project that owns a just-closed thread is now extractor-dirty. Mark them so
+    // the leased sweep produces candidates. (FEAT-0004 L3.) Distinct projects only.
+    const dirtied = await tx.selectDistinct({ projectId: threads.projectId })
+      .from(threads).where(inArray(threads.id, ids))
+    for (const { projectId } of dirtied) await markProjectKnowledgeDirty(tx, projectId)
+    // Clear unread ONLY on threads we actually closed, so no wake path (pending-wake
+    // counts raw unread) keeps waking a participant for a resolved conversation.
+    await tx.update(messageRecipients).set({ readAt: new Date() }).where(and(
+      isNull(messageRecipients.readAt),
+      inArray(
+        messageRecipients.messageId,
+        tx.select({ id: messages.id }).from(messages).where(inArray(messages.threadId, ids)),
+      ),
+    ))
+    return closed.length
+  })
 }

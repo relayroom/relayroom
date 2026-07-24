@@ -2,6 +2,7 @@ import { eq, isNotNull, sql } from 'drizzle-orm'
 import { afterAll, describe, expect, it } from 'vitest'
 import { createDb } from '../src/client'
 import { getOrCreateProject } from '../src/bootstrap'
+import { markProjectKnowledgeDirty } from '../src/knowledge'
 import { projects } from '../src/schema'
 
 import { TEST_DATABASE_URL } from '../../../test/db-url'
@@ -46,6 +47,33 @@ describe('extractor marker (project.knowledge_dirty_at)', () => {
     expect(await dirtyAt(project.id)).toBeNull()
     await db.update(projects).set({ knowledgeDirtyAt: sql`now()` }).where(eq(projects.id, project.id))
     expect(await dirtyAt(project.id)).not.toBeNull()
+  })
+
+  it('markProjectKnowledgeDirty is the single setter both packages call', async () => {
+    // Server (close tool, autoclose) and web (status change) all route through this
+    // one function, so a thread resolved from either side is always swept. It only
+    // writes now() and never reads the marker, so the clear-side precision trap
+    // does not apply here.
+    const project = await getOrCreateProject(db, 'ext-setter')
+    expect(await dirtyAt(project.id)).toBeNull()
+    await markProjectKnowledgeDirty(db, project.id)
+    expect(await dirtyAt(project.id)).not.toBeNull()
+
+    // Safe under repeated closes: a second call re-stamps now() and never clears,
+    // so a marked-but-not-yet-swept project stays dirty. (It re-stamps rather than
+    // no-ops, but only the clearing side cares about the exact value, and it snaps
+    // its own.)
+    await markProjectKnowledgeDirty(db, project.id)
+    expect(await dirtyAt(project.id)).not.toBeNull()
+  })
+
+  it('marks only the named project', async () => {
+    const target = await getOrCreateProject(db, 'ext-setter-target')
+    const bystander = await getOrCreateProject(db, 'ext-setter-bystander')
+    await db.update(projects).set({ knowledgeDirtyAt: null }).where(eq(projects.id, bystander.id))
+    await markProjectKnowledgeDirty(db, target.id)
+    expect(await dirtyAt(target.id)).not.toBeNull()
+    expect(await dirtyAt(bystander.id)).toBeNull()
   })
 
   it('clears only when the marker still equals the snapshot', async () => {

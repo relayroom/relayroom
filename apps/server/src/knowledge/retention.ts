@@ -12,14 +12,15 @@
  * the stored state and the ledger to match what readers already see - which is why
  * it can run on a relaxed interval.
  *
- * Candidate garbage collection is NOT here. It needs a retention policy
- * (`knowledgeConfig.retentionDays`) that does not arrive until L3, and a sweep with
- * no threshold to apply is a code path that cannot run and therefore cannot be
- * trusted when it finally does.
+ * Candidate garbage collection and the retired hard-delete are the L3 additions
+ * below (runKnowledgeGarbageCollection): they need `knowledgeConfig.retentionDays`,
+ * which L3 introduces. They live in this same module because "how a knowledge entry
+ * ages out" is one concern, whether the trigger is an explicit expiry or a
+ * retention policy.
  */
-import { and, eq, isNotNull, lte, sql } from 'drizzle-orm'
+import { and, eq, isNotNull, lt, lte, sql } from 'drizzle-orm'
 import type { Db } from '@relayroom/db'
-import { knowledge, knowledgeAudits } from '@relayroom/db'
+import { knowledge, knowledgeAudits, knowledgeValidations, projects } from '@relayroom/db'
 
 /** Max entries retired per tick, instance-wide. */
 export const RETENTION_BATCH = 200
@@ -116,4 +117,130 @@ export async function runKnowledgeRetention(
   }
 
   return { retired }
+}
+
+// ── L3: retention-policy garbage collection ───────────────────────────────────
+
+export interface GarbageCollectionResult {
+  /** candidate entries retired for aging out with no support. */
+  retired: number
+  /** retired entries hard-deleted past retentionDays * 2. */
+  deleted: number
+}
+
+/**
+ * Apply each project's `knowledgeConfig.retentionDays`:
+ *   - a CANDIDATE older than retentionDays with NO supporting validation is retired
+ *     (an unpromoted guess that nobody ever backed - it has had its chance);
+ *   - a RETIRED entry older than retentionDays * 2 is hard-deleted (the grace after
+ *     retirement before the row itself is removed).
+ *
+ * Only projects that actually set retentionDays are touched: with no policy there is
+ * no threshold, and a GC with no threshold must do nothing rather than invent one.
+ * "Older than" is measured from updatedAt for the retired hard-delete (when it became
+ * retired) and createdAt for the candidate retire (when the guess was made).
+ *
+ * A candidate WITH a support validation is spared even when old: something backed it,
+ * so it is a live claim awaiting a second issuer, not an abandoned one.
+ *
+ * Per-project cap, same BUG-0008 reasoning as the expiry sweep above.
+ */
+export async function runKnowledgeGarbageCollection(
+  db: Db,
+  opts: { now?: Date; limit?: number; projectId?: string } = {},
+): Promise<GarbageCollectionResult> {
+  const now = opts.now ?? new Date()
+  const limit = opts.limit ?? RETENTION_BATCH
+
+  // Projects with a retention policy, and the policy value. `knowledge_config` is
+  // jsonb; the ->> extracts retentionDays as text, cast to int.
+  const configured = await db
+    .select({
+      id: projects.id,
+      retentionDays: sql<number | null>`(${projects.knowledgeConfig} ->> 'retentionDays')::int`,
+    })
+    .from(projects)
+    .where(and(
+      sql`(${projects.knowledgeConfig} ->> 'retentionDays') is not null`,
+      ...(opts.projectId ? [eq(projects.id, opts.projectId)] : []),
+    ))
+
+  let retired = 0
+  let deleted = 0
+  for (const project of configured) {
+    const days = project.retentionDays
+    if (!days || days <= 0) continue
+    const retireCutoff = new Date(now.getTime() - days * 24 * 60 * 60 * 1000)
+    const deleteCutoff = new Date(now.getTime() - days * 2 * 24 * 60 * 60 * 1000)
+
+    // Candidates old enough, with no supporting validation, capped per project.
+    const staleCandidates = await db
+      .select({ id: knowledge.id })
+      .from(knowledge)
+      .where(and(
+        eq(knowledge.projectId, project.id),
+        eq(knowledge.validationState, 'candidate'),
+        lt(knowledge.createdAt, retireCutoff),
+        sql`not exists (
+          select 1 from ${knowledgeValidations} v
+          where v.knowledge_id = ${knowledge.id} and v.signal = 'support'
+        )`,
+      ))
+      .orderBy(knowledge.createdAt, knowledge.id)
+      .limit(Math.ceil(limit / Math.max(1, configured.length)))
+
+    for (const c of staleCandidates) {
+      const changed = await db.transaction(async (tx) => {
+        const updated = await tx
+          .update(knowledge)
+          .set({ validationState: 'retired', updatedAt: new Date() })
+          .where(and(eq(knowledge.id, c.id), eq(knowledge.validationState, 'candidate')))
+          .returning({ id: knowledge.id })
+        if (updated.length === 0) return false
+        await tx.insert(knowledgeAudits).values({
+          projectId: project.id,
+          action: 'retire',
+          knowledgeId: c.id,
+          fromState: 'candidate',
+          toState: 'retired',
+          actorKind: 'system',
+          detail: { reason: 'retention_gc', retentionDays: days },
+        })
+        return true
+      })
+      if (changed) retired++
+    }
+
+    // Retired entries past retentionDays * 2: hard delete. No audit knowledgeId to
+    // keep (the row is going), so the audit records the id in detail instead - the
+    // ledger should still show a deletion happened.
+    const toDelete = await db
+      .select({ id: knowledge.id })
+      .from(knowledge)
+      .where(and(
+        eq(knowledge.projectId, project.id),
+        eq(knowledge.validationState, 'retired'),
+        lt(knowledge.updatedAt, deleteCutoff),
+      ))
+      .orderBy(knowledge.updatedAt, knowledge.id)
+      .limit(Math.ceil(limit / Math.max(1, configured.length)))
+
+    for (const d of toDelete) {
+      await db.transaction(async (tx) => {
+        await tx.insert(knowledgeAudits).values({
+          projectId: project.id,
+          action: 'retire',
+          knowledgeId: null, // the row is about to be gone; keep the id in detail
+          fromState: 'retired',
+          toState: 'retired',
+          actorKind: 'system',
+          detail: { reason: 'retention_hard_delete', knowledgeId: d.id, retentionDays: days },
+        })
+        await tx.delete(knowledge).where(eq(knowledge.id, d.id))
+      })
+      deleted++
+    }
+  }
+
+  return { retired, deleted }
 }

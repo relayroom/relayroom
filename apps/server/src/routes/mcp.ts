@@ -63,7 +63,8 @@ import { shouldWake } from '../wake/issuance'
 import { isWakeBudgetEnabled } from '../wake/flag'
 import { CapabilityError, getCapabilities, resolveUrgent } from '../priority/capability'
 import { seedOwnerWakeBudget } from '../budget/seed-owner-budget'
-import { recordKnowledgeSignal } from '@relayroom/db'
+import { redact } from '../knowledge/redaction'
+import { markProjectKnowledgeDirty, recordKnowledgeSignal } from '@relayroom/db'
 import { tokenScopeAllowsProject } from '../lib/token-scope'
 
 // ── Token budget helpers ───────────────────────────────────────────────────────
@@ -1164,7 +1165,15 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
         return { content: [{ type: 'text' as const, text: 'error: thread not found' }], isError: true }
       }
       if (thread.status !== 'closed' && thread.status !== 'canceled') {
-        await db.update(threads).set({ status: 'closed' }).where(eq(threads.id, args.threadId))
+        // Close and raise the extractor marker in ONE transaction: a closed thread is
+        // extractor input, so a close that committed without the marker would leave a
+        // thread that never becomes a candidate and never errors. markProjectKnowledgeDirty
+        // is the single cross-package setter (@relayroom/db); it writes now() as the
+        // transaction clock, so the two commit together or not at all. (FEAT-0004 L3.)
+        await db.transaction(async (tx) => {
+          await tx.update(threads).set({ status: 'closed' }).where(eq(threads.id, args.threadId))
+          await markProjectKnowledgeDirty(tx, ctx.projectId)
+        })
         // Recipients who still had unread in this thread - they may now be caught up.
         const affected = await db.selectDistinct({ agentId: messageRecipients.agentId })
           .from(messageRecipients)
@@ -1423,11 +1432,25 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
 
       const sourceRefs = args.sourceThreadId ? [{ threadId: args.sourceThreadId }] : []
 
+      // Redaction denylist applied BEFORE the row is written - the same gate the
+      // extractor uses. A human pasting a lesson can paste a secret with it, so the
+      // learn path is not exempt (FEAT-0004 L3). A body redacted to nothing is
+      // rejected rather than stored empty.
+      const [proj] = await db.select({ config: projects.knowledgeConfig })
+        .from(projects).where(eq(projects.id, ctx.projectId)).limit(1)
+      const patterns = proj?.config?.redactionPatterns ?? []
+      const title = redact(args.title, patterns).text
+      const body = redact(args.body, patterns).text
+      if (body.trim() === '') {
+        return { content: [{ type: 'text' as const,
+          text: 'error: the body was empty after redaction; nothing was recorded' }], isError: true }
+      }
+
       const [row] = await db.insert(knowledge).values({
         projectId: ctx.projectId,
         kind: args.kind,
-        title: args.title,
-        body: args.body,
+        title,
+        body,
         sourceKind: 'learn',
         sourceRefs,
         // ALWAYS candidate. There is no argument this tool can take, and no branch

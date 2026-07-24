@@ -77,7 +77,8 @@
     "listFailed": "We could not load the knowledge entries.",
     "notFound": "This entry does not exist or you do not have access to it.",
     "invalidTarget": "That is not a valid entry.",
-    "promoteFailed": "We could not confirm this entry."
+    "promoteFailed": "We could not confirm this entry.",
+    "purgeFailed": "We could not purge the derived knowledge."
   },
   "attest": {
     "checkNameRequired": "Enter the CI check name.",

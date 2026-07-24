@@ -204,6 +204,42 @@ describe('learn', () => {
     expect(refusal!.text).toMatch(/rate limit/)
     expect(refusal!.text).toMatch(/NOTHING was recorded/)
   })
+
+  it('redacts a matched span from title and body before storing (learn path)', async () => {
+    // The learn path is not exempt from the denylist - a human can paste a secret.
+    // Set a project denylist, then confirm the stored candidate has the span dropped.
+    await db.update(projects)
+      .set({ knowledgeConfig: { redactionPatterns: ['sk-[a-z0-9]+'] } })
+      .where(eq(projects.id, projectId))
+    try {
+      const r = await learn({
+        title: 'rotate sk-deadbeef now', body: 'the key sk-deadbeef must be rotated', kind: 'pitfall',
+      })
+      expect(r.isError).toBe(false)
+      const { id } = JSON.parse(r.text) as { id: string }
+      const [row] = await db.select().from(knowledge).where(eq(knowledge.id, id))
+      expect(row!.title).not.toContain('sk-deadbeef')
+      expect(row!.body).not.toContain('sk-deadbeef')
+      expect(row!.body).toContain('must be rotated')
+    }
+    finally {
+      await db.update(projects).set({ knowledgeConfig: {} }).where(eq(projects.id, projectId))
+    }
+  })
+
+  it('rejects a learn whose body redacts away to nothing', async () => {
+    await db.update(projects)
+      .set({ knowledgeConfig: { redactionPatterns: ['sk-\\w+'] } })
+      .where(eq(projects.id, projectId))
+    try {
+      const r = await learn({ title: 't', body: 'sk-onlysecret', kind: 'fact' })
+      expect(r.isError).toBe(true)
+      expect(r.text).toMatch(/empty after redaction/)
+    }
+    finally {
+      await db.update(projects).set({ knowledgeConfig: {} }).where(eq(projects.id, projectId))
+    }
+  })
 })
 
 describe('recall', () => {

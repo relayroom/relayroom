@@ -15,6 +15,7 @@ import {
   dismissAttentionSchema,
   type DismissAttentionInput,
 } from "./schema"
+import { markProjectKnowledgeDirty } from "@relayroom/db/knowledge"
 import { db } from "@/modules/drizzle/db"
 import { publishMessageWakes, HUMAN_PART } from "@/lib/realtime/publish"
 import { threads, messages, messageRecipients, projects, agents } from "@relayroom/db/schema"
@@ -355,6 +356,17 @@ export async function closeThread(input: CloseThreadInput): Promise<ApiResult> {
             sql`${messageRecipients.messageId} in (select id from ${messages} where thread_id = ${threadId})`,
           ),
         )
+    }
+
+    // Wake the extractor: a thread reaching closed/answered is what makes its
+    // conversation eligible for distillation. Without this, a dashboard-closed
+    // thread would never carry the dirty marker and would never be extracted -
+    // the same shared setter the server's closers call, so all three agree. Note
+    // the status set differs from the unread-clear above: extraction cares about
+    // closed/answered, not canceled (a canceled thread is not a resolution to
+    // learn from).
+    if (status === "closed" || status === "answered") {
+      await markProjectKnowledgeDirty(db, threadCheck.thread.projectId)
     }
 
     return { result: true }
