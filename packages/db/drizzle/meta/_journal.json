@@ -113,6 +113,13 @@
       "when": 1784820963695,
       "tag": "0015_add_project_knowledge",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1784851975743,
+      "tag": "0016_add_knowledge_attestation",
+      "breakpoints": true
     }
   ]
 }

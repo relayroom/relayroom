@@ -39,6 +39,21 @@ export const projects = pgTable('project', {
   // template; the dashboard edits this, the `relayroom init` CLI pulls it.
   relayroomMd: text('relayroom_md'),
   maxBroadcastRecipients: integer('max_broadcast_recipients'), // null = computed default min(N, 8)
+  // ── CI attestation (L1) ──
+  // The HMAC secret that signs a `POST /api/knowledge/attest` body. It is the root
+  // of the promotion trust boundary: a valid signature is what lets CI, and only
+  // CI, be a promoting issuer. It is never handed to an agent connect code. Two
+  // slots so a rotation does not reject in-flight runs signed with the old key.
+  attestSecret: text('attest_secret'),                          // current secret; null = attestation disabled
+  attestKeyId: text('attest_key_id'),                           // short id the attest body's keyId selects
+  attestSecretPrev: text('attest_secret_prev'),                 // previous secret, honored during grace
+  attestKeyIdPrev: text('attest_key_id_prev'),                  // short id of the previous secret
+  attestSecretPrevExpiresAt: timestamp('attest_secret_prev_expires_at', { withTimezone: true }), // after this, prev is rejected and should be nulled
+  // Per-project knobs the promotion transaction reads: K distinct issuers to
+  // promote, the days a contradiction still blocks, and (L3+) retention / the
+  // dynamic-facts block. Empty object = every default applies.
+  knowledgeConfig: jsonb('knowledge_config').$type<{ kDistinctIssuers?: number; windowDays?: number; dynamicFactsBlock?: boolean; retentionDays?: number }>()
+    .notNull().default(sql`'{}'::jsonb`),
   createdByUserId: text('created_by_user_id')
     .references(() => better_auth_user.id, { onDelete: 'set null' }),
   createdAt: createdAt(),
@@ -497,4 +512,43 @@ export const recallLogs = pgTable('recall_log', {
   createdAt: createdAt(),
 }, t => [
   index('recall_log_project_created_idx').on(t.projectId, t.createdAt),
+])
+
+// ── knowledge_check_map (L1) ───────────────────────────────────────────────────
+// Which CI check is allowed to attest which claim. An attestation only counts
+// toward promotion when a row here maps its check_name to the knowledge it names;
+// an unmapped attestation is still recorded, but written `counted=false`. This is
+// what stops a project pointing any green check at any claim it likes: a manager
+// (project owner) writes these rows, never an agent.
+export const knowledgeCheckMap = pgTable('knowledge_check_map', {
+  id: uuidPk(),
+  projectId: uuid('project_id').notNull()
+    .references(() => projects.id, { onDelete: 'cascade' }),
+  checkName: text('check_name').notNull(),   // e.g. "migration-smoke"
+  // No standalone FK to knowledge on purpose. A plain knowledge_id FK would let a
+  // project map its check onto ANOTHER project's claim, since it only checks that
+  // the id exists somewhere. The migration instead adds a COMPOSITE FK on
+  // (project_id, knowledge_id) -> knowledge(project_id, id), so the mapped claim
+  // must belong to the same project. That is the L1 tenant boundary.
+  knowledgeId: uuid('knowledge_id').notNull(),
+  createdByUserId: text('created_by_user_id')
+    .references(() => better_auth_user.id, { onDelete: 'set null' }),
+  createdAt: createdAt(),
+}, t => [
+  // Both key columns are NOT NULL, so this unique index is sound (no null-skips).
+  uniqueIndex('knowledge_check_map_uq').on(t.projectId, t.checkName, t.knowledgeId),
+])
+
+// ── knowledge_nonce (L1) ───────────────────────────────────────────────────────
+// Replay defense for attestation. Each accepted attest body carries a nonce; a
+// (project_id, nonce) already present means the same signed request is being
+// replayed, and it is rejected. Old nonces are swept once they are older than the
+// maximum clock skew the endpoint tolerates.
+export const knowledgeNonces = pgTable('knowledge_nonce', {
+  projectId: uuid('project_id').notNull()
+    .references(() => projects.id, { onDelete: 'cascade' }),
+  nonce: text('nonce').notNull(),
+  seenAt: timestamp('seen_at', { withTimezone: true }).notNull().defaultNow(),
+}, t => [
+  primaryKey({ columns: [t.projectId, t.nonce] }),
 ])
