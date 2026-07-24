@@ -86,6 +86,13 @@
     "mapFailed": "We could not update the mapping.",
     "mappingNotFound": "That mapping no longer exists."
   },
+  "proposal": {
+    "notFound": "This proposal does not exist or you do not have access to it.",
+    "alreadyDecided": "This proposal has already been decided.",
+    "decideFailed": "We could not record your decision.",
+    "versionNotFound": "That playbook version does not exist.",
+    "rollbackFailed": "We could not roll back the playbook."
+  },
   "event": {
     "notFound": "This event does not exist or you do not have access to it.",
     "listFailed": "We could not load the events.",

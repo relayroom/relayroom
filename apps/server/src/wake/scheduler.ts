@@ -19,6 +19,7 @@
  */
 import type { Bus } from '../bus'
 import type { Db } from '@relayroom/db'
+import { proposeKnowledgeDiff } from '@relayroom/db'
 import { reconcileWakeLedger } from './reconcile'
 import { runEligibilitySweep } from './sweep'
 import { expireStale } from './state'
@@ -28,6 +29,7 @@ import { runKnowledgeRetention } from '../knowledge/retention'
 import { runKnowledgeMetricsRollup } from '../knowledge/metrics-rollup'
 import { runExtractorSweep } from '../knowledge/extractor-sweep'
 import { runKnowledgeGarbageCollection } from '../knowledge/retention'
+import { runProposerSweep } from '../knowledge/proposer'
 
 export const RECONCILE_INTERVAL_MS = 60_000 // 1 min: phantom detection (ledger catch-up)
 export const SWEEP_INTERVAL_MS = 30_000 // 30 s: recover suppressed parts (window freed)
@@ -49,6 +51,10 @@ export const KNOWLEDGE_EXTRACTOR_INTERVAL_MS = 60_000
 // 6h: retention GC. Ageing-out is not time-critical; a relaxed interval keeps it off
 // the hot path.
 export const KNOWLEDGE_GC_INTERVAL_MS = 6 * 60 * 60_000
+// 5min: reflection proposer (FEAT-0005 L4). It reacts to ACCUMULATED errors, so it
+// is not latency-sensitive; the recurrence threshold (>=2 agents / >=3 times) is
+// itself a debounce, so a relaxed interval avoids churn. Lease-guarded + idempotent.
+export const KNOWLEDGE_PROPOSER_INTERVAL_MS = 5 * 60_000
 
 export interface WakeJobs {
   stop(): void
@@ -59,6 +65,7 @@ export interface StartWakeJobsOptions {
   knowledgeMetricsMs?: number
   knowledgeExtractorMs?: number
   knowledgeGcMs?: number
+  knowledgeProposerMs?: number
   reconcileMs?: number
   sweepMs?: number
   governanceMs?: number
@@ -81,6 +88,7 @@ export function startWakeJobs(db: Db, bus: Bus, opts: StartWakeJobsOptions = {})
   const knowledgeMetricsMs = opts.knowledgeMetricsMs ?? KNOWLEDGE_METRICS_INTERVAL_MS
   const knowledgeExtractorMs = opts.knowledgeExtractorMs ?? KNOWLEDGE_EXTRACTOR_INTERVAL_MS
   const knowledgeGcMs = opts.knowledgeGcMs ?? KNOWLEDGE_GC_INTERVAL_MS
+  const knowledgeProposerMs = opts.knowledgeProposerMs ?? KNOWLEDGE_PROPOSER_INTERVAL_MS
 
   // Per-job re-entrancy guard: skip a tick if the PREVIOUS run of the same job is
   // still in flight. A slow reconcile/sweep otherwise overlaps itself (setInterval
@@ -118,6 +126,10 @@ export function startWakeJobs(db: Db, bus: Bus, opts: StartWakeJobsOptions = {})
   // Extractor + retention GC (FEAT-0004 L3). Same scheduler, same re-entrancy guard.
   timers.push(setInterval(safe('knowledge-extractor', () => runExtractorSweep(db)), knowledgeExtractorMs))
   timers.push(setInterval(safe('knowledge-gc', () => runKnowledgeGarbageCollection(db)), knowledgeGcMs))
+  // Reflection proposer (FEAT-0005 L4): cluster recurring errors + contradicted
+  // knowledge into pending proposals for human review. The only writer of the queue;
+  // proposeKnowledgeDiff is idempotent on the open-signature index.
+  timers.push(setInterval(safe('knowledge-proposer', () => runProposerSweep(db, { propose: proposeKnowledgeDiff })), knowledgeProposerMs))
   timers.push(
     setInterval(
       safe('governance', async () => {
