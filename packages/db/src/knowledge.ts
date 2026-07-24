@@ -23,11 +23,31 @@
 import { and, eq, gt, inArray, sql } from 'drizzle-orm'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 import type { PgDatabase } from 'drizzle-orm/pg-core'
-import { knowledge, knowledgeAudits, knowledgeValidations } from './schema'
+import { knowledge, knowledgeAudits, knowledgeValidations, projects } from './schema'
 
 /** Driver-agnostic db handle, or a transaction. See governance.ts. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type KnowledgeDb = PgDatabase<any, any, any>
+
+/**
+ * Mark a project as having new closed-thread material for the extractor to sweep.
+ *
+ * Every place a thread reaches a resolved state has to call this, and those places
+ * live in two packages: the Hono close tool and the autoclose sweep in apps/server,
+ * and the dashboard's status change in apps/web. It sits in @relayroom/db so both
+ * import the one setter - the same reason decideProjectAccess and the promotion
+ * transaction live here. If instead the servers kept a private copy, the web
+ * closer would quietly not mark, and every thread closed from the dashboard would
+ * never be extracted, with no error to notice.
+ *
+ * It only WRITES now() - it never reads the marker back, so the microsecond
+ * precision trap that the clearing side must avoid does not touch this side.
+ * `now()` is the transaction's clock, so calling it inside the same transaction
+ * that closes the thread ties the two together.
+ */
+export async function markProjectKnowledgeDirty(db: KnowledgeDb, projectId: string): Promise<void> {
+  await db.update(projects).set({ knowledgeDirtyAt: sql`now()` }).where(eq(projects.id, projectId))
+}
 
 /**
  * Distinct promoting issuer identities required for automatic promotion. Two, so
