@@ -10,7 +10,8 @@
  */
 import { randomBytes } from 'node:crypto'
 import { afterAll, describe, expect, it } from 'vitest'
-import { agents, events, projects } from '@relayroom/db'
+import { eq } from 'drizzle-orm'
+import { agents, events, knowledge, projects } from '@relayroom/db'
 import postgres from 'postgres'
 import {
   clusterErrors,
@@ -135,6 +136,30 @@ describe('runProposerSweep', () => {
     expect(draft.evidence.signature).toMatch(/^[0-9a-f]{64}$/)
     // triggerSignature is the dedup key core's open-signature index enforces.
     expect(draft.triggerSignature).toBe(draft.evidence.signature)
+  })
+
+  it('drafts a candidate pitfall from a contradicted entry, without touching the row', async () => {
+    const p = await project()
+    const [row] = await db.insert(knowledge).values({
+      projectId: p.id, kind: 'fact', title: 'X is always safe', body: 'do X freely',
+      sourceKind: 'human', validationState: 'contradicted',
+    }).returning({ id: knowledge.id })
+
+    const { propose, calls } = makePropose()
+    const r = await runProposerSweep(db, { propose, projectId: p.id })
+    expect(r.proposals).toBe(1)
+    const draft = calls[0]!
+    expect(draft.target).toBe('knowledge')
+    expect(draft.change.kind).toBe('pitfall') // a NEW candidate, not an edit of the row
+    expect(String(draft.change.title)).toContain('Refuted')
+    expect(draft.evidence.knowledgeIds).toEqual([row!.id])
+    expect(draft.triggerSignature).toBe(`contradicted:${row!.id}`)
+
+    // The refuted row itself is untouched - the contradiction was a signal only.
+    const [after] = await db.select({ state: knowledge.validationState, title: knowledge.title })
+      .from(knowledge).where(eq(knowledge.id, row!.id))
+    expect(after!.state).toBe('contradicted')
+    expect(after!.title).toBe('X is always safe')
   })
 
   it('does not propose below threshold', async () => {

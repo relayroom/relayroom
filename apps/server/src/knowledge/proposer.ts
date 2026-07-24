@@ -26,22 +26,24 @@
  * @relayroom/db fn (and added to the scheduler) once core lands - the deliberate swap
  * point, like the L3 extractor's extract fn.
  *
- * SCOPE of this first cut (flagged to main): only ERROR-CLUSTER -> candidate `pitfall`
- * knowledge proposals are emitted. Two 07 inputs are deferred deliberately:
- *   - `contradicted` knowledge as a trigger: "approve" on a knowledge-target proposal
- *     CREATES a candidate from change.{title,body,kind} (core's decideProposal). A
- *     "review this refuted entry" proposal references an existing id and has no new
- *     candidate body, so it maps to neither documented approval behaviour. It needs a
- *     defined approval action before it can be shipped honestly.
- *   - playbook-note proposals: per main's contract, a target=playbook proposal must
- *     carry the FULL resolved authored body in change.content (db never applies a
- *     patch; decideProposal throws without content). Resolving the whole body is the
- *     proposer's job; deferred until the note templates are defined. When added, they
- *     follow that content-snapshot contract, with an optional change.patch for web.
+ * TWO TRIGGERS, both producing a candidate `pitfall` knowledge proposal:
+ *   - an error signature that clears the threshold (>= 2 agents OR >= 3 times); and
+ *   - a `contradicted` knowledge entry. Per main's ruling, a contradiction is an
+ *     INPUT SIGNAL, not something to revise: the refuted row is left alone (demote
+ *     already set its state), and the proposer drafts a NEW candidate pitfall ("this
+ *     belief was refuted - record the correction"). That maps onto decideProposal's
+ *     create-candidate approval, so no third approval action is needed.
+ *
+ * DEFERRED (flagged to main): playbook-note proposals. Per main's contract a
+ * target=playbook proposal must carry the FULL resolved authored body in
+ * change.content (the db applies no patch; decideProposal throws without content).
+ * Resolving the whole body is the proposer's job; deferred until note templates
+ * exist. When added they follow that content-snapshot contract, with an optional
+ * change.patch for the human to read.
  */
 import { and, eq, gte, sql } from 'drizzle-orm'
 import type { Db, DbOrTx } from '@relayroom/db'
-import { events } from '@relayroom/db'
+import { events, knowledge } from '@relayroom/db'
 import { errorSignature } from './error-signature'
 
 /** Advisory-lock namespace for the proposer, distinct from the extractor's so the
@@ -163,6 +165,29 @@ function draftFromCluster(cluster: ErrorCluster): ProposalDraft {
 }
 
 /**
+ * Draft a candidate pitfall from a CONTRADICTED knowledge entry. The contradiction
+ * is a signal, not an edit: the refuted row is untouched (demote already set its
+ * state), and this proposes a NEW candidate recording the correction. Approving it
+ * creates a candidate (decideProposal), never touching or re-promoting the original.
+ */
+function draftFromContradicted(entry: { id: string; title: string; body: string }): ProposalDraft {
+  return {
+    target: 'knowledge',
+    evidence: { knowledgeIds: [entry.id] },
+    hypothesis: `The previously-trusted claim "${entry.title}" was contradicted; the correction is worth recording as a pitfall so the mistaken belief is not repeated.`,
+    disconfirming: 'If the contradiction was itself mistaken - the original entry can be re-promoted instead - no new pitfall is needed.',
+    change: {
+      title: `Refuted: ${entry.title}`,
+      body: `A previously-trusted claim was contradicted: "${entry.body}". Record the corrected understanding so the mistaken belief is not repeated.`,
+      kind: 'pitfall',
+    },
+    // Stable per entry so re-running the sweep does not re-queue an already-pending
+    // proposal for the same contradiction (core's open-signature index dedupes on it).
+    triggerSignature: `contradicted:${entry.id}`,
+  }
+}
+
+/**
  * Run one proposer sweep tick.
  *
  * `opts.propose` is the core enqueue fn (injected). `opts.projectId` pins one project
@@ -207,19 +232,27 @@ export async function runProposerSweep(
   return { projects: processed, proposals }
 }
 
-/** Projects worth scanning this tick: those with a recent error. Bounds the sweep to
- *  projects that could actually yield a proposal. */
+/** Projects worth scanning this tick: those with a recent error OR a contradicted
+ *  entry. Bounds the sweep to projects that could actually yield a proposal. */
 async function candidateProjects(db: Db, since: Date, limit: number): Promise<string[]> {
   const withErrors = await db
     .selectDistinct({ id: events.projectId })
     .from(events)
     .where(and(eq(events.type, 'error'), gte(events.createdAt, since)))
-  return withErrors.map(r => r.id).slice(0, limit)
+  const withContradicted = await db
+    .selectDistinct({ id: knowledge.projectId })
+    .from(knowledge)
+    .where(eq(knowledge.validationState, 'contradicted'))
+  const ids = new Set<string>()
+  for (const r of withErrors) ids.add(r.id)
+  for (const r of withContradicted) ids.add(r.id)
+  return [...ids].slice(0, limit)
 }
 
-/** Cluster a project's recent errors into candidate-pitfall proposals. Returns how
- *  many were actually created (idempotent no-ops do not count). Runs inside the
- *  caller's locked transaction, so it is the single writer for the project. */
+/** Cluster a project's recent errors and its contradicted knowledge into
+ *  candidate-pitfall proposals. Returns how many were actually created (idempotent
+ *  no-ops do not count). Runs inside the caller's locked transaction, so it is the
+ *  single writer for the project. */
 async function proposeForProject(
   tx: DbOrTx,
   projectId: string,
@@ -240,5 +273,15 @@ async function proposeForProject(
     const row = await propose(tx, { projectId, ...draftFromCluster(cluster) })
     if (row) created++
   }
+
+  const contradicted = await tx
+    .select({ id: knowledge.id, title: knowledge.title, body: knowledge.body })
+    .from(knowledge)
+    .where(and(eq(knowledge.projectId, projectId), eq(knowledge.validationState, 'contradicted')))
+  for (const entry of contradicted) {
+    const row = await propose(tx, { projectId, ...draftFromContradicted(entry) })
+    if (row) created++
+  }
+
   return created
 }
