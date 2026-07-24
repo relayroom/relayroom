@@ -48,7 +48,7 @@ exports[`MCP tool contract > advertises stable descriptions and input schemas 1`
     "inputSchema": {
       "properties": {
         "detail": {
-          "description": "Structured detail payload",
+          "description": "Structured detail payload. For type "error", set detail.contradicts to a knowledge entry id to record that this error refutes it (demotes it; agents can demote but never promote).",
           "type": "object",
         },
         "endedAt": {

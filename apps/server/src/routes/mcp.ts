@@ -63,6 +63,7 @@ import { shouldWake } from '../wake/issuance'
 import { isWakeBudgetEnabled } from '../wake/flag'
 import { CapabilityError, getCapabilities, resolveUrgent } from '../priority/capability'
 import { seedOwnerWakeBudget } from '../budget/seed-owner-budget'
+import { recordKnowledgeSignal } from '@relayroom/db'
 import { tokenScopeAllowsProject } from '../lib/token-scope'
 
 // ── Token budget helpers ───────────────────────────────────────────────────────
@@ -916,7 +917,7 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
     'Record a work event for this agent (progress, complete, error, etc.).',
     {
       type: z.string().describe('Event type: spawn | progress | complete | error | message | composing | limited (rate-limit park: set detail.resetAt to the ISO time your provider limit lifts; omit/null to clear)'),
-      detail: z.record(z.string(), z.unknown()).optional().describe('Structured detail payload'),
+      detail: z.record(z.string(), z.unknown()).optional().describe('Structured detail payload. For type "error", set detail.contradicts to a knowledge entry id to record that this error refutes it (demotes it; agents can demote but never promote).'),
       usage: z.object({
         input_tokens: z.number().optional(),
         output_tokens: z.number().optional(),
@@ -1012,8 +1013,50 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
         })
       }
 
+      // Knowledge contradiction (FEAT-0001 L1). An `error` event may name a
+      // knowledge entry it refutes via detail.contradicts. Agents are trusted only
+      // in the SAFE direction: this records a `contradict` signal that demotes a
+      // trusted/candidate entry so recall stops returning it. There is no path here
+      // to PROMOTE - that needs a non-agent issuer (CI attestation or human). The
+      // signal rides on this event row, so the answer to "why was it demoted" is the
+      // event itself (sourceRef: eventId), and the demotion has provenance.
+      let contradiction: { applied: boolean; reason?: string } | undefined
+      if (args.type === 'error' && typeof args.detail?.contradicts === 'string') {
+        const target = args.detail.contradicts
+        if (!isUuid(target)) {
+          contradiction = { applied: false, reason: 'contradicts is not a valid knowledge id' }
+        }
+        else if (!allowLearn(agent.id)) {
+          // Same in-memory gate as `learn`, so an agent cannot demote trusted facts
+          // in a tight loop. A demotion is safe-direction but not free.
+          contradiction = { applied: false, reason: 'contradiction rate limit reached; not applied' }
+        }
+        else {
+          // recordKnowledgeSignal enforces the tenant boundary and answers the same
+          // way for "no such entry" and "another project's entry" - do not try to
+          // tell them apart, and do NOT swallow the miss: report it so an agent that
+          // named the wrong id learns its contradiction did nothing.
+          const r = await recordKnowledgeSignal(db, {
+            projectId: ctx.projectId,
+            knowledgeId: target,
+            signal: 'contradict',
+            issuer: 'error_event',
+            issuerId: 'error',
+            sourceFingerprint: event.id,
+            sourceRef: { eventId: event.id },
+            actorKind: 'system',
+          })
+          contradiction = r.ok
+            ? { applied: r.changed, ...(r.changed ? {} : { reason: `already ${r.state}` }) }
+            : { applied: false, reason: 'no such knowledge entry in this project' }
+        }
+      }
+
       return {
-        content: [{ type: 'text' as const, text: JSON.stringify({ eventId: event.id }) }],
+        content: [{ type: 'text' as const, text: JSON.stringify({
+          eventId: event.id,
+          ...(contradiction ? { contradiction } : {}),
+        }) }],
       }
     },
   )
