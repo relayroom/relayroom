@@ -258,6 +258,28 @@
     "mapRemovePending": "매핑을 제거하는 중...",
     "mapRemoveDone": "매핑이 제거되었습니다."
   },
+  "knowledgeLearning": {
+    "panelTitle": "학습",
+    "panelDescription": "이 프로젝트의 지식 루프가 최근 {days}일간 자기 데이터 위에서 어떻게 움직이는지 보여줍니다. 모든 수치는 에이전트 보고 기반입니다 - 증명이 아니라 방향입니다.",
+    "notEnoughData": "데이터 부족",
+    "sampleLabel": "표본 {count}개",
+    "sampleShort": "n={count}",
+    "belowThreshold": "수치를 보여주려면 {threshold}개 이상 필요",
+    "normalizationLabel": "정의 v{version}",
+    "normalizationChanged": "이 구간에서 정의가 바뀜 (v{versions})",
+    "agentReported": "에이전트 보고",
+    "provisionalTail": "최근 {days}일은 아직 누적 중",
+    "windowNote": "최근 {days}일",
+    "metricRepeatErrorTitle": "반복 오류",
+    "metricRepeatErrorHint": "직전 7일 안에 이미 겪은 시그니처를 가진 오류의 비율입니다. 낮을수록 좋습니다 - 루프가 아는 실수를 반복하지 않는다는 뜻입니다.",
+    "metricRecallHitTitle": "recall 활용",
+    "metricRecallHitHint": "반환된 항목을 에이전트가 실제로 사용한 recall의 비율입니다. 높을수록 검색이 에이전트가 행동하는 것을 잘 떠올린다는 뜻입니다.",
+    "metricPrecisionTitle": "지식 정밀도",
+    "metricPrecisionHint": "새로 신뢰됨이 된 항목 중 14일 안에 반증된 비율입니다. 낮을수록 좋습니다. 최근 14일은 아직 반증이 누적되는 중이라 잠정으로 표시되고 headline에서 제외됩니다.",
+    "metricP50Title": "신뢰까지 시간",
+    "metricP50Hint": "주장이 기록되고 승격되기까지의 중앙값 시간(시)입니다. 루프가 얼마나 빨리 안정되는지를 재는 것이지, 옳은지를 재는 것은 아닙니다.",
+    "p50Hours": "중앙값 {hours}시간"
+  },
   "eventDetail": {
     "backToList": "이벤트 목록",
     "sectionLineage": "이벤트 계보",

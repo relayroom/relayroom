@@ -258,6 +258,28 @@
     "mapRemovePending": "Removing the mapping...",
     "mapRemoveDone": "Mapping removed."
   },
+  "knowledgeLearning": {
+    "panelTitle": "Learning",
+    "panelDescription": "How this project's knowledge loop is doing, on its own data over the last {days} days. Every figure is agent-reported - a direction, not a proof.",
+    "notEnoughData": "Not enough data",
+    "sampleLabel": "{count} samples",
+    "sampleShort": "n={count}",
+    "belowThreshold": "Needs {threshold}+ to show a figure",
+    "normalizationLabel": "definition v{version}",
+    "normalizationChanged": "definition changed in this window (v{versions})",
+    "agentReported": "agent-reported",
+    "provisionalTail": "recent {days} days still accumulating",
+    "windowNote": "last {days} days",
+    "metricRepeatErrorTitle": "Repeat errors",
+    "metricRepeatErrorHint": "Share of errors whose signature the project had already hit in the prior 7 days. Lower is better - the loop is not repeating known mistakes.",
+    "metricRecallHitTitle": "Recall used",
+    "metricRecallHitHint": "Share of recalls where the agent went on to use a returned entry. Higher means retrieval is surfacing things agents act on.",
+    "metricPrecisionTitle": "Knowledge precision",
+    "metricPrecisionHint": "Share of newly trusted entries contradicted within 14 days. Lower is better. The most recent 14 days are still accumulating contradictions, so they are shown provisional and left out of the headline.",
+    "metricP50Title": "Time to trusted",
+    "metricP50Hint": "Median hours from a claim being recorded to being promoted. It measures how fast the loop settles, not whether it is right.",
+    "p50Hours": "{hours}h median"
+  },
   "eventDetail": {
     "backToList": "Event list",
     "sectionLineage": "Event lineage",
