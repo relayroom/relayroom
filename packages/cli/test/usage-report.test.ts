@@ -322,6 +322,67 @@ describe("usage reporter: cost estimate", () => {
   })
 })
 
+describe("usage reporter: tool-heavy turn (BUG-0009)", () => {
+  let dir: string
+  let collector: ReturnType<typeof usageCollector>
+  let server: string
+
+  // A turn that ends on a TOOL CALL: user prompt -> assistant tool_use (with usage)
+  // -> tool_result. Claude Code records the tool_result as a `type:"user"` row, so
+  // it is the LAST line. The parser scans backward from there; if it treats that
+  // tool_result as the turn boundary it stops immediately and sums zero usage -
+  // which is why tool-heavy agents reported 0 and the POST was skipped.
+  const TOOL_TURN = [
+    JSON.stringify({ type: "user", timestamp: "2026-07-23T00:00:00Z", message: { content: "run the migration" } }),
+    JSON.stringify({
+      type: "assistant",
+      timestamp: "2026-07-23T00:00:03Z",
+      message: {
+        model: "claude-opus-4-8",
+        content: [{ type: "tool_use", id: "t1", name: "Bash", input: {} }],
+        usage: { input_tokens: 40, output_tokens: 60, cache_read_input_tokens: 200 },
+      },
+    }),
+    // The tool result - a `type:"user"` row, and the last line of the turn.
+    JSON.stringify({
+      type: "user",
+      timestamp: "2026-07-23T00:00:04Z",
+      message: { content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }] },
+    }),
+  ].join("\n")
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), "relayroom-usage-tool-"))
+    collector = usageCollector()
+    server = `http://127.0.0.1:${await collector.port}`
+    mkdirSync(join(dir, ".relayroom"), { recursive: true })
+    writeFileSync(join(dir, ".relayroom", "config.json"), JSON.stringify({ code: "c", part: "core", server }))
+    writeFileSync(join(dir, "transcript.jsonl"), TOOL_TURN)
+  })
+
+  afterEach(() => {
+    collector.server.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it("counts the assistant usage above a trailing tool_result, and POSTs it", async () => {
+    await runReporter(["--agent", "claude"], { transcript_path: join(dir, "transcript.jsonl") }, dir)
+    const usage = collector.received()?.json.usage
+    expect(usage).toBeTruthy()                 // the POST happened at all
+    expect(usage.input_tokens).toBe(40)
+    expect(usage.output_tokens).toBe(60)
+    expect(usage.cache_tokens).toBe(200)
+    expect(usage.input_tokens + usage.output_tokens + usage.cache_tokens).toBeGreaterThan(0)
+  })
+
+  it("still stops at the real user prompt, not before it", async () => {
+    // The fix skips tool_result rows but must NOT walk past the genuine prompt into
+    // a previous turn. The title comes from the real prompt of THIS turn.
+    await runReporter(["--agent", "claude"], { transcript_path: join(dir, "transcript.jsonl") }, dir)
+    expect(collector.received()?.json.detail.title).toBe("run the migration")
+  })
+})
+
 describe("usage hook command", () => {
   it("never writes the connect code into the agent settings file", () => {
     const cmd = hookCommand({
