@@ -136,6 +136,16 @@ function claudeUserText(row) {
   return ""
 }
 
+// A `type:"user"` row that is really a tool RESULT, not a human prompt. Claude Code
+// records tool results as user messages whose content array carries tool_result
+// blocks, so a turn that ended on a tool call has a tool_result as its last line.
+// Treating that as the turn boundary stops the scan before it sums any assistant
+// usage - which is exactly why tool-heavy turns were reporting zero (BUG-0009).
+function claudeUserIsToolResult(row) {
+  const c = row?.message?.content
+  return Array.isArray(c) && c.some((p) => p?.type === "tool_result")
+}
+
 // Assistant TEXT blocks only (skip tool_use/tool_result) - the readable answer.
 function claudeAssistantText(row) {
   const c = row?.message?.content
@@ -159,7 +169,12 @@ function parseClaude(transcriptPath) {
     let row
     try { row = JSON.parse(lines[i]) } catch { continue }
     if (row.type === "user") {
-      // The user message that opened this turn = a natural title + start time.
+      // A tool_result is a `type:"user"` row too, but it is a continuation of THIS
+      // turn, not the boundary before it. Skip it so the assistant messages above it
+      // (which carry the usage) are still counted - without this a tool-ending turn
+      // reports zero (BUG-0009).
+      if (claudeUserIsToolResult(row)) continue
+      // The real user prompt that opened this turn = a natural title + start time.
       const txt = claudeUserText(row).replace(/\s+/g, " ").trim()
       if (txt) title = txt.slice(0, 80)
       if (row.timestamp) startedAt = row.timestamp
