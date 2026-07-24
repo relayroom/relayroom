@@ -4,10 +4,11 @@ import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { useTranslations } from "next-intl"
 import { toast } from "sonner"
-import { KeyRoundIcon, RotateCwIcon, CopyIcon, CheckIcon, Loader2Icon } from "lucide-react"
+import { KeyRoundIcon, RotateCwIcon, CopyIcon, CheckIcon, Loader2Icon, ShieldAlertIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useConfirm } from "@/components/ui/use-confirm"
 import { rotateAttestSecret } from "@/modules/knowledge/attest-actions"
+import type { RotationMode } from "@/modules/knowledge/attest-schema"
 
 interface Props {
   projectId: string
@@ -36,24 +37,34 @@ export function AttestSecretCard({ projectId, keyId, prevKeyId, prevExpiresLabel
 
   const enabled = keyId !== null
 
-  async function onRotate() {
+  async function onRotate(mode: RotationMode = "hygiene") {
+    const revoking = mode === "revoke"
     const ok = await confirm({
-      title: enabled ? t("knowledgeAttest.rotateConfirmTitle") : t("knowledgeAttest.generateConfirmTitle"),
-      description: enabled ? t("knowledgeAttest.rotateConfirmBody") : t("knowledgeAttest.generateConfirmBody"),
+      title: revoking
+        ? t("knowledgeAttest.revokeConfirmTitle")
+        : enabled
+          ? t("knowledgeAttest.rotateConfirmTitle")
+          : t("knowledgeAttest.generateConfirmTitle"),
+      description: revoking
+        ? t("knowledgeAttest.revokeConfirmBody")
+        : enabled
+          ? t("knowledgeAttest.rotateConfirmBody")
+          : t("knowledgeAttest.generateConfirmBody"),
+      destructive: revoking,
     })
     if (!ok) return
 
     setPending(true)
-    const request = rotateAttestSecret(projectId).then((res) => {
+    const request = rotateAttestSecret(projectId, mode).then((res) => {
       if (!res.result) throw new Error(res.message ?? t("knowledgeAttest.rotateFailed"))
       return res
     })
     toast.promise(request, {
-      loading: t("knowledgeAttest.rotatePending"),
+      loading: revoking ? t("knowledgeAttest.revokePending") : t("knowledgeAttest.rotatePending"),
       success: (res) => {
         setMinted({ secret: res.item.secret, keyId: res.item.keyId })
         setCopied(false)
-        return t("knowledgeAttest.rotateDone")
+        return revoking ? t("knowledgeAttest.revokeDone") : t("knowledgeAttest.rotateDone")
       },
       error: (err: unknown) =>
         err instanceof Error ? err.message : t("knowledgeAttest.rotateFailed"),
@@ -110,7 +121,7 @@ export function AttestSecretCard({ projectId, keyId, prevKeyId, prevExpiresLabel
             </dl>
           )}
         </div>
-        <Button size="sm" variant="outline" onClick={onRotate} disabled={pending}>
+        <Button size="sm" variant="outline" onClick={() => onRotate("hygiene")} disabled={pending}>
           {pending ? (
             <Loader2Icon className="mr-1 h-3.5 w-3.5 animate-spin" />
           ) : enabled ? (
@@ -121,6 +132,42 @@ export function AttestSecretCard({ projectId, keyId, prevKeyId, prevExpiresLabel
           {enabled ? t("knowledgeAttest.rotateButton") : t("knowledgeAttest.generateButton")}
         </Button>
       </div>
+
+      {/* Incident path. Separated from the routine rotation above, in destructive
+          tone, because it breaks running CI on purpose - and scoped honestly: it
+          stops future misuse, it does not undo promotions the leaked key already
+          made. Only offered when there is a live secret to revoke. */}
+      {enabled && (
+        <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3">
+          <div className="flex items-start gap-2">
+            <ShieldAlertIcon className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+            <div className="min-w-0 flex-1">
+              <h3 className="text-xs font-semibold text-destructive">
+                {t("knowledgeAttest.revokeTitle")}
+              </h3>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {t("knowledgeAttest.revokeBody")}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {t("knowledgeAttest.revokeScopeNote")}
+              </p>
+            </div>
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={() => onRotate("revoke")}
+              disabled={pending}
+            >
+              {pending ? (
+                <Loader2Icon className="mr-1 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <ShieldAlertIcon className="mr-1 h-3.5 w-3.5" />
+              )}
+              {t("knowledgeAttest.revokeButton")}
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* One-time secret reveal. Present only between the mint and its dismissal. */}
       {minted && (

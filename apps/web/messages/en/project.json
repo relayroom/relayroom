@@ -257,7 +257,15 @@
     "mapRemoveConfirmTitle": "Remove this mapping?",
     "mapRemoveConfirmBody": "This check will no longer count toward the claim's promotion. Attestations from it will be recorded but not counted.",
     "mapRemovePending": "Removing the mapping...",
-    "mapRemoveDone": "Mapping removed."
+    "mapRemoveDone": "Mapping removed.",
+    "revokeTitle": "Revoke immediately (leaked secret)",
+    "revokeBody": "Replaces the secret and kills the old one in the same write, with no grace period. CI runs still signing with the old secret fail immediately - update the secret in your pipelines, then re-run them.",
+    "revokeScopeNote": "This stops future misuse only. Promotions the leaked secret already made are not undone; review and refute those separately.",
+    "revokeButton": "Revoke now",
+    "revokeConfirmTitle": "Revoke the current secret with no grace period?",
+    "revokeConfirmBody": "The current secret stops working the moment you confirm, and a new one is issued. Any CI run still using the old secret fails immediately. This does not undo promotions the old secret already made.",
+    "revokePending": "Revoking the secret...",
+    "revokeDone": "Secret revoked. The old one no longer verifies."
   },
   "knowledgeLearning": {
     "panelTitle": "Learning",

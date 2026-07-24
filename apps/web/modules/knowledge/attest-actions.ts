@@ -7,7 +7,12 @@ import { db } from "@/modules/drizzle/db"
 import { projects, knowledgeCheckMap, knowledgeAudits, knowledge } from "@relayroom/db/schema"
 import { getServerSession, requireProjectAccess } from "@/lib/auth-session"
 import { getErrorTranslations } from "@/lib/action-i18n"
-import { addCheckMappingSchema, type AddCheckMappingInput } from "./attest-schema"
+import {
+  addCheckMappingSchema,
+  isRotationMode,
+  type AddCheckMappingInput,
+  type RotationMode,
+} from "./attest-schema"
 import { isUuid } from "@/lib/uuid"
 
 /**
@@ -22,11 +27,9 @@ import { isUuid } from "@/lib/uuid"
  * a judgement, not a value from the spec - do not read it as one. Move it to
  * projects.knowledgeConfig if it ever needs to be per-project.
  *
- * The tradeoff cuts the other way for an EMERGENCY rotation (the secret leaked),
- * where any grace is exposure. L1 as specified has a single rotation mode with a
- * fixed grace, so that is what this implements; a "revoke now, no grace" path is
- * an open item for review (rr-docs emergency-attest-secret-revocation), not
- * invented here.
+ * The tradeoff cuts the other way when the secret leaked, where any grace is
+ * exposure - that is what the `revoke` mode is for. This constant is the grace
+ * for the `hygiene` mode only.
  */
 const ROTATION_GRACE_MS = 24 * 60 * 60 * 1000
 
@@ -60,13 +63,33 @@ function newKeyId(): string {
  * first mint there is no current, so no previous is set. Either way it is
  * `owner`-only and writes an `attest_secret_rotate` audit row - it is an entry
  * in the same ledger promotion writes to, and it cannot be undone.
+ *
+ * `mode` decides what happens to the secret being replaced:
+ *
+ * - `hygiene` (default) keeps it alive for ROTATION_GRACE_MS so running pipelines
+ *   survive the swap.
+ * - `revoke` clears the previous slot in the SAME write, so the replaced secret
+ *   stops verifying immediately. The server's key selection requires a non-null,
+ *   unexpired previous slot, so nulling the column is the whole revocation - there
+ *   is no second place the old secret could still be honored from.
+ *
+ * What revoke does NOT do: it stops future misuse only. Promotions the leaked
+ * secret already caused stay exactly as they are - undoing those is forensics,
+ * through the existing refute/demote path. The UI says so; do not let this action
+ * be presented as cleanup of the past.
  */
 export async function rotateAttestSecret(
   projectId: string,
+  mode: RotationMode = "hygiene",
 ): Promise<ApiResultWithItem<MintedAttestSecret>> {
   const t = await getErrorTranslations()
   try {
     if (!isUuid(projectId)) return { result: false, message: t("project.notFound") }
+    // A Server Action's arguments are caller-supplied. An unrecognized mode is
+    // refused rather than defaulted: silently reading an unknown value as
+    // `hygiene` would leave a secret the owner believes they revoked alive for a
+    // day, while the UI reported success.
+    if (!isRotationMode(mode)) return { result: false, message: t("common.invalidInput") }
 
     const session = await getServerSession()
     if (!session) return { result: false, message: t("auth.loginRequired") }
@@ -94,16 +117,21 @@ export async function rotateAttestSecret(
       if (!current) return null
 
       const rotating = current.secret != null
+      // `revoke` keeps no previous at all - not a shorter grace, none. Anything
+      // else would leave a window on a secret assumed compromised.
+      const keepsPrev = rotating && mode === "hygiene"
+      const graceUntil = keepsPrev ? new Date(Date.now() + ROTATION_GRACE_MS) : null
+
       await tx
         .update(projects)
         .set({
           attestSecret: secret,
           attestKeyId: keyId,
           // Current -> previous, honored for the grace window. On a first mint
-          // (no current) the previous stays empty.
-          attestSecretPrev: rotating ? current.secret : null,
-          attestKeyIdPrev: rotating ? current.keyId : null,
-          attestSecretPrevExpiresAt: rotating ? new Date(Date.now() + ROTATION_GRACE_MS) : null,
+          // (no current) and on a revoke, the previous slot is left empty.
+          attestSecretPrev: keepsPrev ? current.secret : null,
+          attestKeyIdPrev: keepsPrev ? current.keyId : null,
+          attestSecretPrevExpiresAt: graceUntil,
           updatedAt: new Date(),
         })
         .where(eq(projects.id, projectId))
@@ -115,7 +143,17 @@ export async function rotateAttestSecret(
         actorUserId: session.user.id,
         // The plaintext is never recorded; the audit names the key ids and whether
         // this replaced a live secret, which is what an operator needs to trace it.
-        detail: { keyId, prevKeyId: rotating ? current.keyId : null, firstMint: !rotating },
+        // `reason` separates a routine rotation from an incident response, and
+        // `graceUntil` records whether the replaced key was left usable - the two
+        // things a later forensic read needs and cannot infer from the row itself.
+        detail: {
+          keyId,
+          prevKeyId: rotating ? current.keyId : null,
+          firstMint: !rotating,
+          reason: mode === "revoke" ? "incident" : "hygiene",
+          revokedPrev: rotating && mode === "revoke",
+          graceUntil: graceUntil?.toISOString() ?? null,
+        },
       })
 
       return true

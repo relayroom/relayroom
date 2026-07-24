@@ -257,7 +257,15 @@
     "mapRemoveConfirmTitle": "이 매핑을 제거할까요?",
     "mapRemoveConfirmBody": "이 체크는 더 이상 주장의 승격에 반영되지 않습니다. 이 체크의 증명은 기록되지만 반영되지 않습니다.",
     "mapRemovePending": "매핑을 제거하는 중...",
-    "mapRemoveDone": "매핑이 제거되었습니다."
+    "mapRemoveDone": "매핑이 제거되었습니다.",
+    "revokeTitle": "즉시 폐기 (시크릿 유출)",
+    "revokeBody": "시크릿을 교체하면서 같은 쓰기에서 이전 시크릿을 죽입니다. 유예 기간이 없습니다. 이전 시크릿으로 서명 중인 CI 실행은 즉시 실패하므로, 파이프라인의 시크릿을 갱신한 뒤 재실행하세요.",
+    "revokeScopeNote": "앞으로의 오용만 막습니다. 유출된 시크릿이 이미 만든 승격은 되돌리지 않으니, 그건 따로 확인하고 반박하세요.",
+    "revokeButton": "즉시 폐기",
+    "revokeConfirmTitle": "유예 없이 현재 시크릿을 폐기할까요?",
+    "revokeConfirmBody": "확인하는 즉시 현재 시크릿이 동작을 멈추고 새 시크릿이 발급됩니다. 이전 시크릿을 쓰는 CI 실행은 즉시 실패합니다. 이미 일어난 승격은 되돌아가지 않습니다.",
+    "revokePending": "시크릿을 폐기하는 중...",
+    "revokeDone": "시크릿을 폐기했습니다. 이전 시크릿은 더 이상 검증되지 않습니다."
   },
   "knowledgeLearning": {
     "panelTitle": "학습",
