@@ -106,6 +106,20 @@ export interface RecordKnowledgeSignalResult {
   ok: boolean
   /** false when this exact issuer-source had already signalled the same way. */
   recorded: boolean
+  /**
+   * The validation this signal maps to: the row inserted now, or - on a dedup
+   * no-op - the row already there for the same (knowledge, signal, source). null
+   * only when nothing was written at all (the entry was not found). This is the
+   * `validationId` the attest response returns, resolved inside the same locked
+   * transaction so no caller re-queries by the dedup key from outside.
+   */
+  validationId: string | null
+  /**
+   * Whether that validation counts toward promotion - the STORED value, which on
+   * a replay is the original insert's, not whatever this call passed. The other
+   * half of the attest response contract. null only when nothing was written.
+   */
+  counted: boolean | null
   /** The state after this call. */
   state: KnowledgeState | null
   /** Whether this call is the one that changed the state (and wrote the audit). */
@@ -116,7 +130,8 @@ export interface RecordKnowledgeSignalResult {
 }
 
 const NOT_FOUND: RecordKnowledgeSignalResult = {
-  ok: false, recorded: false, state: null, changed: false, promotingIssuers: 0, contradictions: 0,
+  ok: false, recorded: false, validationId: null, counted: null,
+  state: null, changed: false, promotingIssuers: 0, contradictions: 0,
 }
 
 /**
@@ -175,8 +190,26 @@ export async function recordKnowledgeSignal(
           knowledgeValidations.sourceFingerprint,
         ],
       })
-      .returning({ id: knowledgeValidations.id })
+      .returning({ id: knowledgeValidations.id, counted: knowledgeValidations.counted })
     const recorded = inserted.length > 0
+
+    // On a dedup no-op the insert returns nothing, but the caller still needs the
+    // id it collided with (the attest response is idempotent - a replay returns
+    // the original validation). Read it back HERE, under the same lock, rather
+    // than making the server re-query by the dedup key: an external lookup on the
+    // same key is the shape of bug that had a web subquery silently returning 0.
+    let validation = inserted[0] ?? null
+    if (!validation) {
+      const [existing] = await tx
+        .select({ id: knowledgeValidations.id, counted: knowledgeValidations.counted })
+        .from(knowledgeValidations)
+        .where(and(
+          eq(knowledgeValidations.knowledgeId, input.knowledgeId),
+          eq(knowledgeValidations.signal, input.signal),
+          eq(knowledgeValidations.sourceFingerprint, input.sourceFingerprint),
+        ))
+      validation = existing ?? null
+    }
 
     // (3) Re-count under the lock. Identities, not rows: a hundred green CI runs
     // share one issuer_id and are one voice.
@@ -200,7 +233,13 @@ export async function recordKnowledgeSignal(
     const promotingIssuers = Number(supportRow?.n ?? 0)
     const contradictions = Number(contraRow?.n ?? 0)
 
-    const settled = { recorded, promotingIssuers, contradictions }
+    const settled = {
+      recorded,
+      validationId: validation?.id ?? null,
+      counted: validation?.counted ?? null,
+      promotingIssuers,
+      contradictions,
+    }
 
     if (input.signal === 'contradict') {
       // Demotion is immediate and applies to a trusted entry as much as to a
