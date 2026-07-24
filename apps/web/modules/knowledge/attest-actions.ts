@@ -18,10 +18,15 @@ import { isUuid } from "@/lib/uuid"
  * owner to roll the secret across their pipelines and short enough to bound how
  * long a replaced secret stays usable.
  *
+ * CHOSEN, NOT SPECIFIED: the design says `now() + grace` without a number. 24h is
+ * a judgement, not a value from the spec - do not read it as one. Move it to
+ * projects.knowledgeConfig if it ever needs to be per-project.
+ *
  * The tradeoff cuts the other way for an EMERGENCY rotation (the secret leaked),
  * where any grace is exposure. L1 as specified has a single rotation mode with a
  * fixed grace, so that is what this implements; a "revoke now, no grace" path is
- * noted for the maintainer, not invented here.
+ * an open item for review (rr-docs emergency-attest-secret-revocation), not
+ * invented here.
  */
 const ROTATION_GRACE_MS = 24 * 60 * 60 * 1000
 
