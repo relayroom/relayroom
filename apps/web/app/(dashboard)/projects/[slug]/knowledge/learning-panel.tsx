@@ -153,9 +153,31 @@ function rateSeries(rows: MetricDay[], num: (r: MetricDay) => number | null, den
  * and is handed already-folded figures, so all the honesty decisions live in
  * modules/knowledge/metrics and are unit-tested there.
  */
-export async function LearningPanel({ rows, todayUtc }: { rows: MetricDay[]; todayUtc: string }) {
+/** A playbook version's date, overlaid on the timeline as a read-only marker. */
+export interface VersionMarker {
+  version: number
+  day: string
+}
+
+export async function LearningPanel({
+  rows,
+  todayUtc,
+  playbookVersions = [],
+}: {
+  rows: MetricDay[]
+  todayUtc: string
+  playbookVersions?: VersionMarker[]
+}) {
   const t = await getTranslations("project")
   const h = foldHeadline(rows, todayUtc)
+
+  // Which playbook versions fall inside the rendered window, so a metric shift
+  // can be read against a change. Read-only: this adds no write path, only a note
+  // of when the playbook moved.
+  const windowDays = new Set(rows.map((r) => r.day))
+  const versionsInWindow = playbookVersions
+    .filter((v) => windowDays.has(v.day))
+    .sort((a, b) => a.version - b.version)
 
   const precisionPoints: Point[] = rows.map((r) => {
     const d = r.precisionDen ?? 0
@@ -221,10 +243,20 @@ export async function LearningPanel({ rows, todayUtc }: { rows: MetricDay[]; tod
         <P50Card t={t} display={h.candidateToTrustedP50} points={p50Points} />
       </div>
 
-      <p className="flex items-center gap-1 text-[10px] text-muted-foreground/70">
-        <InfoIcon className="h-3 w-3" />
-        {t("knowledgeLearning.windowNote", { days: HEADLINE_WINDOW_DAYS })}
-      </p>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground/70">
+        <span className="flex items-center gap-1">
+          <InfoIcon className="h-3 w-3" />
+          {t("knowledgeLearning.windowNote", { days: HEADLINE_WINDOW_DAYS })}
+        </span>
+        {/* Playbook change markers - a read-only overlay so a metric before/after a
+            change is legible (04 line 85). */}
+        {versionsInWindow.map((v) => (
+          <span key={v.version} className="flex items-center gap-1 font-mono">
+            <span className="inline-block h-2 w-px bg-foreground/40" aria-hidden />
+            {t("knowledgeLearning.playbookMarker", { version: v.version, date: v.day })}
+          </span>
+        ))}
+      </div>
     </section>
   )
 }

@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation"
 import Link from "next/link"
 import { getTranslations } from "next-intl/server"
-import { BrainIcon, CheckCircle2Icon, AlertTriangleIcon, ShieldIcon } from "lucide-react"
+import { BrainIcon, CheckCircle2Icon, AlertTriangleIcon, ShieldIcon, LightbulbIcon } from "lucide-react"
 import { requireDashboardAccess, requireProjectAccess } from "@/lib/auth-session"
 import { resolveActiveOrgId } from "@/lib/active-org"
 import { getProjectBySlug } from "@/modules/project/queries"
@@ -13,6 +13,7 @@ import {
   type KnowledgeRow,
 } from "@/modules/knowledge/queries"
 import { getMetricWindow } from "@/modules/knowledge/metrics-queries"
+import { countPendingProposals, listPlaybookVersions } from "@/modules/knowledge/proposal-queries"
 import { getDateFormatters } from "@/lib/date-format.server"
 import { Badge } from "@/components/ui/badge"
 import { Pagination } from "@/components/ui/pagination"
@@ -61,10 +62,13 @@ export default async function KnowledgePage({ params, searchParams }: Props) {
   // Action is reachable without the button, so this only decides what is drawn.
   const canPromote = (await requireProjectAccess(session.user.id, project.id, "owner")).ok
 
-  const [result, counts, metricRows] = await Promise.all([
+  const [result, counts, metricRows, pendingProposals, playbookVersionsForOverlay] = await Promise.all([
     listKnowledge(project.id, { state: stateFilter, page, limit: PAGE_SIZE }),
     countKnowledgeByState(project.id),
     getMetricWindow(project.id),
+    // Only owners see the proposals entry and act on it; skip the count otherwise.
+    canPromote ? countPendingProposals(project.id) : Promise.resolve(0),
+    listPlaybookVersions(project.id),
   ])
 
   // Today's UTC date, computed once and passed down so the panel's honesty logic
@@ -97,19 +101,41 @@ export default async function KnowledgePage({ params, searchParams }: Props) {
         {/* Owners get the entry to CI attestation. Shown only to them; the page it
             links to refuses non-owners on its own, so this is just discovery. */}
         {canPromote && (
-          <Link
-            href={`/projects/${slug}/knowledge/settings`}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
-          >
-            <ShieldIcon className="h-3.5 w-3.5" />
-            {t("tabs.knowledgeSettings")}
-          </Link>
+          <div className="flex shrink-0 items-center gap-2">
+            <Link
+              href={`/projects/${slug}/knowledge/proposals`}
+              className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <LightbulbIcon className="h-3.5 w-3.5" />
+              {t("knowledgeProposals.badge")}
+              {pendingProposals > 0 && (
+                <span className="rounded-full bg-foreground px-1.5 text-[10px] font-semibold text-background tabular-nums">
+                  {pendingProposals}
+                </span>
+              )}
+            </Link>
+            <Link
+              href={`/projects/${slug}/knowledge/settings`}
+              className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <ShieldIcon className="h-3.5 w-3.5" />
+              {t("tabs.knowledgeSettings")}
+            </Link>
+          </div>
         )}
       </div>
 
       {/* Learning panel: the loop's health over the project's own data, above the
-          list because it frames what the list is for. */}
-      <LearningPanel rows={metricRows} todayUtc={todayUtc} />
+          list because it frames what the list is for. Playbook versions are
+          overlaid as date markers so a metric shift lines up with a change. */}
+      <LearningPanel
+        rows={metricRows}
+        todayUtc={todayUtc}
+        playbookVersions={playbookVersionsForOverlay.map((v) => ({
+          version: v.version,
+          day: v.createdAt.toISOString().slice(0, 10),
+        }))}
+      />
 
       {/* State filter */}
       <div className="flex items-center gap-1 overflow-x-auto border-b border-border">
