@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation"
+import { LoadError } from "@/components/load-error"
 import Link from "next/link"
 import { getTranslations } from "next-intl/server"
 import {
@@ -303,7 +304,9 @@ export default async function AgentDetailPage({ params, searchParams }: Props) {
             </Link>
           )}
         </div>
-        {recentThreads.length === 0 ? (
+        {!threadsResult.result ? (
+          <LoadError variant="inline" message={threadsResult.message} />
+        ) : recentThreads.length === 0 ? (
           <p className="text-sm text-muted-foreground">{t("agentDetail.noRecentThreads")}</p>
         ) : (
           <div className="divide-y divide-border">
@@ -337,7 +340,9 @@ export default async function AgentDetailPage({ params, searchParams }: Props) {
             </Link>
           )}
         </div>
-        {recentEvents.length === 0 ? (
+        {!eventsResult.result ? (
+          <LoadError variant="inline" message={eventsResult.message} />
+        ) : recentEvents.length === 0 ? (
           <p className="text-sm text-muted-foreground">{t("agentDetail.noRecentEvents")}</p>
         ) : (
           <div className="divide-y divide-border">

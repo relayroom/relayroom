@@ -9,6 +9,7 @@ import {
 } from "@/modules/notification/queries"
 import { getTranslations } from "next-intl/server"
 import { AttentionList } from "./attention-list"
+import { LoadError } from "@/components/load-error"
 import { GovernanceList } from "./governance-list"
 import { ThreadMeta } from "./thread-meta"
 
@@ -32,7 +33,8 @@ export default async function InboxPage() {
   const attention = attentionResult?.result ? attentionResult.items : []
   const attentionIds = new Set(attention.map((tr) => tr.id))
   // The Attention section already shows needs-human threads; don't repeat them
-  // in the Open section below.
+  // in the Open section below. If the attention read failed the set is empty and
+  // Open simply shows those threads too - a superset, never a false claim.
   const open = (openResult?.result ? openResult.items : []).filter(
     (tr) => !attentionIds.has(tr.id),
   )
@@ -61,6 +63,15 @@ export default async function InboxPage() {
         </div>
       )}
 
+      {/* A failed governance read is not "no alerts". Empty normally also means
+          "not a manager", so staying silent would hide a manager's risk lane
+          behind a query error - the one section where missing something matters
+          most. Shown even though a non-manager may see it: it says we could not
+          check, which is true for them too. */}
+      {orgId && governanceResult && !governanceResult.result && (
+        <LoadError variant="inline" message={governanceResult.message} />
+      )}
+
       {/* Governance: manager-only risk lane. Only rendered when the manager has
           open alerts (the query returns [] for non-managers). */}
       {orgId && governance.length > 0 && (
@@ -85,8 +96,11 @@ export default async function InboxPage() {
       )}
 
       {/* Attention: the bell's real queue (needs a human). Always shown so the
-          section reads as "your queue" even when empty (all caught up). */}
-      {orgId && openResult?.result && (
+          section reads as "your queue" even when empty (all caught up).
+          Gated on ITS OWN query: this used to hang off openResult, so a failed
+          attention read rendered the "all caught up" empty state - telling
+          someone their queue was clear when it had not been read. */}
+      {orgId && attentionResult && (
         <section className="space-y-2">
           <div>
             <h2 className="text-sm font-semibold">{t("attentionTitle")}</h2>
@@ -94,7 +108,9 @@ export default async function InboxPage() {
               {t("attentionDescription")}
             </p>
           </div>
-          {attention.length > 0 ? (
+          {!attentionResult.result ? (
+            <LoadError variant="inline" message={attentionResult.message} />
+          ) : attention.length > 0 ? (
             <AttentionList
               threads={attention.map((tr) => ({
                 id: tr.id,

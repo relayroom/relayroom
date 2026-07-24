@@ -57,11 +57,16 @@ export default async function ProjectMembersPage({ params }: Props) {
         <h1 className="text-base font-semibold">{t("title")}</h1>
         <p className="mt-0.5 text-xs text-muted-foreground">{t("description")}</p>
       </div>
+      {/* A failed read is passed down as an error, not as an empty list: "no
+          members" and "everyone is already added" are both claims we cannot make
+          when the query did not come back. */}
       <MembersManager
         projectId={project.id}
         members={members}
         addable={addable}
         canManage={canManage}
+        membersError={membersRes.result ? undefined : membersRes.message}
+        addableError={addableRes.result ? undefined : addableRes.message}
       />
     </div>
   )

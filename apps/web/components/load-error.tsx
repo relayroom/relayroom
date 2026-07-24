@@ -10,6 +10,12 @@ interface Props {
   /** The failed result's `message` - already localized by the query. */
   message?: string
   className?: string
+  /**
+   * `panel` (default) stands in for a whole page or grid that failed.
+   * `inline` is for one failed section on a page whose other sections loaded -
+   * it stays compact so a working page does not get dominated by one dead widget.
+   */
+  variant?: "panel" | "inline"
 }
 
 /**
@@ -26,7 +32,7 @@ interface Props {
  * is still running. This is the third state: it says the load failed, shows the
  * reason the query gave, and offers the one useful action.
  */
-export function LoadError({ message, className }: Props) {
+export function LoadError({ message, className, variant = "panel" }: Props) {
   const t = useTranslations("common")
   const router = useRouter()
   const [retrying, setRetrying] = useState(false)
@@ -38,6 +44,28 @@ export function LoadError({ message, className }: Props) {
     // fresh and the button is usable again.
     router.refresh()
     setTimeout(() => setRetrying(false), 1500)
+  }
+
+  if (variant === "inline") {
+    return (
+      <div
+        className={`flex flex-wrap items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2.5 ${className ?? ""}`}
+        role="alert"
+      >
+        <AlertTriangleIcon className="h-4 w-4 shrink-0 text-destructive" />
+        <span className="min-w-0 flex-1 text-xs text-muted-foreground">
+          {message ?? t("loadError.body")}
+        </span>
+        <Button size="sm" variant="ghost" className="h-7 shrink-0" onClick={retry} disabled={retrying}>
+          {retrying ? (
+            <Loader2Icon className="mr-1 h-3 w-3 animate-spin" />
+          ) : (
+            <RefreshCwIcon className="mr-1 h-3 w-3" />
+          )}
+          {t("loadError.retry")}
+        </Button>
+      </div>
+    )
   }
 
   return (

@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation"
+import { LoadError } from "@/components/load-error"
 import { getTranslations } from "next-intl/server"
 import { requireDashboardAccess } from "@/lib/auth-session"
 import { resolveActiveOrgId } from "@/lib/active-org"
@@ -62,6 +63,10 @@ export default async function ProjectSettingsPage({ params }: Props) {
           initial={{ wakesPerHour: ownerBudget.wakesPerHour, urgentPerHour: ownerBudget.urgentPerHour }}
         />
       )}
+      {/* A failed budget read used to remove the card silently, which reads as
+          "this project has no budget settings" rather than "we could not load
+          them". Say which one it is. */}
+      {!budgetResult.result && <LoadError variant="inline" message={budgetResult.message} />}
 
       <RelayroomMdEditor projectId={project.id} initial={project.relayroomMd} />
 

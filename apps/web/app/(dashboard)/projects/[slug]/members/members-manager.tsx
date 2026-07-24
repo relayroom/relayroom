@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { LoadError } from "@/components/load-error"
 import { useRouter } from "next/navigation"
 import { useTranslations } from "next-intl"
 import { toast } from "sonner"
@@ -50,12 +51,18 @@ export function MembersManager({
   members,
   addable,
   canManage,
+  membersError,
+  addableError,
 }: {
   projectId: string
   members: MemberRow[]
   addable: AddableRow[]
   /** Whether the viewer may add/remove/change members (owner or org admin). */
   canManage: boolean
+  /** Set when the member list failed to load - the list is then unknown, not empty. */
+  membersError?: string
+  /** Set when the addable-people list failed - "everyone is added" would be a guess. */
+  addableError?: string
 }) {
   const t = useTranslations("project.members")
   const router = useRouter()
@@ -163,7 +170,9 @@ export function MembersManager({
       {/* Add member (owners / org admins only) */}
       {canManage && (
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card p-3">
-        {addable.length === 0 ? (
+        {addableError ? (
+          <LoadError variant="inline" className="w-full" message={addableError} />
+        ) : addable.length === 0 ? (
           <p className="text-xs text-muted-foreground">{t("allAdded")}</p>
         ) : (
           <>
@@ -201,7 +210,11 @@ export function MembersManager({
 
       {/* Member list */}
       <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border">
-        {members.length === 0 ? (
+        {membersError ? (
+          <li className="p-3">
+            <LoadError variant="inline" message={membersError} />
+          </li>
+        ) : members.length === 0 ? (
           <li className="px-4 py-8 text-center text-sm text-muted-foreground">{t("empty")}</li>
         ) : (
           members.map((m) => {

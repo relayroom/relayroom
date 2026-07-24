@@ -115,7 +115,12 @@ export default async function KnowledgeSettingsPage({ params }: Props) {
       {/* Mapping only matters once a secret exists; before that, CI has no way to
           attest at all, so the section would describe a capability that is off. */}
       {status.keyId !== null && (
-        <CheckMapManager projectId={project.id} claims={claims} mappings={mappingRows} />
+        <CheckMapManager
+          projectId={project.id}
+          claims={claims}
+          mappings={mappingRows}
+          claimsError={claimsResult.result ? undefined : claimsResult.message}
+        />
       )}
 
       {/* Purge is independent of attestation - it is about removing what a thread
