@@ -175,6 +175,65 @@ describe('knowledge promotion transaction', () => {
     })
   })
 
+  it('lets an agent error event demote a candidate', async () => {
+    // L1: demotion is the safe direction, so an agent-sourced error_event may
+    // trigger it (promotion by the same issuer never can - covered above). A
+    // candidate that was contradicted before it was ever trusted still ends up
+    // contradicted, and the audit records the candidate it came from.
+    const { project, entry } = await seed('demote-candidate')
+    const result = await recordKnowledgeSignal(db, support({
+      projectId: project.id, knowledgeId: entry.id,
+      signal: 'contradict', issuer: 'error_event', issuerId: 'error',
+      sourceFingerprint: 'fp-err', actorKind: 'system',
+    }))
+    expect(result).toMatchObject({ changed: true, state: 'contradicted' })
+    expect((await stateOf(entry.id)).promotedAt).toBeNull() // never promoted
+
+    const audits = await auditsOf(entry.id)
+    expect(audits).toHaveLength(1)
+    expect(audits[0]).toMatchObject({
+      action: 'demote', fromState: 'candidate', toState: 'contradicted', actorKind: 'system',
+    })
+  })
+
+  it('records a further contradiction as evidence but does not demote or audit twice', async () => {
+    // Once contradicted, the state does not change again, so a second error must
+    // not write a second demote audit - but it is still recorded as evidence.
+    const { project, entry } = await seed('demote-again')
+    const contradict = (fp: string) => support({
+      projectId: project.id, knowledgeId: entry.id,
+      signal: 'contradict', issuer: 'error_event', issuerId: 'error', sourceFingerprint: fp,
+      actorKind: 'system',
+    })
+    await recordKnowledgeSignal(db, contradict('fp-1'))
+    const second = await recordKnowledgeSignal(db, contradict('fp-2'))
+    expect(second).toMatchObject({ ok: true, recorded: true, changed: false, state: 'contradicted' })
+    expect(await auditsOf(entry.id)).toHaveLength(1) // still one demote
+
+    const validations = await db.select().from(knowledgeValidations)
+      .where(eq(knowledgeValidations.knowledgeId, entry.id))
+    expect(validations).toHaveLength(2) // both errors kept as evidence
+  })
+
+  it('dedups a repeated error signature so one flake is not two contradictions', async () => {
+    // The same failing check re-run is one contradiction, exactly as the same
+    // green check re-run is one support.
+    const { project, entry } = await seed('demote-dedup')
+    const same = support({
+      projectId: project.id, knowledgeId: entry.id,
+      signal: 'contradict', issuer: 'error_event', issuerId: 'error', sourceFingerprint: 'fp-flake',
+      actorKind: 'system',
+    })
+    const first = await recordKnowledgeSignal(db, same)
+    const again = await recordKnowledgeSignal(db, same)
+    expect(first.recorded).toBe(true)
+    expect(again.recorded).toBe(false)
+    expect(again.contradictions).toBe(1)
+    const validations = await db.select().from(knowledgeValidations)
+      .where(eq(knowledgeValidations.knowledgeId, entry.id))
+    expect(validations).toHaveLength(1)
+  })
+
   it('is idempotent: replaying the same signal writes no second audit row', async () => {
     // A retried request must not double-audit, and must not report a change it
     // did not make.
