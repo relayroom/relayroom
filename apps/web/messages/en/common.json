@@ -72,5 +72,10 @@
     "minutes": "{count, plural, one {# minute ago} other {# minutes ago}}",
     "hours": "{count, plural, one {# hour ago} other {# hours ago}}",
     "days": "{count, plural, one {# day ago} other {# days ago}}"
+  },
+  "loadError": {
+    "title": "Could not load this",
+    "body": "Something went wrong while loading. Nothing has been changed.",
+    "retry": "Try again"
   }
 }

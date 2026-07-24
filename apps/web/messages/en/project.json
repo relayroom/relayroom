@@ -257,7 +257,15 @@
     "mapRemoveConfirmTitle": "Remove this mapping?",
     "mapRemoveConfirmBody": "This check will no longer count toward the claim's promotion. Attestations from it will be recorded but not counted.",
     "mapRemovePending": "Removing the mapping...",
-    "mapRemoveDone": "Mapping removed."
+    "mapRemoveDone": "Mapping removed.",
+    "revokeTitle": "Revoke immediately (leaked secret)",
+    "revokeBody": "Replaces the secret and kills the old one in the same write, with no grace period. CI runs still signing with the old secret fail immediately - update the secret in your pipelines, then re-run them.",
+    "revokeScopeNote": "This stops future misuse only. Promotions the leaked secret already made are not undone; review and refute those separately.",
+    "revokeButton": "Revoke now",
+    "revokeConfirmTitle": "Revoke the current secret with no grace period?",
+    "revokeConfirmBody": "The current secret stops working the moment you confirm, and a new one is issued. Any CI run still using the old secret fails immediately. This does not undo promotions the old secret already made.",
+    "revokePending": "Revoking the secret...",
+    "revokeDone": "Secret revoked. The old one no longer verifies."
   },
   "knowledgeLearning": {
     "panelTitle": "Learning",
@@ -677,6 +685,7 @@
     "handoffNote": "One CLI is the recommended default. Each time a CLI runs out of budget and hands the baton to the next, the new CLI starts with an empty context and re-reads RELAYROOM.md and the work so far. So every handoff costs tokens in proportion to the accumulated context - the longer the history, the bigger the bill, and it can eat the savings you were chasing. Only worth it if you understand that cost. For long tasks, leave periodic summaries so handoffs stay cheap.",
     "switchHint": "To switch: in the same tmux session, quit the current CLI and start another. Leave the pager running - it wakes whichever CLI is in front.",
     "multiToggle": "I want to connect multiple CLIs (check to enable multi-select)",
-    "bypassToggle": "Bypass mode (skip all approval prompts on launch)"
+    "bypassToggle": "Bypass mode: skip all approval prompts on launch",
+    "bypassHint": "On by default. Nobody watches this session, so an agent stopped at an approval prompt waits forever. Unchecking restores every permission check - and the agent will sit at the first one until you answer it yourself."
   }
 }

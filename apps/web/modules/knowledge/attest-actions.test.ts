@@ -175,6 +175,116 @@ describe("rotateAttestSecret", () => {
   })
 })
 
+/**
+ * Mirrors the server's key selection (apps/server/src/routes/attest.ts,
+ * `selectSecret`): a previous key is honored only while it is BOTH present and
+ * unexpired. The server owns the real one - this local copy is here so these
+ * tests can state the consequence ("the old key no longer verifies") rather than
+ * only the column values it follows from.
+ */
+function serverWouldAccept(
+  row: { keyId: string | null; prevKeyId: string | null; prevSecret: string | null; prevExp: Date | null },
+  keyId: string,
+): boolean {
+  if (row.keyId && keyId === row.keyId) return true
+  return Boolean(row.prevSecret && row.prevKeyId && keyId === row.prevKeyId && row.prevExp && row.prevExp.getTime() > Date.now())
+}
+
+describe("revoke mode - the leaked-secret path", () => {
+  it("kills the replaced secret in the same write, with no grace", async () => {
+    const first = await rotateAttestSecret(projectId)
+    expect(first.result).toBe(true)
+    if (!first.result) return
+    const leaked = await rawSecret(projectId)
+
+    // Sanity: before the revoke, that key is the one the server accepts.
+    expect(serverWouldAccept(leaked, first.item.keyId)).toBe(true)
+
+    const res = await rotateAttestSecret(projectId, "revoke")
+    expect(res.result).toBe(true)
+    if (!res.result) return
+
+    const after = await rawSecret(projectId)
+    // The previous slot is not shortened, it is empty.
+    expect(after.prevSecret).toBeNull()
+    expect(after.prevKeyId).toBeNull()
+    expect(after.prevExp).toBeNull()
+
+    // The consequence: the leaked key no longer verifies, and the new one does.
+    // This is the assertion that dies if the revoke stops clearing the slot.
+    expect(serverWouldAccept(after, first.item.keyId)).toBe(false)
+    expect(serverWouldAccept(after, res.item.keyId)).toBe(true)
+    expect(after.secret).not.toBe(leaked.secret)
+  })
+
+  it("hygiene mode still grants the grace window - revoke did not change the routine path", async () => {
+    const first = await rotateAttestSecret(projectId)
+    expect(first.result).toBe(true)
+    if (!first.result) return
+    const before = await rawSecret(projectId)
+
+    const second = await rotateAttestSecret(projectId, "hygiene")
+    expect(second.result).toBe(true)
+
+    const after = await rawSecret(projectId)
+    expect(after.prevSecret).toBe(before.secret)
+    expect(after.prevExp!.getTime()).toBeGreaterThan(Date.now())
+    // The rotated-away key keeps working for now - the whole point of hygiene.
+    expect(serverWouldAccept(after, first.item.keyId)).toBe(true)
+  })
+
+  it("defaults to hygiene when no mode is given", async () => {
+    await rotateAttestSecret(projectId)
+    await rotateAttestSecret(projectId)
+    const after = await rawSecret(projectId)
+    expect(after.prevSecret).not.toBeNull()
+  })
+
+  it("records the reason so an incident is separable from a routine rotation", async () => {
+    await rotateAttestSecret(projectId)
+    await rotateAttestSecret(projectId, "hygiene")
+    await rotateAttestSecret(projectId, "revoke")
+
+    const audits = await auditsFor(projectId, "attest_secret_rotate")
+    expect(audits).toHaveLength(3)
+    const reasons = audits.map((a) => (a.detail as { reason?: string }).reason)
+    expect(reasons.filter((r) => r === "hygiene")).toHaveLength(2)
+    expect(reasons.filter((r) => r === "incident")).toHaveLength(1)
+
+    const incident = audits.find((a) => (a.detail as { reason?: string }).reason === "incident")!
+    expect(incident.detail).toMatchObject({ revokedPrev: true, graceUntil: null })
+  })
+
+  it("refuses a write grant, and the live secret survives", async () => {
+    const first = await rotateAttestSecret(projectId)
+    expect(first.result).toBe(true)
+    const before = await rawSecret(projectId)
+
+    actingUserId = WRITER
+    const res = await rotateAttestSecret(projectId, "revoke")
+    expect(res.result).toBe(false)
+
+    const after = await rawSecret(projectId)
+    expect(after.secret).toBe(before.secret)   // untouched
+    expect(await auditsFor(projectId, "attest_secret_rotate")).toHaveLength(1)
+  })
+
+  it("refuses an unrecognized mode instead of quietly granting a grace", async () => {
+    const first = await rotateAttestSecret(projectId)
+    expect(first.result).toBe(true)
+    const before = await rawSecret(projectId)
+
+    // An owner who meant to revoke must not be told "done" while the old secret
+    // stays alive for a day.
+    const res = await rotateAttestSecret(projectId, "revoke_now" as never)
+    expect(res.result).toBe(false)
+
+    const after = await rawSecret(projectId)
+    expect(after.secret).toBe(before.secret)
+    expect(await auditsFor(projectId, "attest_secret_rotate")).toHaveLength(1)
+  })
+})
+
 describe("the plaintext secret is never on a read path", () => {
   it("getAttestStatus exposes the key id but not the secret", async () => {
     await rotateAttestSecret(projectId)

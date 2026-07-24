@@ -64,8 +64,11 @@ function mcpAddCommand(agent: AgentId, name: string, url: string, token: string)
   return `${bin} mcp remove ${name} 2>/dev/null; ${add}`
 }
 
-// Each CLI's "skip all approval prompts" launch flag. Opt-in (off by default): handy
-// for trusted local agents, but it bypasses ALL permission checks, not just RelayRoom.
+// Each CLI's "skip all approval prompts" launch flag. On by default here, because
+// RelayRoom's model is an agent in a tmux session nobody is watching: an agent that
+// stops at an approval prompt hangs there forever, and the human never sees it ask.
+// The flag still bypasses ALL permission checks, not just RelayRoom's - that does not
+// stop being true because it is the default, and the toggle copy says so.
 function bypassFlag(agent: AgentId): string {
   return agent === "codex"
     ? "--dangerously-bypass-approvals-and-sandbox"
@@ -101,9 +104,11 @@ export function AgentConnectGuideDialog({ connectCode, part, projectSlug, server
   // picking several (advanced rotation setup, see the note when >1).
   const [selected, setSelected] = useState<AgentId[]>(["claude"])
   const [multiMode, setMultiMode] = useState(false)
-  // Opt-in: append each CLI's "skip approval prompts" launch flag to the foreground
-  // launch line. Off by default (it bypasses all permission checks).
-  const [bypassMode, setBypassMode] = useState(false)
+  // Append each CLI's "skip approval prompts" launch flag to the foreground launch
+  // line. ON by default: these agents run unattended, so a permission prompt is not
+  // a question anyone answers - it is where the agent stops. Unchecking restores
+  // every permission check, at the cost of an agent that waits for a human.
+  const [bypassMode, setBypassMode] = useState(true)
   const [token, setToken] = useState<string | null>(null)
   // Guard so the token is issued exactly once per open - NOT a cancellable
   // effect, because router.replace (stripping ?connect) re-renders mid-request
@@ -234,14 +239,21 @@ export function AgentConnectGuideDialog({ connectCode, part, projectSlug, server
                 />
                 {t("agentConnectGuide.multiToggle")}
               </label>
-              <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
-                <Checkbox
-                  className="rounded-sm"
-                  checked={bypassMode}
-                  onCheckedChange={(checked) => setBypassMode(checked === true)}
-                />
-                {t("agentConnectGuide.bypassToggle")}
-              </label>
+              <div className="space-y-1">
+                <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+                  <Checkbox
+                    className="rounded-sm"
+                    checked={bypassMode}
+                    onCheckedChange={(checked) => setBypassMode(checked === true)}
+                  />
+                  {t("agentConnectGuide.bypassToggle")}
+                </label>
+                {/* On by default, so the hint explains what UNCHECKING costs - the
+                    decision the reader is actually facing. */}
+                <p className="pl-6 text-[11px] leading-snug text-muted-foreground/80">
+                  {t("agentConnectGuide.bypassHint")}
+                </p>
+              </div>
             </div>
 
             {(() => {
