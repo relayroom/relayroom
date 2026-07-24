@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation"
 import Link from "next/link"
 import { getTranslations } from "next-intl/server"
-import { BrainIcon, CheckCircle2Icon, AlertTriangleIcon } from "lucide-react"
+import { BrainIcon, CheckCircle2Icon, AlertTriangleIcon, ShieldIcon } from "lucide-react"
 import { requireDashboardAccess, requireProjectAccess } from "@/lib/auth-session"
 import { resolveActiveOrgId } from "@/lib/active-org"
 import { getProjectBySlug } from "@/modules/project/queries"
@@ -82,9 +82,22 @@ export default async function KnowledgePage({ params, searchParams }: Props) {
 
   return (
     <div className="py-6 px-4 xs:px-6 space-y-4 max-w-6xl mx-auto">
-      <div>
-        <h1 className="text-base font-semibold">{t("knowledge.pageTitle")}</h1>
-        <p className="mt-1 text-sm text-muted-foreground">{t("knowledge.pageDescription")}</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-base font-semibold">{t("knowledge.pageTitle")}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{t("knowledge.pageDescription")}</p>
+        </div>
+        {/* Owners get the entry to CI attestation. Shown only to them; the page it
+            links to refuses non-owners on its own, so this is just discovery. */}
+        {canPromote && (
+          <Link
+            href={`/projects/${slug}/knowledge/settings`}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <ShieldIcon className="h-3.5 w-3.5" />
+            {t("tabs.knowledgeSettings")}
+          </Link>
+        )}
       </div>
 
       {/* State filter */}
