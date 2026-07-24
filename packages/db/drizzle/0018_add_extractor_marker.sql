@@ -1,0 +1,1 @@
+ALTER TABLE "project" ADD COLUMN "knowledge_dirty_at" timestamp with time zone;
