@@ -20,10 +20,18 @@
  * promotion that did not happen is worse than no audit at all, because the
  * history is the thing an operator later trusts.
  */
-import { and, eq, gt, inArray, sql } from 'drizzle-orm'
+import { createHash } from 'node:crypto'
+import { and, desc, eq, gt, inArray, sql } from 'drizzle-orm'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 import type { PgDatabase } from 'drizzle-orm/pg-core'
-import { knowledge, knowledgeAudits, knowledgeValidations, projects } from './schema'
+import {
+  knowledge,
+  knowledgeAudits,
+  knowledgeProposals,
+  knowledgeValidations,
+  playbookVersions,
+  projects,
+} from './schema'
 
 /** Driver-agnostic db handle, or a transaction. See governance.ts. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -413,4 +421,287 @@ async function writeAudit(
       contradictions: counts.contradictions,
     },
   })
+}
+
+// ── Reflection proposer (L4) ───────────────────────────────────────────────────
+// The loop-closer. A recurring failure signature becomes a PROPOSED knowledge or
+// playbook diff, which a human decides. These three functions live beside the
+// promotion transaction on purpose: the trust boundary they must not cross is the
+// same one it enforces, and keeping them together is what makes it reviewable that
+// approving a proposal is intake, not promotion.
+
+export type ProposalTarget = 'knowledge' | 'playbook'
+export type ProposalStatus = 'pending' | 'approved' | 'rejected' | 'superseded'
+
+export interface ProposeKnowledgeDiffInput {
+  projectId: string
+  target: ProposalTarget
+  evidence?: { signature?: string; eventIds?: string[]; knowledgeIds?: string[]; count?: number; agents?: number }
+  hypothesis: string
+  disconfirming?: string | null
+  /**
+   * The concrete change. For target=knowledge: { title, body, kind, claimType }.
+   * For target=playbook: { content } - the full proposed authored body. The
+   * proposer resolves any diff into that snapshot (a `patch` may ride along for the
+   * human to read), because the db layer applies no diffs: playbook_version stores
+   * a full snapshot, and decideProposal writes exactly what it is given.
+   */
+  change: Record<string, unknown>
+  triggerSignature?: string | null
+  createdByJob?: string
+}
+
+/**
+ * Queue a pending proposal, idempotently. The partial unique index allows only one
+ * OPEN proposal per (project, signature), so a signature already queued does not
+ * double-queue; the ON CONFLICT makes that a silent no-op rather than an error.
+ * Returns the inserted row, or null when an open proposal for the signature already
+ * exists (or when there is no signature to dedupe on and the insert still races -
+ * callers treat null as "already queued").
+ */
+export async function proposeKnowledgeDiff(
+  db: KnowledgeDb,
+  input: ProposeKnowledgeDiffInput,
+): Promise<typeof knowledgeProposals.$inferSelect | null> {
+  const inserted = await db
+    .insert(knowledgeProposals)
+    .values({
+      projectId: input.projectId,
+      target: input.target,
+      evidence: input.evidence ?? {},
+      hypothesis: input.hypothesis,
+      disconfirming: input.disconfirming ?? null,
+      change: input.change,
+      triggerSignature: input.triggerSignature ?? null,
+      ...(input.createdByJob ? { createdByJob: input.createdByJob } : {}),
+    })
+    .onConflictDoNothing({
+      target: [knowledgeProposals.projectId, knowledgeProposals.triggerSignature],
+      where: sql`status = 'pending'`,
+    })
+    .returning()
+  return inserted[0] ?? null
+}
+
+export interface DecideProposalInput {
+  projectId: string
+  proposalId: string
+  decision: 'approved' | 'rejected'
+  userId: string
+  /** Optional note carried onto the playbook_version / audit for a playbook approve. */
+  note?: string
+}
+
+export type DecideProposalResult =
+  | { ok: false; reason: 'not_found' }
+  /** Already decided; nothing was written. `status` is the terminal state it holds. */
+  | { ok: false; reason: 'not_pending'; status: ProposalStatus }
+  | {
+      ok: true
+      status: 'approved' | 'rejected'
+      target: ProposalTarget
+      auditId: string
+      /** Set when an approved knowledge proposal created a candidate. */
+      knowledgeId?: string
+      /** Set when an approved playbook proposal wrote a new version. */
+      version?: number
+    }
+
+/**
+ * Decide a pending proposal under a row lock. Re-deciding is a no-op (mirrors the
+ * promotion transaction's change-only audit), so a double-click or a retry cannot
+ * write a second audit or apply the change twice.
+ *
+ * The load-bearing rule: **an approved knowledge proposal is written as a
+ * `candidate` with source_kind='proposer', never trusted.** A human approving the
+ * PROPOSAL is saying "this is worth keeping", not "this fact is proven"; promotion
+ * still requires K independent issuers through the promotion transaction. Setting
+ * trusted here would turn one dashboard click into a K=1 promotion that bypasses
+ * the whole attestation model, which is the one place L4 could quietly break the
+ * trust boundary.
+ */
+export async function decideProposal(
+  db: KnowledgeDb,
+  input: DecideProposalInput,
+): Promise<DecideProposalResult> {
+  return db.transaction(async tx => {
+    const [proposal] = await tx
+      .select()
+      .from(knowledgeProposals)
+      .where(and(
+        eq(knowledgeProposals.id, input.proposalId),
+        eq(knowledgeProposals.projectId, input.projectId),
+      ))
+      .for('update')
+    if (!proposal) return { ok: false, reason: 'not_found' }
+    if (proposal.status !== 'pending') {
+      return { ok: false, reason: 'not_pending', status: proposal.status as ProposalStatus }
+    }
+
+    const target = proposal.target as ProposalTarget
+    const approved = input.decision === 'approved'
+    let knowledgeId: string | undefined
+    let version: number | undefined
+
+    if (approved && target === 'knowledge') {
+      // Intake, not promotion: a candidate, with the proposer as its source.
+      const change = proposal.change as { title?: string; body?: string; kind?: string }
+      const [row] = await tx
+        .insert(knowledge)
+        .values({
+          projectId: input.projectId,
+          kind: change.kind ?? 'pitfall',
+          title: change.title ?? proposal.hypothesis,
+          body: change.body ?? '',
+          sourceKind: 'proposer',
+          validationState: 'candidate',
+        })
+        .returning({ id: knowledge.id })
+      knowledgeId = row!.id
+    }
+    else if (approved && target === 'playbook') {
+      version = await appendPlaybookVersion(tx, {
+        projectId: input.projectId,
+        content: playbookContentFrom(proposal.change),
+        note: input.note ?? `proposal ${proposal.id}`,
+        proposalId: proposal.id,
+        userId: input.userId,
+      })
+    }
+
+    // The audit is always written, on approve and reject alike, so the queue has a
+    // full decision history. knowledgeId links an approved knowledge candidate.
+    const [audit] = await tx
+      .insert(knowledgeAudits)
+      .values({
+        projectId: input.projectId,
+        action: approved ? 'proposer_approve' : 'proposer_reject',
+        knowledgeId: knowledgeId ?? null,
+        actorKind: 'human',
+        actorUserId: input.userId,
+        detail: { proposalId: proposal.id, target, ...(version ? { playbookVersion: version } : {}) },
+      })
+      .returning({ id: knowledgeAudits.id })
+
+    await tx
+      .update(knowledgeProposals)
+      .set({
+        status: approved ? 'approved' : 'rejected',
+        decidedByUserId: input.userId,
+        decidedAt: sql`now()`,
+        auditId: audit!.id,
+        updatedAt: sql`now()`,
+      })
+      .where(eq(knowledgeProposals.id, proposal.id))
+
+    return {
+      ok: true,
+      status: approved ? 'approved' : 'rejected',
+      target,
+      auditId: audit!.id,
+      ...(knowledgeId ? { knowledgeId } : {}),
+      ...(version ? { version } : {}),
+    }
+  })
+}
+
+export interface RollbackPlaybookInput {
+  projectId: string
+  toVersion: number
+  userId: string
+  note?: string
+}
+
+export type RollbackPlaybookResult =
+  | { ok: false; reason: 'version_not_found' }
+  | { ok: true; version: number; rolledBackTo: number; auditId: string }
+
+/**
+ * Roll the served playbook back to a prior version's content by APPENDING a new
+ * version equal to it - never mutating or deleting a version row. Blind overwrite
+ * is what this exists to avoid: the history stays a faithful record, and a rollback
+ * is itself a versioned, audited event that can in turn be rolled back.
+ */
+export async function rollbackPlaybook(
+  db: KnowledgeDb,
+  input: RollbackPlaybookInput,
+): Promise<RollbackPlaybookResult> {
+  return db.transaction(async tx => {
+    const [target] = await tx
+      .select({ content: playbookVersions.content })
+      .from(playbookVersions)
+      .where(and(
+        eq(playbookVersions.projectId, input.projectId),
+        eq(playbookVersions.version, input.toVersion),
+      ))
+    if (!target) return { ok: false, reason: 'version_not_found' }
+
+    const version = await appendPlaybookVersion(tx, {
+      projectId: input.projectId,
+      content: target.content,
+      note: input.note ?? `rollback to v${input.toVersion}`,
+      proposalId: null,
+      userId: input.userId,
+    })
+
+    const [audit] = await tx
+      .insert(knowledgeAudits)
+      .values({
+        projectId: input.projectId,
+        action: 'playbook_change',
+        actorKind: 'human',
+        actorUserId: input.userId,
+        detail: { rolledBackTo: input.toVersion, newVersion: version },
+      })
+      .returning({ id: knowledgeAudits.id })
+
+    return { ok: true, version, rolledBackTo: input.toVersion, auditId: audit!.id }
+  })
+}
+
+/** The full authored body a playbook proposal snapshots. See ProposeKnowledgeDiffInput.change. */
+function playbookContentFrom(change: Record<string, unknown>): string {
+  const content = change.content
+  if (typeof content !== 'string') {
+    // The db layer applies no diffs; the proposer must resolve the change to a full
+    // body in change.content. A bare patch with no content is not something this
+    // function can turn into a snapshot, so fail loudly rather than store a lie.
+    throw new Error('playbook proposal change.content must be the full authored body (string)')
+  }
+  return content
+}
+
+/**
+ * Append a new playbook_version and point the live copy at it. Serialized per
+ * project by locking the project row first, so two concurrent writers cannot pick
+ * the same next version and collide on the unique (project, version) index.
+ * Returns the new version number.
+ */
+async function appendPlaybookVersion(
+  tx: KnowledgeDb,
+  args: { projectId: string; content: string; note: string | null; proposalId: string | null; userId: string },
+): Promise<number> {
+  // Lock the project row so the max(version) read and the insert are one step.
+  await tx.select({ id: projects.id }).from(projects).where(eq(projects.id, args.projectId)).for('update')
+
+  const [latest] = await tx
+    .select({ version: playbookVersions.version })
+    .from(playbookVersions)
+    .where(eq(playbookVersions.projectId, args.projectId))
+    .orderBy(desc(playbookVersions.version))
+    .limit(1)
+  const version = (latest?.version ?? 0) + 1
+  const contentHash = createHash('sha256').update(args.content).digest('hex')
+
+  await tx.insert(playbookVersions).values({
+    projectId: args.projectId,
+    version,
+    content: args.content,
+    contentHash,
+    note: args.note,
+    proposalId: args.proposalId,
+    createdByUserId: args.userId,
+  })
+  await tx.update(projects).set({ relayroomMd: args.content, updatedAt: sql`now()` }).where(eq(projects.id, args.projectId))
+  return version
 }
