@@ -127,6 +127,13 @@
       "when": 1784854162187,
       "tag": "0017_add_knowledge_metrics",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1784855900446,
+      "tag": "0018_add_extractor_marker",
+      "breakpoints": true
     }
   ]
 }

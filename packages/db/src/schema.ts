@@ -50,11 +50,20 @@ export const projects = pgTable('project', {
   attestSecretPrev: text('attest_secret_prev'),                 // previous secret, honored during grace
   attestKeyIdPrev: text('attest_key_id_prev'),                  // short id of the previous secret
   attestSecretPrevExpiresAt: timestamp('attest_secret_prev_expires_at', { withTimezone: true }), // after this, prev is rejected and should be nulled
-  // Per-project knobs the promotion transaction reads: K distinct issuers to
-  // promote, the days a contradiction still blocks, and (L3+) retention / the
-  // dynamic-facts block. Empty object = every default applies.
-  knowledgeConfig: jsonb('knowledge_config').$type<{ kDistinctIssuers?: number; windowDays?: number; dynamicFactsBlock?: boolean; retentionDays?: number }>()
+  // Per-project knobs. The promotion transaction reads kDistinctIssuers/windowDays;
+  // the L3 extractor and retention sweep read retentionDays and redactionPatterns;
+  // dynamicFactsBlock gates the served-playbook block. Empty object = every default
+  // applies. redactionPatterns is a secret/PII regex denylist the extractor and
+  // `learn` apply BEFORE writing a row - a matched span is dropped, never stored;
+  // the field lives here, the matching runs in the server slice.
+  knowledgeConfig: jsonb('knowledge_config').$type<{ kDistinctIssuers?: number; windowDays?: number; dynamicFactsBlock?: boolean; retentionDays?: number; redactionPatterns?: string[] }>()
     .notNull().default(sql`'{}'::jsonb`),
+  // Durable trigger for the extractor. A thread going closed/answered sets this to
+  // now(); the leased sweep claims projects where it is not null, snapshots the
+  // value, writes candidates, then clears it only if it still equals the snapshot
+  // (so a re-dirty mid-run is not lost). Durable on purpose: a missed NOTIFY is
+  // still caught by the next sweep because the marker survives in the row.
+  knowledgeDirtyAt: timestamp('knowledge_dirty_at', { withTimezone: true }),
   createdByUserId: text('created_by_user_id')
     .references(() => better_auth_user.id, { onDelete: 'set null' }),
   createdAt: createdAt(),
