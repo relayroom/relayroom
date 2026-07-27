@@ -40,15 +40,23 @@ export function OwnerWakeBudgetCard({ initial }: Props) {
         <p className="text-xs text-muted-foreground">{t("owner.sectionDescription")}</p>
       </div>
 
-      <LabeledSlider
-        label={t("owner.wakesLabel")}
-        value={wakesPerHour}
-        min={0}
-        max={240}
-        disabled={isPending}
-        onValueChange={setWakesPerHour}
-        onValueCommitted={(v) => save({ wakesPerHour: v, urgentPerHour })}
-      />
+      <div className="space-y-1">
+        <LabeledSlider
+          label={t("owner.wakesLabel")}
+          value={wakesPerHour}
+          min={0}
+          max={240}
+          disabled={isPending}
+          onValueChange={setWakesPerHour}
+          onValueCommitted={(v) => save({ wakesPerHour: v, urgentPerHour })}
+        />
+        {/* 0 does not silence this lane: the server keeps a per-project floor, so
+            wakes keep arriving and the total grows with the number of projects you
+            own. Only urgentPerHour at 0 is absolute. */}
+        {wakesPerHour === 0 && (
+          <p className="text-xs text-amber-600 dark:text-amber-400">{t("owner.wakesZeroHint")}</p>
+        )}
+      </div>
 
       <div className="space-y-1">
         <LabeledSlider
