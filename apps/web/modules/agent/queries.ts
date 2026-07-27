@@ -216,12 +216,9 @@ export async function listAgents(
           : (connLastSeen ?? r.lastSeenAt)
       return {
         ...r,
-        // From usage, never from the connection. The model is a per-turn property
-        // and a connection outlives model switches, so there is no correct value to
-        // read off the connection - `agent_connection.model` exists but nothing
-        // writes it, and reading it first would freeze this badge at whatever was
-        // recorded when the connection opened. Usage carries the model of the most
-        // recent turn, which is what the badge is meant to show.
+        // From usage, never from the connection: the model is a per-turn property
+        // and a connection outlives model switches, so only events know it. Usage
+        // carries the model of the most recent turn, which is what this badge means.
         model: usage?.model ?? null,
         status: conn?.status ?? null,
         connectionId: conn?.id ?? null,
