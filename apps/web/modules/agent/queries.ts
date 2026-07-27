@@ -73,10 +73,12 @@ export function deriveAgentStatus(args: {
 // Re-exported here because callers already import them from this module.
 export { PAGER_ONLINE_WINDOW_MS, isPagerOnline }
 
+// No `model` here on purpose. A connection is (agent, access token) and outlives
+// model switches, so there is no correct model to attach to one. The models an
+// agent has actually run are on AgentDetail.models, derived from events.
 export interface AgentConnectionDetail {
   id: string
   machineLabel: string | null
-  model: string | null
   repo: string | null
   branch: string | null
   status: string
@@ -570,7 +572,6 @@ export async function getAgent(
       .select({
         id: agentConnections.id,
         machineLabel: agentConnections.machineLabel,
-        model: agentConnections.model,
         repo: agentConnections.repo,
         branch: agentConnections.branch,
         status: agentConnections.status,

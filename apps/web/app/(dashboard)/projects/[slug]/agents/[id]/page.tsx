@@ -277,7 +277,6 @@ export default async function AgentDetailPage({ params, searchParams }: Props) {
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-mono text-sm font-medium">{conn.machineLabel ?? conn.id.slice(0, 12)}</span>
                     <Badge variant="outline" className="text-xs">{connStatusLabel(conn.status)}</Badge>
-                    {conn.model && <Badge variant="secondary" className="text-xs font-mono">{conn.model}</Badge>}
                   </div>
                   <div className="flex items-center gap-3 mt-0.5">
                     {conn.repo && <span className="text-xs text-muted-foreground font-mono truncate max-w-[180px]">{conn.repo}{conn.branch ? `@${conn.branch}` : ""}</span>}
