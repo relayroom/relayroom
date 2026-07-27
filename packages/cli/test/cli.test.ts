@@ -117,4 +117,34 @@ describe("installHook", () => {
     expect(json.hooks.Stop).toHaveLength(2)
     expect(JSON.stringify(json)).toContain("echo keep")
   })
+
+  /**
+   * Claude checks .mcp.json approval at STARTUP, so a registered-but-unapproved
+   * worktree keeps working until its next relaunch and then comes back with no board
+   * and no wake channel - unable to report it, because reporting needs the channel.
+   * setup is the only thing that runs unattended, so setup has to grant the approval.
+   */
+  it("approves the RelayRoom MCP servers so an unattended relaunch keeps its board and wakes", () => {
+    const path = join(dir, "settings.json")
+    installHook({ agent: "claude", code: "c1", part: "web", settings: path })
+    const json = JSON.parse(readFileSync(path, "utf8"))
+    expect(json.enabledMcpjsonServers).toEqual(["relayroom", "relayroom-channel"])
+    // By name, never a blanket flag: approving everything would also trust whatever
+    // someone else adds to .mcp.json later.
+    expect(json.enableAllProjectMcpServers).toBeUndefined()
+  })
+
+  it("merges into the user's own approvals instead of replacing them", () => {
+    const path = join(dir, "settings.json")
+    writeFileSync(path, JSON.stringify({ enabledMcpjsonServers: ["their-server", "relayroom"] }))
+    installHook({ agent: "claude", code: "c1", part: "web", settings: path })
+    const json = JSON.parse(readFileSync(path, "utf8"))
+    expect(json.enabledMcpjsonServers).toEqual(["their-server", "relayroom", "relayroom-channel"])
+  })
+
+  it("leaves non-claude agents' settings free of the claude-only approval key", () => {
+    const path = join(dir, ".gemini/settings.json")
+    installHook({ agent: "agy", code: "c1", part: "web", settings: path })
+    expect(JSON.parse(readFileSync(path, "utf8")).enabledMcpjsonServers).toBeUndefined()
+  })
 })

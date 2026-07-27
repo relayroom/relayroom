@@ -354,6 +354,88 @@ self_update_if_pending() {
 # fact) read it, so the two can never disagree about what is registered.
 registered_part() { grep -oE 'part=[A-Za-z0-9_-]+' "$1" 2>/dev/null | head -1 | cut -d= -f2 || true; }
 
+# The part named by the repo-root LOCAL registration, empty if there is none (and
+# "unknown" for an entry whose url carries no part=).
+#
+# Claude keys local scope to the git COMMON dir's parent - the MAIN repo root - not
+# to the worktree you run it from. So there is exactly ONE local entry per repo and
+# every worktree reads it, which makes \`claude mcp remove -s local\` a fleet-wide
+# delete rather than a local cleanup. mcp_add reads this before deciding whether it
+# is allowed to remove it; doctor reads it to warn about the state before it bites.
+local_scope_part() {
+  local root
+  root="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || echo /nonexistent/.git)")"
+  [ -d "$root" ] || return 0
+  node -e 'var fs=require("fs"),os=require("os"),path=require("path");
+try{
+  var c=JSON.parse(fs.readFileSync(path.join(os.homedir(),".claude.json"),"utf8"));
+  var s=(((c.projects||{})[process.argv[1]]||{}).mcpServers||{}).relayroom;
+  if(!s)process.exit(0);
+  var m=/[?&]part=([A-Za-z0-9_-]+)/.exec(s.url||"");
+  process.stdout.write(m?m[1]:"unknown");
+}catch(e){}' "$root" 2>/dev/null || true
+}
+
+# Servers registered in this worktree's .mcp.json that Claude has NOT been told to
+# trust, space separated, empty when all of them are approved.
+#
+# The approval is checked at STARTUP, so a worktree in this state keeps working until
+# its next relaunch and then comes back with no board and no wake channel - it cannot
+# even report that, because reporting needs the channel. A doctor that reports all-ok
+# on a part that will not come back is worse than no doctor, because it is the check
+# that stops anyone looking.
+#
+# Read as "registered but not reachable", which is the durable question. The key below
+# is the mechanism on today's Claude Code; if a future version gates it differently,
+# this check is what should be re-pointed, not the registration.
+unapproved_servers() {
+  [ -f "$ROOT/.mcp.json" ] || return 0
+  node -e 'var fs=require("fs"),os=require("os"),path=require("path");
+function read(p){try{return JSON.parse(fs.readFileSync(p,"utf8"))}catch(e){return {}}}
+var root=process.argv[1];
+var declared=Object.keys(read(path.join(root,".mcp.json")).mcpServers||{});
+if(!declared.length)process.exit(0);
+var ok=new Set(),all=false;
+[read(path.join(root,".claude/settings.json")),
+ read(path.join(root,".claude/settings.local.json")),
+ ((read(path.join(os.homedir(),".claude.json")).projects||{})[root]||{})].forEach(function(s){
+  if(s.enableAllProjectMcpServers)all=true;
+  (Array.isArray(s.enabledMcpjsonServers)?s.enabledMcpjsonServers:[]).forEach(function(n){ok.add(n)});
+});
+if(all)process.exit(0);
+process.stdout.write(declared.filter(function(n){return !ok.has(n)}).join(" "));' "$ROOT" 2>/dev/null || true
+}
+
+# Sibling worktrees of this repo that have no relayroom server in their OWN .mcp.json.
+# Those are the ones still living off the shared local entry, so they go dark the
+# moment it is removed. We cannot register them from here - each needs the token from
+# its own .relayroom/config.json - but the worktree whose setup breaks them is the one
+# that should say so, at the moment it happens rather than in a doctor run nobody performs.
+#
+# \`git worktree list\` is the right enumeration because it is REPO-scoped, and so is the
+# damage: local scope keys per repo root, so a removal here can never reach a different
+# repo's worktrees. Do not widen this to every RelayRoom worktree on the machine - the
+# report's scope has to match the blast radius or it raises alarms about the unaffected.
+report_sibling_worktrees() {
+  git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+  local wt missing=""
+  while read -r wt; do
+    [ -n "$wt" ] || continue
+    [ "$wt" = "$ROOT" ] && continue
+    # Only RelayRoom worktrees: a plain worktree has no part to lose.
+    [ -f "$wt/.relayroom/config.json" ] || continue
+    [ -n "$(registered_part "$wt/.mcp.json")" ] && continue
+    missing="\${missing}       $wt
+"
+  done <<< "$(git worktree list --porcelain 2>/dev/null | awk '/^worktree /{ print substr($0, 10) }')"
+  [ -n "$missing" ] || return 0
+  echo "note: these sibling worktrees have no relayroom server of their own:" >&2
+  printf '%s' "$missing" >&2
+  echo "      They read the shared repo-root LOCAL entry, which setup removes." >&2
+  echo "      Run ./rr.sh setup inside each one - it cannot be done from here," >&2
+  echo "      since each needs the token from its own .relayroom/config.json." >&2
+}
+
 # The config file an agent reads its MCP servers from. claude's is per-worktree;
 # codex and agy have ONE global file per machine.
 agent_mcp_config() {
@@ -397,13 +479,42 @@ mcp_add() {
   else
     # Claude defaults to LOCAL scope, which it keys to the git REPO ROOT - so every
     # worktree shares one entry and they all post as the same part. Register in
-    # PROJECT scope (.mcp.json, per-worktree) for per-worktree identity, and drop any
-    # old shared local entry so the migration takes effect.
-    claude mcp remove relayroom -s local 2>/dev/null || true
-    claude mcp remove relayroom -s project 2>/dev/null || true
+    # PROJECT scope (.mcp.json, per-worktree) for per-worktree identity.
+    #
+    # The old code dropped the local entry unconditionally, which is a fleet-wide
+    # delete: every sibling worktree still reading it lost the board with no message,
+    # no log, and nothing changed in its own directory. Read it FIRST, migrate
+    # ourselves, and remove it only when it names THIS part - i.e. only when the
+    # registration we just wrote is the thing that replaced it.
+    #
+    # A no-op must also stay SILENT. The old line printed "Removed MCP server relayroom
+    # from local config" on every run, including in worktrees that never used local
+    # scope - so the one session that read the alarming message was never the session
+    # that lost anything, while the sibling that actually went dark was told nothing.
+    local _lp; _lp="$(local_scope_part)"
+    # Ours alone (project scope is per-worktree) and re-added on the next line, so its
+    # "Removed ..." line is noise about a registration that is not going away.
+    claude mcp remove relayroom -s project >/dev/null 2>&1 || true
     claude mcp add -s project --transport http relayroom "$URL" --header "Authorization: Bearer $TOKEN"
+    # Verify rather than trust the exit code. What follows is destructive for every
+    # other worktree, so it must never run off an add that reported success while
+    # writing nothing.
+    if [ "$(registered_part "$ROOT/.mcp.json")" != "$PART" ]; then
+      echo "warning: project-scope registration did not land in $ROOT/.mcp.json." >&2
+      echo "         Leaving the shared repo-root local entry alone." >&2
+      return 1
+    fi
+    if [ "$_lp" = "$PART" ]; then
+      echo "removing the repo-root LOCAL registration (part=$_lp) - this part now has its own .mcp.json entry"
+      claude mcp remove relayroom -s local 2>/dev/null || true
+    elif [ -n "$_lp" ]; then
+      echo "note: a repo-root LOCAL relayroom registration remains, as part '$_lp'." >&2
+      echo "      It is SHARED by every worktree of this repo, so removing it here would" >&2
+      echo "      disconnect that part. Leave it until that worktree runs ./rr.sh setup." >&2
+    fi
   fi
   echo "registered relayroom MCP for $a"
+  [ "$a" = "claude" ] && report_sibling_worktrees || true
 }
 hooks_install() { $CLI hooks install --agent "$1"; }
 setup() { local a; IFS=',' read -ra _AS <<< "$AGENT"; for a in "\${_AS[@]}"; do mcp_add "$a" && hooks_install "$a"; done; }
@@ -453,11 +564,38 @@ doctor() {
     fi
   elif [ "$PRIMARY" = "claude" ]; then
     echo "$WRN claude relayroom MCP not in this worktree's .mcp.json - likely sharing the repo-root local scope."
-    echo "       If worktrees post as the same part, run:  claude mcp remove relayroom -s local && ./rr.sh setup"
+    # Deliberately NOT 'claude mcp remove relayroom -s local': local scope is keyed to
+    # the repo root, so that command disconnects every sibling worktree reading it.
+    # setup registers this worktree first and cleans the shared entry up only when it
+    # is this part's to clean.
+    echo "       Run:  ./rr.sh setup"
   else
     echo "$WRN $PRIMARY relayroom MCP not registered ($cfgdesc) - run: ./rr.sh setup"
   fi
   [ -n "$global" ] && echo "       note: $PRIMARY MCP config is GLOBAL - worktrees can't hold separate identities here (use claude for that)."
+  # Report the repo-root LOCAL entry even when this worktree is healthy. It is shared
+  # by every worktree and the next setup in ANY of them removes it, so it is the state
+  # that breaks siblings later rather than the one that is broken now - a diagnostic
+  # that only fires after the damage is half a diagnostic.
+  if [ "$PRIMARY" = "claude" ]; then
+    # ERR, not WARN: this worktree is fine right now and will not come back from its
+    # next relaunch. A green check here is what stops anyone looking.
+    local unapproved; unapproved="$(unapproved_servers)"
+    if [ -n "$unapproved" ]; then
+      echo "$ERR registered but NOT approved:$unapproved"
+      echo "       Claude checks .mcp.json approval at startup, so this worktree keeps"
+      echo "       working until its next relaunch and then comes back with no board and"
+      echo "       no wakes - unable to report it, because reporting needs the channel."
+      echo "       Fix: ./rr.sh setup   (writes enabledMcpjsonServers to .claude/settings.json)"
+    fi
+    local lp; lp="$(local_scope_part)"
+    if [ -n "$lp" ]; then
+      echo "$WRN claude relayroom MCP is ALSO registered in repo-root LOCAL scope (part=$lp)."
+      echo "       That entry is shared by every worktree of this repo, and the next"
+      echo "       './rr.sh setup' run in the worktree that owns part '$lp' will retire it."
+      [ "$lp" = "$PART" ] && echo "       It is this part's own leftover - re-run ./rr.sh setup here to clear it."
+    fi
+  fi
   if mcp_online; then echo "$OKM server reachable ($SERVER)"; else echo "$ERR server UNREACHABLE ($SERVER) - is the hub up?"; fi
   pg_running && echo "$OKM pager running (pid $(cat "$PIDFILE"))" || echo "$WRN pager stopped - start with: ./rr.sh up"
   if session_name_ok; then
