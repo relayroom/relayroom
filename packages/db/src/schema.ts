@@ -154,8 +154,10 @@ export const agentConnections = pgTable('agent_connection', {
     .notNull()
     .references(() => agents.id, { onDelete: 'cascade' }),
   accessTokenId: text('access_token_id'), // FK → oauth_access_token (added in F4)
+  // No `model` here on purpose. A connection is (agent, access token) and outlives
+  // model switches, so there is no correct model to attach to one. The models an
+  // agent has actually run are derived from events (agent detail's `models[]`).
   machineLabel: text('machine_label'),
-  model: text('model'),
   repo: text('repo'),
   branch: text('branch'),
   status: text('status').notNull().default('connected'), // connected | expired | revoked
