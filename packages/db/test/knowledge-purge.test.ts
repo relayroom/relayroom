@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { and, eq } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createDb } from '../src/client'
-import { purgeKnowledgeFromThread } from '../src/knowledge'
+import { PurgeProjectMismatchError, purgeKnowledgeFromThread } from '../src/knowledge'
 import { knowledge, knowledgeAudits, projects, threadExtractions, threads } from '../src/schema'
 import { better_auth_user } from '../src/auth-schema'
 
@@ -182,8 +182,12 @@ describe('purgeKnowledgeFromThread', () => {
     const attacker = await project()
     const victimThread = await thread(victim)
 
+    // A distinct error type with a stable code, so the dashboard can say "that thread
+    // is not in this project" without matching on message text.
     await expect(purgeKnowledgeFromThread(db, attacker, victimThread, { actorUserId: USER }))
-      .rejects.toThrow(/not in project/)
+      .rejects.toThrow(PurgeProjectMismatchError)
+    await expect(purgeKnowledgeFromThread(db, attacker, victimThread, { actorUserId: USER }))
+      .rejects.toMatchObject({ code: 'purge_project_mismatch' })
 
     expect(await watermark(attacker, victimThread)).toBeNull()
     expect(await watermark(victim, victimThread)).toBeNull()
@@ -197,6 +201,6 @@ describe('purgeKnowledgeFromThread', () => {
     const attacker = await project()
     const victimThread = await thread(victim)
     await expect(purgeKnowledgeFromThread(db, attacker, victimThread, { dryRun: true }))
-      .rejects.toThrow(/not in project/)
+      .rejects.toThrow(PurgeProjectMismatchError)
   })
 })

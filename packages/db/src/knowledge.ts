@@ -107,14 +107,32 @@ export interface PurgeResult {
  * zero is indistinguishable from "nothing to purge", and that indistinguishability is
  * exactly what kept the vacuous check invisible.
  *
- * THIS CHECK IS THE CANONICAL ONE. `apps/web`'s purge action carries the same check
- * at its own boundary, deliberately. Neither is redundant - if one is ever deleted as
- * a duplicate, the other is the only thing left, and whoever deletes it will not know
- * that.
+ * THIS IS THE ONLY CHECK. Callers do NOT repeat it - `apps/web`'s purge action
+ * deliberately does not, and carries a pointer here saying so. The boundary is a
+ * property of the operation, not of any one caller: a second caller (an MCP tool, a
+ * job, a CLI) would inherit nothing from a check living in the dashboard. So do not
+ * remove this as redundant with something upstream; there is nothing upstream.
  */
 export type PurgeOpts =
   | { dryRun: true }
   | { dryRun?: false; actorUserId: string }
+
+/**
+ * The named thread is not in the named project.
+ *
+ * A distinct type with a stable `code` so a caller can tell this apart from any other
+ * failure without matching on message text - the dashboard needs to say "that thread
+ * is not in this project" rather than its generic purge-failed message. `code` rather
+ * than `instanceof` alone: this crosses a package boundary, where identity checks are
+ * the fragile part.
+ */
+export class PurgeProjectMismatchError extends Error {
+  readonly code = 'purge_project_mismatch' as const
+  constructor(projectId: string, threadId: string) {
+    super(`thread ${threadId} is not in project ${projectId}`)
+    this.name = 'PurgeProjectMismatchError'
+  }
+}
 
 export async function purgeKnowledgeFromThread(
   db: KnowledgeDb,
@@ -137,7 +155,7 @@ export async function purgeKnowledgeFromThread(
       .where(and(eq(threads.id, threadId), eq(threads.projectId, projectId)))
       .limit(1)
     if (!owned) {
-      throw new Error(`thread ${threadId} is not in project ${projectId}`)
+      throw new PurgeProjectMismatchError(projectId, threadId)
     }
 
     // THE WATERMARK FIRST, before the scan below (BUG-0010).

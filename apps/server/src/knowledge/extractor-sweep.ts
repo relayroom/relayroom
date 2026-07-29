@@ -34,9 +34,9 @@
  * hard delete, and purge. So the sweep re-extracted and wrote the candidate back. For
  * purge, the operator's remedy for a leaked secret, the remedy silently undid itself.
  *
- * The old source_refs predicate is STILL CHECKED alongside the watermark - see the
- * claim in extractProject for why one half of that is transitional and the other half
- * is not.
+ * The old source_refs predicate is STILL CHECKED alongside the watermark, but it is
+ * NOT what protects against resurrection - the claim in extractProject is. See there
+ * for what the predicate is actually still doing and what removing it would cost.
  */
 import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm'
 import type { Db, DbOrTx } from '@relayroom/db'
@@ -192,16 +192,17 @@ async function extractProject(
     // `do nothing` also means we can never revert a `purged` mark back to `extracted`.
     //
     // The `not exists` on knowledge is CARRIED OVER from the check this replaces, and
-    // it has TWO jobs - only one of them is temporary:
-    //   1. TRANSITIONAL, as a resurrection guard. The extraction-quality design moves
-    //      to watermark-only; that change must remove this clause and the matching one
-    //      in the eligibility query above, deliberately and named as such.
-    //   2. NOT transitional, and load-bearing today: `learn` inserts a row citing this
-    //      thread WITHOUT taking our advisory lock (mcp.ts learn tool), so a `learn`
-    //      committing between the eligibility query and here is skipped only because
-    //      of this clause. Removing it therefore requires solving that race, not
-    //      deleting a line - otherwise one edit drops a belt and a live check, and
-    //      only one of them was reviewed.
+    // what it is actually for was settled by mutation-testing rather than by argument.
+    // Disabling it alone changes nothing; disabling the claim alone changes nothing;
+    // only disabling BOTH resurrects a purged candidate. So:
+    //   - THE CLAIM is the resurrection protection. This clause is not.
+    //   - This clause's one independent job is the `learn` race: `learn` inserts a row
+    //     citing this thread WITHOUT taking our advisory lock (mcp.ts learn tool), so a
+    //     `learn` committing between the eligibility query and here is skipped only
+    //     because of this. Nothing else covers that.
+    // Which means removing it - as the extraction-quality design will, moving to
+    // watermark-only - costs exactly the `learn` race guard and nothing else. Solve
+    // that race in the same change; do not just delete the line.
     //
     // The ownership `exists` is not ceremony either: the thread could have been
     // deleted since the eligibility query, and an FK violation here would abort the
