@@ -4,10 +4,12 @@ import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { useTranslations } from "next-intl"
 import { toast } from "sonner"
-import { Trash2Icon, Loader2Icon } from "lucide-react"
+import { Trash2Icon, Loader2Icon, SearchIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { useConfirm } from "@/components/ui/use-confirm"
-import { purgeThreadKnowledge } from "@/modules/knowledge/purge-actions"
+import { purgeThreadKnowledge, searchPurgeableThreads } from "@/modules/knowledge/purge-actions"
+import { THREAD_SEARCH_LIMIT } from "@/modules/knowledge/purge-constants"
 
 export interface PurgeableThreadRow {
   threadId: string
@@ -34,6 +36,26 @@ export function ThreadPurgeManager({ projectId, threads }: Props) {
   const router = useRouter()
   const { confirm, confirmDialog } = useConfirm()
   const [busyId, setBusyId] = useState<string | null>(null)
+  const [query, setQuery] = useState("")
+  const [searching, setSearching] = useState(false)
+  // null = no search has been run yet, so neither results nor "no matches" applies.
+  const [results, setResults] = useState<PurgeableThreadRow[] | null>(null)
+
+  async function onSearch() {
+    const q = query.trim()
+    if (!q) return
+    setSearching(true)
+    try {
+      const res = await searchPurgeableThreads(projectId, q)
+      if (!res.result) {
+        toast.error(res.message ?? t("knowledgePurge.done"))
+        return
+      }
+      setResults(res.items)
+    } finally {
+      setSearching(false)
+    }
+  }
 
   async function onPurge(row: PurgeableThreadRow) {
     setBusyId(row.threadId)
@@ -84,6 +106,32 @@ export function ThreadPurgeManager({ projectId, threads }: Props) {
     }
   }
 
+  function renderRow(row: PurgeableThreadRow) {
+    return (
+      <li key={row.threadId} className="flex items-center gap-3 px-3 py-2 text-sm">
+        <span className="min-w-0 flex-1 truncate">
+          {row.subject || t("knowledgePurge.untitledThread")}
+        </span>
+        <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+          {/* A searched thread can legitimately have none, which is the case the
+              search exists for - say so in words rather than showing "Entries: 0",
+              which reads as a thread not worth purging. */}
+          {row.entryCount === 0
+            ? t("knowledgePurge.noEntries")
+            : `${t("knowledgePurge.colEntries")}: ${row.entryCount}`}
+        </span>
+        <Button size="sm" variant="outline" onClick={() => onPurge(row)} disabled={busyId !== null}>
+          {busyId === row.threadId ? (
+            <Loader2Icon className="mr-1 h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Trash2Icon className="mr-1 h-3.5 w-3.5" />
+          )}
+          {t("knowledgePurge.purgeButton")}
+        </Button>
+      </li>
+    )
+  }
+
   return (
     <section className="space-y-3 rounded-lg border border-border p-4">
       {confirmDialog}
@@ -98,31 +146,67 @@ export function ThreadPurgeManager({ projectId, threads }: Props) {
         </p>
       ) : (
         <ul className="divide-y divide-border overflow-hidden rounded-md border border-border">
-          {threads.map((row) => (
-            <li key={row.threadId} className="flex items-center gap-3 px-3 py-2 text-sm">
-              <span className="min-w-0 flex-1 truncate">
-                {row.subject || t("knowledgePurge.untitledThread")}
-              </span>
-              <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                {t("knowledgePurge.colEntries")}: {row.entryCount}
-              </span>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => onPurge(row)}
-                disabled={busyId !== null}
-              >
-                {busyId === row.threadId ? (
-                  <Loader2Icon className="mr-1 h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Trash2Icon className="mr-1 h-3.5 w-3.5" />
-                )}
-                {t("knowledgePurge.purgeButton")}
-              </Button>
-            </li>
-          ))}
+          {threads.map(renderRow)}
         </ul>
       )}
+
+      {/* The list above is built from knowledge that still cites a thread, so a
+          thread already purged once cannot appear in it - and that is exactly the
+          thread someone needs when purged knowledge has come back. Search reaches
+          it, because it starts from threads rather than from knowledge. */}
+      <div className="space-y-2 border-t border-border pt-3">
+        <div>
+          <h3 className="text-xs font-semibold">{t("knowledgePurge.searchLabel")}</h3>
+          <p className="mt-0.5 text-xs text-muted-foreground">{t("knowledgePurge.searchHint")}</p>
+        </div>
+        <form
+          className="flex items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault()
+            void onSearch()
+          }}
+        >
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={t("knowledgePurge.searchPlaceholder")}
+            disabled={searching || busyId !== null}
+            className="h-8 text-sm"
+          />
+          <Button
+            type="submit"
+            size="sm"
+            variant="outline"
+            disabled={searching || busyId !== null || query.trim() === ""}
+          >
+            {searching ? (
+              <Loader2Icon className="mr-1 h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <SearchIcon className="mr-1 h-3.5 w-3.5" />
+            )}
+            {searching ? t("knowledgePurge.searching") : t("knowledgePurge.searchButton")}
+          </Button>
+        </form>
+
+        {results !== null &&
+          (results.length === 0 ? (
+            <p className="rounded-md border border-dashed border-border px-3 py-3 text-center text-xs text-muted-foreground">
+              {t("knowledgePurge.searchNoResults")}
+            </p>
+          ) : (
+            <div className="space-y-1">
+              <p className="text-xs text-muted-foreground">{t("knowledgePurge.searchResultsTitle")}</p>
+              <ul className="divide-y divide-border overflow-hidden rounded-md border border-border">
+                {results.map(renderRow)}
+              </ul>
+              {results.length >= THREAD_SEARCH_LIMIT && (
+                <p className="text-xs text-muted-foreground">
+                  {t("knowledgePurge.searchTruncated", { limit: THREAD_SEARCH_LIMIT })}
+                </p>
+              )}
+            </div>
+          ))}
+      </div>
     </section>
   )
 }
