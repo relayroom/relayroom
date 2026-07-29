@@ -48,9 +48,16 @@ export type WakeSuppressReason =
  * What is actually STORED in `wake_event.reason`, and therefore the only thing an
  * audit view can show. Overlaps WakeSuppressReason in exactly one value.
  *
- * `loop_breaker` is written by the pipeline, not by shouldWake, which is why it
- * appears here and not above - and why reading the suppress union as the audit
- * vocabulary loses the one cause a sender can actually trigger themselves.
+ * `loop_breaker` and `direct_cooldown` are written by the pipeline, not by
+ * shouldWake, which is why they appear here and not above - and why reading the
+ * suppress union as the audit vocabulary loses both of the causes a sender can
+ * actually trigger themselves.
+ *
+ * This list was three values for one commit. `direct_cooldown` was missing because
+ * its writer set no reason while its own comment claimed it did, so the row stored
+ * NULL - and it was then deleted from the column's comment as a value nothing
+ * writes. A cause whose row exists with its name missing looks identical to a value
+ * that never occurs, which is why enumerating writers beats enumerating declarations.
  *
  * Issued rows (suppressed=false) store NULL: the trigger that caused a wake is a
  * different axis from the cause that suppressed one, and this column only ever
@@ -61,6 +68,7 @@ export type PersistedWakeReason =
   | 'budget_exhausted'
   | 'limited'
   | 'loop_breaker'
+  | 'direct_cooldown'
 
 export type WakeDecision =
   | { action: 'issue'; wakeId: string; epoch: number; reason: string }
