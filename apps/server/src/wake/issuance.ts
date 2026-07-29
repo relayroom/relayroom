@@ -24,14 +24,43 @@ import { agents, wakeEvents, wakeIntents } from '@relayroom/db'
 import { ACTIVE_WAKE_STATES, ensurePending } from './state'
 import { reserve, type ReserveReason } from './budget'
 
+/**
+ * What `shouldWake` RETURNS to its caller. NOT the vocabulary of
+ * `wake_event.reason` - see PersistedWakeReason, which is a different set.
+ *
+ * Most of these leave no row at all: `idle_already_pending` is coalescing (the
+ * wake already exists), `unknown_agent` and `no_owner` have nothing to attribute
+ * a row to. So a consumer reading this list as "what an operator can see" is
+ * wrong about four of the six, and that is not hypothetical - two readers made
+ * exactly that error on the same day, from this declaration, one of them the
+ * person editing this file. `not_idle` was worse: it was declared here and never
+ * returned by anything, so it advertised a state that could not occur.
+ */
 export type WakeSuppressReason =
   | 'idle_already_pending'
   | 'budget_exhausted'
   | 'banned'
-  | 'not_idle'
   | 'no_owner'
   | 'unknown_agent'
   | 'limited'
+
+/**
+ * What is actually STORED in `wake_event.reason`, and therefore the only thing an
+ * audit view can show. Overlaps WakeSuppressReason in exactly one value.
+ *
+ * `loop_breaker` is written by the pipeline, not by shouldWake, which is why it
+ * appears here and not above - and why reading the suppress union as the audit
+ * vocabulary loses the one cause a sender can actually trigger themselves.
+ *
+ * Issued rows (suppressed=false) store NULL: the trigger that caused a wake is a
+ * different axis from the cause that suppressed one, and this column only ever
+ * carried the second. Recording the trigger is deliberately deferred - adding
+ * information ranks below removing untruths.
+ */
+export type PersistedWakeReason =
+  | 'budget_exhausted'
+  | 'limited'
+  | 'loop_breaker'
 
 export type WakeDecision =
   | { action: 'issue'; wakeId: string; epoch: number; reason: string }
@@ -173,6 +202,10 @@ export async function shouldWake(
           phantom: false,
           senderPart: input.senderPart ?? null,
           senderUserId: input.senderUserId ?? null,
+          // Without this the row stores NULL and the most consequential cause -
+          // the one that actually bit us - is the ONLY one an operator's audit
+          // view cannot name, while 'limited' and 'loop_breaker' arrive labelled.
+          reason: 'budget_exhausted',
         })
       }
       return { action: 'suppress', reason } as const

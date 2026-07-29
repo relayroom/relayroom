@@ -338,12 +338,24 @@ export const wakeEvents = pgTable('wake_event', {
   urgent: boolean('urgent').notNull().default(false),
   suppressed: boolean('suppressed').notNull().default(false), // true = budget-exhausted, no nudge fired
   phantom: boolean('phantom').notNull().default(false),       // true = real turn seen w/o matching issued wake
-  // Provenance tag for governance detection (phase 08). Free-form, nullable for
-  // legacy rows. Known values: 'message' | 'reply' | 'direct_cooldown' |
-  // 'loop_breaker' | 'limited'. loop_breaker rows are suppressed=true control rows written by
-  // the pipeline when the in-memory loop-breaker trips, so 08 can aggregate trips
-  // on the STABLE principal (senderUserId) without a separate table.
-  reason: text('reason'),
+  // WHY a wake was suppressed. Nullable, and null means two different things:
+  // an issued row (suppressed=false never sets it) or a legacy suppressed row.
+  //
+  // The complete set of values any writer puts here is THREE:
+  //   'budget_exhausted' - the owner's hourly budget was spent
+  //   'limited'          - the agent is parked on a provider rate limit. Written
+  //                        only when the trigger is not the 30s sweep, which would
+  //                        otherwise emit an identical row every tick.
+  //   'loop_breaker'     - the in-memory send loop-breaker tripped. Note this row
+  //                        has agentId NULL and ownerUserId = the SENDER, so it is
+  //                        a different subject from every other row here.
+  //
+  // This comment previously also listed 'message', 'reply' and 'direct_cooldown'.
+  // Nothing has ever written those to this column. They were removed rather than
+  // left as aspiration, because the first thing anyone building an audit view
+  // reads is the comment on the column, and a list of values that do not occur is
+  // worse than no list - it produces filters for states that cannot happen.
+  reason: text('reason').$type<'budget_exhausted' | 'limited' | 'loop_breaker'>(),
   createdAt: createdAt(),
 }, t => [
   index('wake_event_owner_created_idx').on(t.ownerUserId, t.createdAt),

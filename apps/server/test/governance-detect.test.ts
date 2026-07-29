@@ -15,6 +15,7 @@ import {
   runGovernanceDetection,
 } from '../src/governance/detect'
 
+import type { PersistedWakeReason } from '../src/wake/issuance'
 import { TEST_DATABASE_URL } from '../../../test/db-url'
 const db: Db = createDb(TEST_DATABASE_URL)
 
@@ -36,7 +37,8 @@ async function seedWake(opts: {
   senderPart?: string
   phantom?: boolean
   suppressed?: boolean
-  reason?: string | null
+  // The stored vocabulary, not an arbitrary string - see PersistedWakeReason.
+  reason?: PersistedWakeReason | null
   createdAtOffsetMs?: number
 }): Promise<void> {
   const createdAt = new Date(Date.now() + (opts.createdAtOffsetMs ?? -1000))
