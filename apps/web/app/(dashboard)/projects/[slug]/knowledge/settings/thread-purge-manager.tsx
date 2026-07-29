@@ -69,23 +69,26 @@ export function ThreadPurgeManager({ projectId, threads }: Props) {
       }
       const { deleted, detached } = preview.item
 
+      const nothingToDelete = deleted + detached === 0
+
       const ok = await confirm({
         title: t("knowledgePurge.confirmTitle"),
-        description:
-          deleted + detached === 0
-            ? t("knowledgePurge.confirmBodyNothing")
-            : t("knowledgePurge.confirmBody", { deleted, detached }),
+        // Zero counts do NOT mean nothing happens. A purge also records that this
+        // thread must not be extracted again, and that record is the entire point
+        // when the counts are zero - the thread was purged before and the knowledge
+        // came back. So the zero copy describes what will be written rather than
+        // reporting an absence.
+        description: nothingToDelete
+          ? t("knowledgePurge.confirmBodyNothing")
+          : t("knowledgePurge.confirmBody", { deleted, detached }),
         destructive: true,
-        // Nothing to purge: still let them dismiss, but there is no destructive act.
       })
       if (!ok) return
 
-      if (deleted + detached === 0) {
-        toast.message(t("knowledgePurge.doneNothing"))
-        router.refresh()
-        return
-      }
-
+      // No early return on zero. It was correct while purge only deleted rows -
+      // running it would have been a genuine no-op. Now purge also writes the
+      // suppression, so stopping here would silently skip the one operation the
+      // operator came for, on exactly the threads that need it.
       const request = purgeThreadKnowledge(projectId, row.threadId, false).then((res) => {
         if (!res.result) throw new Error(res.message ?? t("knowledgePurge.done"))
         return res
@@ -94,9 +97,10 @@ export function ThreadPurgeManager({ projectId, threads }: Props) {
         loading: t("knowledgePurge.pending"),
         success: (res) => {
           router.refresh()
-          return res.result
-            ? t("knowledgePurge.done", { deleted: res.item.deleted, detached: res.item.detached })
-            : t("knowledgePurge.doneNothing")
+          if (!res.result) return t("knowledgePurge.doneNothing")
+          return res.item.deleted + res.item.detached === 0
+            ? t("knowledgePurge.doneNothing")
+            : t("knowledgePurge.done", { deleted: res.item.deleted, detached: res.item.detached })
         },
         error: (err: unknown) => (err instanceof Error ? err.message : t("knowledgePurge.done")),
       })

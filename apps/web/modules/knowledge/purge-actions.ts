@@ -37,12 +37,22 @@ export async function purgeThreadKnowledge(
 
     // owner, not write - this deletes knowledge. The button is only rendered for
     // owners, but a Server Action is reachable without it, so this is the gate
-    // that holds. The purge function also matches projectId internally, so it
-    // cannot be aimed at another project's thread.
+    // that holds.
     const access = await requireProjectAccess(session.user.id, projectId, "owner")
     if (!access.ok) return { result: false, message: access.message }
 
-    const outcome = await purgeKnowledgeFromThread(db, projectId, threadId, { dryRun })
+    // The thread-belongs-to-this-project check is NOT repeated here. It lives in
+    // purgeKnowledgeFromThread, which is canonical for it, because it is a property
+    // of the operation rather than of this caller: a second caller would inherit
+    // nothing from a check placed here. That function throws on a mismatch, which
+    // this catch turns into a failed result. Do not add a copy of the check here -
+    // two checks with no stated owner is how one of them gets deleted as a
+    // duplicate by someone who does not know the other was load-bearing.
+    const outcome = dryRun
+      ? await purgeKnowledgeFromThread(db, projectId, threadId, { dryRun: true })
+      : await purgeKnowledgeFromThread(db, projectId, threadId, {
+          actorUserId: session.user.id,
+        })
     return { result: true, item: outcome }
   } catch (err) {
     console.error("[purgeThreadKnowledge]", err)

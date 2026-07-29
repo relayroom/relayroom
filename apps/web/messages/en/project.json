@@ -311,10 +311,10 @@
     "previewLoading": "Checking what this affects...",
     "confirmTitle": "Purge knowledge derived from this thread?",
     "confirmBody": "{deleted, plural, =0 {No entries will be deleted} =1 {1 entry will be deleted} other {# entries will be deleted}}, and {detached, plural, =0 {none detached} =1 {1 entry will keep with this thread removed from its sources} other {# entries will keep with this thread removed from their sources}}. This cannot be undone.",
-    "confirmBodyNothing": "This thread has no derived knowledge left to purge.",
+    "confirmBodyNothing": "There is no derived knowledge left to delete - but this is not a no-op. Purging records that this thread must not be distilled again, so a lesson taken from it cannot come back. That record is the point when nothing is left to delete.",
     "pending": "Purging...",
-    "done": "Purged: {deleted} deleted, {detached} detached.",
-    "doneNothing": "Nothing to purge."
+    "done": "Purged: {deleted} deleted, {detached} detached. This thread will not be distilled again.",
+    "doneNothing": "Nothing was left to delete. This thread will not be distilled again."
   },
   "knowledgeProposals": {
     "pageTitle": "Proposals",

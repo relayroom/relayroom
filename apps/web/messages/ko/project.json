@@ -311,10 +311,10 @@
     "previewLoading": "영향 범위를 확인하는 중...",
     "confirmTitle": "이 thread에서 파생된 지식을 삭제할까요?",
     "confirmBody": "{deleted, plural, =0 {삭제되는 항목 없음} other {#개 항목이 삭제}}되고, {detached, plural, =0 {출처만 벗겨지는 항목은 없음} other {#개 항목은 이 thread를 출처에서 제거한 채 유지}}됩니다. 되돌릴 수 없습니다.",
-    "confirmBodyNothing": "이 thread에는 삭제할 파생 지식이 남아 있지 않습니다.",
+    "confirmBodyNothing": "삭제할 파생 지식은 남아 있지 않지만, 아무 일도 일어나지 않는 것은 아닙니다. 이 thread를 다시 증류하지 않도록 기록하므로, 여기서 나온 지식이 되살아나지 않습니다. 지울 것이 없을 때는 바로 그 기록이 목적입니다.",
     "pending": "삭제하는 중...",
-    "done": "삭제 완료: {deleted}개 삭제, {detached}개 출처 제거.",
-    "doneNothing": "삭제할 것이 없습니다."
+    "done": "삭제 완료: {deleted}개 삭제, {detached}개 출처 제거. 이 thread는 다시 증류되지 않습니다.",
+    "doneNothing": "삭제할 것은 없었습니다. 이 thread는 다시 증류되지 않습니다."
   },
   "knowledgeProposals": {
     "pageTitle": "제안",
