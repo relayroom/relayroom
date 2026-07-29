@@ -424,6 +424,10 @@ session_dead() {
   local panes; panes="$(tmux list-panes -t "=$SESSION" -F '#{pane_dead} #{pane_dead_status}' 2>/dev/null || true)"
   [ -n "$panes" ] || return 1
   awk '$1 != "1" { alive = 1 } END { exit(alive ? 1 : 0) }' <<<"$panes" || return 1
+  # "?" is a REACHED path, not a defensive one: measured, \`pane_dead\` flips to 1 before
+  # \`pane_dead_status\` is readable in 11 of 20 samples, so a run landing in that window
+  # legitimately has no status to print. Reporting "?" is the honest answer there; do not
+  # "simplify" it away on the assumption that a dead pane always has a status.
   awk '$1 == "1" { print ($2 == "" ? "?" : $2); exit }' <<<"$panes"
 }
 
