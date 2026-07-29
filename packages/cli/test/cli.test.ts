@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
@@ -140,6 +140,35 @@ describe("installHook", () => {
     installHook({ agent: "claude", code: "c1", part: "web", settings: path })
     const json = JSON.parse(readFileSync(path, "utf8"))
     expect(json.enabledMcpjsonServers).toEqual(["their-server", "relayroom", "relayroom-channel"])
+  })
+
+  /**
+   * A no-op must be silent in every channel it can speak through, and mtime is one of
+   * them. `up` decides whether a running session predates its own configuration by
+   * comparing this file's mtime against the session start - and `up` also runs setup, so
+   * an unconditional rewrite here would make every session look stale forever.
+   */
+  it("does not touch the file when a re-install would change nothing", () => {
+    const path = join(dir, "settings.json")
+    installHook({ agent: "claude", code: "c1", part: "web", settings: path })
+    const before = statSync(path).mtimeMs
+    // Backdate so an unconditional write is unmistakable rather than same-millisecond.
+    const old = new Date(Date.now() - 60_000)
+    utimesSync(path, old, old)
+    installHook({ agent: "claude", code: "c1", part: "web", settings: path })
+    expect(statSync(path).mtimeMs).toBe(old.getTime())
+    expect(statSync(path).mtimeMs).not.toBe(before)
+  })
+
+  it("still writes when the merged result actually differs", () => {
+    const path = join(dir, "settings.json")
+    installHook({ agent: "claude", code: "c1", part: "web", settings: path })
+    const old = new Date(Date.now() - 60_000)
+    utimesSync(path, old, old)
+    writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, "utf8")), model: "claude-opus-4-8" }))
+    installHook({ agent: "claude", code: "c1", part: "web", settings: path })
+    expect(statSync(path).mtimeMs).toBeGreaterThan(old.getTime())
+    expect(JSON.parse(readFileSync(path, "utf8")).model).toBe("claude-opus-4-8")
   })
 
   it("leaves non-claude agents' settings free of the claude-only approval key", () => {

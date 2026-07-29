@@ -206,8 +206,27 @@ export function installHook(opts: HookOpts): void {
     settings.enabledMcpjsonServers = [...approved]
   }
 
+  // Write ONLY when the result differs. A no-op must be silent in every channel it can
+  // speak through, and mtime is one of those channels: an unconditional rewrite is a lie
+  // in the filesystem, and everything downstream that compares mtimes inherits it. `up`
+  // decides whether a running session predates its own configuration by exactly that
+  // comparison, and since `up` also runs setup, a no-op rewrite here would make every
+  // session look stale forever.
+  const next = `${JSON.stringify(settings, null, 2)}\n`
+  let current: string | undefined
+  try {
+    current = readFileSync(path, "utf8")
+  } catch {
+    current = undefined
+  }
+  if (current === next) {
+    console.log(`RelayRoom usage hook already current (${event}) -> ${path}`)
+    if (agent === "codex") console.log(codexFeatureNote())
+    return
+  }
+
   mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, `${JSON.stringify(settings, null, 2)}\n`)
+  writeFileSync(path, next)
   console.log(`Installed RelayRoom usage hook (${event}) -> ${path}`)
   if (agent === "claude") {
     console.log("Installed AskUserQuestion guard (PreToolUse, non-main only)")

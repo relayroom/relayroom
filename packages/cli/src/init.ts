@@ -108,6 +108,10 @@ BYPASS=0; for _a in "$@"; do [ "$_a" = "--bypass" ] && BYPASS=1; done
 # reboot keeps context), falling back to a fresh start when there is none. Detected
 # anywhere in the args.
 NEW=0; for _a in "$@"; do [ "$_a" = "--new" ] && NEW=1; done
+# Opt-in restart: \`./rr.sh up --restart\` replaces a running session instead of attaching
+# to it. \`up\` stays non-destructive by default - people type it reflexively - so a session
+# that predates its own config is REFUSED with the evidence, and this is how you act on it.
+RESTART=0; for _a in "$@"; do [ "$_a" = "--restart" ] && RESTART=1; done
 # bypass flag for a CLI (defaults to PRIMARY) - so \`<cli> run --bypass\` works for all.
 bypass_flag() {
   case "\${1:-$PRIMARY}" in
@@ -361,6 +365,83 @@ tx_start() {
 }
 tx_status() { tx_exists && echo "tmux: session '$SESSION' running" || echo "tmux: no session '$SESSION'"; }
 
+# A fingerprint of the config a session reads at startup. Content, not mtime: \`claude mcp
+# add\` rewrites .mcp.json unconditionally and is not ours to fix, so \`up\` running setup
+# would otherwise bump the very timestamps it then compares - the same cancellation that
+# made the installHook rewrite fatal, from a writer we do not control.
+config_fp() {
+  node -e 'var fs=require("fs"),c=require("crypto"),h=c.createHash("sha1");
+process.argv.slice(1).forEach(function(p){try{h.update(fs.readFileSync(p))}catch(e){h.update("")}});
+process.stdout.write(h.digest("hex"))' "$ROOT/.mcp.json" "$ROOT/.claude/settings.json" 2>/dev/null || true
+}
+
+# Epoch seconds a file was last written, 0 if it is not there. GNU stat, BSD fallback.
+file_mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0; }
+# Local HH:MM for an epoch, for messages that name evidence rather than a conclusion.
+at_hhmm() { date -d "@$1" +%H:%M 2>/dev/null || date -r "$1" +%H:%M 2>/dev/null || echo "$1"; }
+
+# Echo "<file> <written-epoch> <session-started-epoch>" when the RUNNING session predates
+# a config file it reads at startup, and return 0. Return 1 when it is current.
+#
+# This is the gap doctor structurally cannot see: doctor inspects files on disk and every
+# file here is correct - the process that needed to read them just started earlier. The
+# check has to be liveness of the config against the process, not correctness of the
+# config on its own.
+#
+# It relies on those mtimes being honest, which is why \`installHook\` writes only on
+# change. An unconditional rewrite would make every session look stale forever, since
+# \`up\` runs setup on the way past.
+session_stale() {
+  tx_exists || return 1
+  local created f m
+  # \`list-sessions -F\` rather than \`display -p -t\`: display needs an attached client and
+  # returns EMPTY for a detached session, which is every session this check cares about.
+  created="$(tmux list-sessions -F '#{session_name} #{session_created}' 2>/dev/null | awk -v s="$SESSION" '$1 == s { print $2; exit }' || true)"
+  [ "\${created:-0}" -gt 0 ] 2>/dev/null || return 1
+  for f in "$ROOT/.mcp.json" "$ROOT/.claude/settings.json"; do
+    [ -f "$f" ] || continue
+    m="$(file_mtime "$f")"
+    if [ "\${m:-0}" -gt "$created" ] 2>/dev/null; then echo "$f $m $created"; return 0; fi
+  done
+  return 1
+}
+
+# Echo the exit status of a session whose panes are ALL dead, and return 0. A corpse:
+# the agent exited and \`remain-on-exit on\` kept the pane, so tmux did not destroy the
+# session and \`tx_exists\` still says yes.
+#
+# Without this, \`up\` attaches to a dead pane and reports success - and the operator who
+# turned remain-on-exit on to find out WHY an agent is dying is the one most likely to
+# hit it. A corpse also has nothing to lose mid-turn, which is why the caller replaces it
+# without waiting for --restart: the reason that flag exists does not apply here.
+session_dead() {
+  tx_exists || return 1
+  local panes; panes="$(tmux list-panes -t "=$SESSION" -F '#{pane_dead} #{pane_dead_status}' 2>/dev/null || true)"
+  [ -n "$panes" ] || return 1
+  awk '$1 != "1" { alive = 1 } END { exit(alive ? 1 : 0) }' <<<"$panes" || return 1
+  awk '$1 == "1" { print ($2 == "" ? "?" : $2); exit }' <<<"$panes"
+}
+
+# Replace the running session with a fresh one carrying the current config. The ONE
+# respawn primitive: \`up --restart\` calls it from outside the session, so it can kill and
+# recreate directly. The in-session caller (an agent that re-registered its own MCP and
+# needs the session to reload it) needs the same steps behind a detached \`setsid\` script,
+# because killing your own session kills the shell mid-command - when that lands, it wraps
+# this rather than reimplementing it.
+respawn_session() {
+  # Refuse to saw off the branch: from INSIDE the session being replaced, the kill takes
+  # this shell with it before the relaunch can run.
+  if [ -n "\${TMUX:-}" ] && [ "$(tmux display -p '#{session_name}' 2>/dev/null || true)" = "$SESSION" ]; then
+    echo "rr: --restart cannot run from inside '$SESSION' - it would kill this shell before relaunching." >&2
+    echo "    Run it from outside the session, or detach first ('Ctrl-b d')." >&2
+    return 1
+  fi
+  prepare_launch
+  tmux kill-session -t "=$SESSION" 2>/dev/null || true
+  echo "restarting session '$SESSION' running '$LAUNCH'"
+  tmux new-session -d -s "$SESSION" "$LAUNCH"
+}
+
 # Migrate a renamed session: if init recorded a previous name (PREV) and that old
 # session is still running while the new name is free, rename it in place. The
 # agent keeps running - only the label changes - so a naming-convention change
@@ -563,7 +644,16 @@ mcp_add() {
   [ "$a" = "claude" ] && report_sibling_worktrees || true
 }
 hooks_install() { $CLI hooks install --agent "$1"; }
-setup() { local a; IFS=',' read -ra _AS <<< "$AGENT"; for a in "\${_AS[@]}"; do mcp_add "$a" && hooks_install "$a"; done; }
+# Fall back to PRIMARY when config names no agent. Everything else already defaults that
+# way (\`PRIMARY="\${AGENT%%,*}"\` then claude), but \`read -ra\` splits an empty string into
+# ZERO words, so setup used to run its loop no times and register nothing - silently, and
+# on exactly the worktrees whose config predates the agent field.
+setup() {
+  local a
+  IFS=',' read -ra _AS <<< "\${AGENT:-}"
+  [ "\${#_AS[@]}" -gt 0 ] || _AS=("$PRIMARY")
+  for a in "\${_AS[@]}"; do [ -n "$a" ] || a="$PRIMARY"; mcp_add "$a" && hooks_install "$a"; done
+}
 
 # ── doctor: diagnose common setup problems + print the exact fix command ───────
 # The #1 support issue is the git-worktree identity tangle: agents in different
@@ -658,8 +748,10 @@ doctor() {
 usage() {
   cat <<EOF
 RelayRoom console (part=$PART, session=$SESSION, agent=$AGENT)
-  rr.sh up [--bypass] [--new]    auto-update if a newer CLI is out, then rebuild
-                                 session + start pager + attach (after reboot)
+  rr.sh up [--bypass] [--new] [--restart]
+                                 auto-update if a newer CLI is out, ensure setup, then
+                                 rebuild session + start pager + attach (after reboot).
+                                 --restart replaces a session that predates its config
   rr.sh launch [--bypass] [--new]  from INSIDE a session: set delivery + pager + run the agent
   rr.sh down                     stop pager + kill the tmux session
   rr.sh status                   show tmux + pager status
@@ -682,6 +774,55 @@ case "\${1:-help}" in
     assert_session_name
     self_update_if_pending "$@"   # auto-update first if the hub flagged a newer CLI (may re-exec)
     migrate_session_name          # rename a still-running old-named session to the standard name
+    # \`up\` is meant to be the one command that makes a part work, so it ENSURES the
+    # registration rather than treating it as a separate ceremony. setup is idempotent
+    # (and genuinely so now that installHook writes only on change), and it has to run
+    # before prepare_launch so the approval it writes is in place when channel readiness
+    # is probed. A failure here is reported, not fatal - the human still gets a session.
+    # Read the staleness evidence BEFORE setup runs, for the reason config_fp exists:
+    # setup rewrites .mcp.json whether or not anything changed, so afterwards the file is
+    # always newer than the session and every check would fire. Taken here, the mtimes
+    # still describe the last time the config actually changed.
+    _stale="$(session_stale || true)"; _fp_before="$(config_fp)"; _dead="$(session_dead || true)"
+    setup || echo "rr: setup reported a problem - continuing. Run ./rr.sh doctor" >&2
+    _fp_after="$(config_fp)"
+    _respawned=0
+    if tx_exists && { [ "$RESTART" = "1" ] || [ -n "$_dead" ]; }; then
+      [ -n "$_dead" ] && echo "rr: session '$SESSION' is a corpse - its agent exited (status $_dead) and remain-on-exit kept the pane."
+      respawn_session; _respawned=1
+    fi
+    # Everything below asks about a session we did NOT just create. After a respawn it is
+    # current by construction, and its launch flags were applied by prepare_launch.
+    if [ "$_respawned" = "0" ] && tx_exists; then
+      # Flags that only prepare_launch consumes. With a session already up that branch
+      # never runs, so accepting them here would apply nothing and say nothing - which is
+      # worse than refusing, because the caller believes the flag took effect.
+      if [ "$BYPASS" = "1" ] || [ "$NEW" = "1" ]; then
+        echo "rr: session '$SESSION' is already running, so $([ "$BYPASS" = "1" ] && echo "--bypass" || echo "--new") would have no effect." >&2
+        echo "    Launch flags apply when the session is created. Use ./rr.sh up --restart to" >&2
+        echo "    replace it, or ./rr.sh down first." >&2
+        exit 1
+      fi
+      # A session that predates its own config will never read it: .mcp.json and
+      # settings.json are read at process start. Refuse with the evidence rather than
+      # restarting silently, which would discard whatever the agent is doing mid-turn.
+      # \`up\` ends in attach/switch-client, so this message always has a reader.
+      if [ -n "$_stale" ]; then
+        set -- $_stale
+        echo "rr: session '$SESSION' started $(at_hhmm "$3"), $(basename "$1") written $(at_hhmm "$2") - the running agent never read it." >&2
+        echo "    Nothing on disk is wrong; the process that needed it started earlier, which is why doctor is green." >&2
+        echo "    Restart it with:  ./rr.sh up --restart" >&2
+        exit 1
+      elif [ "$_fp_before" != "$_fp_after" ]; then
+        # setup CHANGED something just now, so the running session predates it as of this
+        # second. Caught by content rather than mtime, so the unconditional rewrites that
+        # setup performs on every run do not masquerade as a change.
+        echo "rr: setup just changed this worktree's config, and session '$SESSION' started before it." >&2
+        echo "    The running agent reads .mcp.json and settings.json at startup, so it will not see this." >&2
+        echo "    Restart it with:  ./rr.sh up --restart" >&2
+        exit 1
+      fi
+    fi
     if ! tx_exists; then prepare_launch; echo "starting session '$SESSION' running '$LAUNCH'"; tmux new-session -d -s "$SESSION" "$LAUNCH"; fi
     # RESTART the pager (not just start): a pager left over from a previous session
     # has the OLD target baked in (it reads config.json once at startup and has no
