@@ -29,6 +29,9 @@
     "urgent": "urgent",
     "suppressed": "억제됨",
     "wokeBy": "이(가) 깨움",
+    "blockedSendsTitle": "내가 보내려다 차단된 것",
+    "blockedSendsSubtitle": "이건 part에 도달하지 않았으므로, 이것 때문에 조용해진 part는 없습니다. 보낸 사람인 나에게 기록되는 항목이라 위 wake 목록과 분리해 둡니다. 여기 나오는 것은 loop breaker에 걸린 것뿐입니다.",
+    "sendBlocked": "이(가) 보내려다 차단됨 -",
     "empty": "이 윈도우 동안 소비된 wake가 없습니다.",
     "suppressedBadge": "억제",
     "loadMore": "더보기 ({count}개 더)"

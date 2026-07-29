@@ -9,9 +9,22 @@ import type { WakeAuditRow } from "@/modules/wake/queries"
 
 const PAGE = 10
 
-/** Wake-audit rows with "show 10, load more" paging (client-side; the page passes
- *  the full window in). */
-export function WakeAuditList({ rows }: { rows: WakeAuditRow[] }) {
+/**
+ * Wake-audit rows with "show 10, load more" paging (client-side; the page passes
+ * the full window in).
+ *
+ * `axis` decides the sentence, and it has to. A recipient row says someone woke one
+ * of my parts; a sender row says a send of mine was stopped and never reached a
+ * part at all. The recipient phrasing applied to a sender row reads as "X woke -",
+ * naming a part that does not exist on that row.
+ */
+export function WakeAuditList({
+  rows,
+  axis = "recipient",
+}: {
+  rows: WakeAuditRow[]
+  axis?: "recipient" | "sender"
+}) {
   const t = useTranslations("wake")
   const timeAgo = useTimeAgo()
   const [visible, setVisible] = useState(PAGE)
@@ -25,8 +38,10 @@ export function WakeAuditList({ rows }: { rows: WakeAuditRow[] }) {
           <div key={row.id} className="flex items-center justify-between gap-3 py-2.5 first:pt-0">
             <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm">
               <span className="font-medium">{row.senderName ?? row.senderPart ?? "-"}</span>
-              <span className="text-muted-foreground">{t("audit.wokeBy")}</span>
-              {row.agentPart && (
+              <span className="text-muted-foreground">
+                {axis === "sender" ? t("audit.sendBlocked") : t("audit.wokeBy")}
+              </span>
+              {axis === "recipient" && row.agentPart && (
                 <span className="font-mono text-xs bg-muted border border-border rounded px-1.5 py-0.5">{row.agentPart}</span>
               )}
               {row.projectName && (

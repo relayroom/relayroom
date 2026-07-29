@@ -98,6 +98,20 @@ beforeAll(async () => {
       suppressed: false,
       createdAt: hours(1),
     },
+    // OWNER_A as the SENDER: a loop-breaker trip. This is the shape `pipeline.ts`
+    // writes - ownerUserId is whoever tripped the breaker, and there is no agentId,
+    // because the send never reached a part. It shares a column with the rows above
+    // and means something else entirely.
+    {
+      ownerUserId: OWNER_A,
+      projectId,
+      senderPart: "backend",
+      senderUserId: OWNER_A,
+      urgent: false,
+      suppressed: true,
+      reason: "loop_breaker",
+      createdAt: hours(1),
+    },
   ])
 })
 
@@ -138,6 +152,58 @@ describe("listOwnerWakeAudit", () => {
     expect(resB.items).toHaveLength(1)
     expect(resB.summary.total).toBe(1)
     expect(resB.summary.urgentCount).toBe(1)
+  })
+})
+
+/**
+ * `ownerUserId` carries two different subjects. A row with an agentId is a wake
+ * aimed at a part this owner runs; a row without one is a send BY this user that
+ * the loop breaker stopped. Before the split they were returned as one list, so a
+ * blocked send appeared among the part's wakes with no part on it - an owner
+ * reading it would count a suppression against a part that was never involved.
+ */
+describe("listOwnerWakeAudit splits the two axes", () => {
+  it("keeps a loop-breaker trip out of the wakes-for-my-parts list", async () => {
+    const res = await listOwnerWakeAudit(OWNER_A, 24)
+    expect(res.result).toBe(true)
+    if (!res.result) return
+
+    // Still 3 - the loop-breaker row is A's and in-window, so before the split it
+    // would have made this 4.
+    expect(res.items).toHaveLength(3)
+    expect(res.items.every((r) => r.agentId !== null)).toBe(true)
+    expect(res.summary.total).toBe(3)
+    expect(res.summary.suppressedCount).toBe(1) // the budget row, not the send
+  })
+
+  it("reports the blocked send on its own axis", async () => {
+    const res = await listOwnerWakeAudit(OWNER_A, 24)
+    expect(res.result).toBe(true)
+    if (!res.result) return
+
+    expect(res.blockedSends).toHaveLength(1)
+    expect(res.blockedSends[0]!.agentId).toBeNull()
+    expect(res.blockedSends[0]!.senderPart).toBe("backend")
+    expect(res.blockedSendsSummary.total).toBe(1)
+    expect(res.blockedSendsSummary.suppressedCount).toBe(1)
+  })
+
+  it("counts each axis from SQL, so neither summary includes the other's rows", async () => {
+    const res = await listOwnerWakeAudit(OWNER_A, 24)
+    expect(res.result).toBe(true)
+    if (!res.result) return
+
+    // The two totals partition the window; nothing is double-counted or dropped.
+    expect(res.summary.total + res.blockedSendsSummary.total).toBe(4)
+    expect(res.summary.suppressedCount + res.blockedSendsSummary.suppressedCount).toBe(2)
+  })
+
+  it("an owner with no blocked sends gets an empty axis, not the other axis' rows", async () => {
+    const resB = await listOwnerWakeAudit(OWNER_B, 24)
+    expect(resB.result).toBe(true)
+    if (!resB.result) return
+    expect(resB.blockedSends).toHaveLength(0)
+    expect(resB.blockedSendsSummary.total).toBe(0)
   })
 })
 

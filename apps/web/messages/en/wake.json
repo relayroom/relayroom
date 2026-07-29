@@ -29,6 +29,9 @@
     "urgent": "Urgent",
     "suppressed": "Suppressed",
     "wokeBy": "woke",
+    "blockedSendsTitle": "Sends of yours that were blocked",
+    "blockedSendsSubtitle": "These never reached a part, so no part went quiet because of them. They are recorded against you as the sender, which is why they are listed apart from the wakes above. Only loop-breaker trips appear here.",
+    "sendBlocked": "was blocked sending in",
     "empty": "No wakes consumed in this window.",
     "suppressedBadge": "suppressed",
     "loadMore": "Show more ({count} more)"

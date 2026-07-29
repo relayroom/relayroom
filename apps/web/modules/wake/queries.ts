@@ -82,16 +82,65 @@ export interface WakeAuditSummary {
 }
 
 /**
+ * `wake_event` holds two different statements under one `ownerUserId` column, and
+ * telling them apart is not optional - they have different subjects.
+ *
+ *  - `recipient`: a wake aimed at a part this user owns. ownerUserId is the part's
+ *    owner, and `agentId` names the part.
+ *  - `sender`: this user sent something and the loop breaker stopped it
+ *    (`pipeline.ts` writes ownerUserId = the SENDER, and no agentId at all).
+ *
+ * So a row saying "suppressed" can mean "a part of mine was not woken" or "a send
+ * of mine was blocked", and listing them together reads as the first for both. The
+ * agent-detail audit panel has been doing exactly that: a loop-breaker row appeared
+ * in the part's list with no part on it.
+ *
+ * The discriminator is `agentId`, not `reason`. That is deliberate - it holds
+ * whatever the reason vocabulary turns out to be, and the vocabulary is being
+ * reworked. A row about a part has a part; a row about a send does not.
+ *
+ * ONE PLACE ON PURPOSE. Everything downstream consumes the split result, never the
+ * raw rows, so when the server exposes an axis-aware read this function is the only
+ * thing that changes.
+ */
+export interface WakeAuditAxes {
+  /** Wakes aimed at parts this owner runs. */
+  recipient: WakeAuditRow[]
+  /** Sends by this user that were blocked before reaching anyone. */
+  sender: WakeAuditRow[]
+}
+
+function splitByAxis(rows: WakeAuditRow[]): WakeAuditAxes {
+  const recipient: WakeAuditRow[] = []
+  const sender: WakeAuditRow[] = []
+  for (const row of rows) {
+    if (row.agentId) recipient.push(row)
+    else sender.push(row)
+  }
+  return { recipient, sender }
+}
+
+/**
  * Audit (spec §10.6, §11): "who consumed my wake budget". Returns ONLY the
  * logged-in owner's wakeEvents (ownerUserId === userId) within the window, newest
  * first. The `ownerUserId = userId` predicate is the SOLE isolation gate - no
  * other owner's events can leak in.
+ *
+ * Returned on two axes, because `ownerUserId` does not mean one thing: `items` are
+ * wakes aimed at this owner's parts, `blockedSends` are this user's own sends that
+ * the loop breaker stopped. See splitByAxis above for why they cannot share a list.
  */
 export async function listOwnerWakeAudit(
   userId: string,
   windowHours: number,
   projectId?: string,
-): Promise<ApiResultWithItems<WakeAuditRow> & { summary: WakeAuditSummary }> {
+): Promise<
+  ApiResultWithItems<WakeAuditRow> & {
+    summary: WakeAuditSummary
+    blockedSends: WakeAuditRow[]
+    blockedSendsSummary: WakeAuditSummary
+  }
+> {
   const t = await getErrorTranslations()
   const emptySummary: WakeAuditSummary = {
     total: 0,
@@ -137,23 +186,49 @@ export async function listOwnerWakeAudit(
         total: count(),
         urgentCount: sql<number>`count(*) filter (where ${wakeEvents.urgent})`,
         suppressedCount: sql<number>`count(*) filter (where ${wakeEvents.suppressed})`,
+        // Counted per axis for the same reason the rows are split - a total that
+        // mixes "a part of mine was not woken" with "a send of mine was blocked"
+        // describes neither. Counted in SQL rather than from `rows`, which is
+        // capped at 200: a summary computed from a truncated list would quietly
+        // under-report exactly when there is most to report.
+        senderTotal: sql<number>`count(*) filter (where ${wakeEvents.agentId} is null)`,
+        senderSuppressed: sql<number>`count(*) filter (where ${wakeEvents.agentId} is null and ${wakeEvents.suppressed})`,
+        senderUrgent: sql<number>`count(*) filter (where ${wakeEvents.agentId} is null and ${wakeEvents.urgent})`,
       })
       .from(wakeEvents)
       .where(ownerGate)
 
+    const axes = splitByAxis(rows)
+    const senderTotal = Number(agg?.senderTotal ?? 0)
+
     return {
       result: true,
-      totalCount: rows.length,
-      items: rows,
+      totalCount: axes.recipient.length,
+      // `items` and `summary` are the RECIPIENT axis - wakes aimed at this owner's
+      // parts, which is what every existing consumer meant by them.
+      items: axes.recipient,
       summary: {
-        total: Number(agg?.total ?? 0),
-        urgentCount: Number(agg?.urgentCount ?? 0),
-        suppressedCount: Number(agg?.suppressedCount ?? 0),
+        total: Number(agg?.total ?? 0) - senderTotal,
+        urgentCount: Number(agg?.urgentCount ?? 0) - Number(agg?.senderUrgent ?? 0),
+        suppressedCount: Number(agg?.suppressedCount ?? 0) - Number(agg?.senderSuppressed ?? 0),
+        windowHours,
+      },
+      blockedSends: axes.sender,
+      blockedSendsSummary: {
+        total: senderTotal,
+        urgentCount: Number(agg?.senderUrgent ?? 0),
+        suppressedCount: Number(agg?.senderSuppressed ?? 0),
         windowHours,
       },
     }
   } catch (err) {
     console.error("[listOwnerWakeAudit]", err)
-    return { result: false, message: t("wake.auditLoadFailed"), summary: emptySummary }
+    return {
+      result: false,
+      message: t("wake.auditLoadFailed"),
+      summary: emptySummary,
+      blockedSends: [],
+      blockedSendsSummary: emptySummary,
+    }
   }
 }
