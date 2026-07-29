@@ -111,8 +111,15 @@ describe('governance detection', () => {
   })
 
   it('loop_breaker: aggregates reason=loop_breaker suppressed rows', async () => {
+    // ownerUserId: null is the shape `pipeline.ts` actually writes - a blocked send
+    // has no agent that was going to be woken, so there is no owner subject. The
+    // default here fills it with the sender, which is what that writer used to do;
+    // seeding it that way would leave this fixture asserting a row the code can no
+    // longer produce. This aggregation groups on senderUserId either way, so the
+    // test's outcome does not depend on it - which is exactly why it would have
+    // stayed wrong silently.
     for (let i = 0; i < GOVERNANCE_THRESHOLDS.loopBreakerTrips; i++) {
-      await seedWake({ reason: 'loop_breaker', suppressed: true })
+      await seedWake({ reason: 'loop_breaker', suppressed: true, ownerUserId: null })
     }
     expect(await runGovernanceDetection(db)).toBe(1)
     expect(await openAlerts('loop_breaker')).toHaveLength(1)
