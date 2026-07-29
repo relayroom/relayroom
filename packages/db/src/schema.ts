@@ -329,6 +329,11 @@ export const wakeIntents = pgTable('wake_intent', {
 // control/ledger reconciliation (compared against events.usage = the real ledger).
 export const wakeEvents = pgTable('wake_event', {
   id: uuidPk(),
+  // The owner of the agent that was going to be woken - ONE subject, always. A row
+  // where nothing was going to be woken (a blocked send) leaves this null rather
+  // than borrowing it for the sender: the sender is in senderUserId, and a column
+  // that means "who this happened to" in some rows and "who did it" in others makes
+  // every consumer filtering on it wrong in a way nothing tells them about.
   ownerUserId: text('owner_user_id').references(() => better_auth_user.id, { onDelete: 'set null' }),
   agentId: uuid('agent_id').references(() => agents.id, { onDelete: 'set null' }),
   projectId: uuid('project_id').references(() => projects.id, { onDelete: 'set null' }),
