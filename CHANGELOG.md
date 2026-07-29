@@ -30,8 +30,15 @@ transaction on a direct upgrade from 0.5.1.
 
   **We cannot tell you whether this happened to you.** Purging left no record of itself
   before this release, so there is no mechanism by which we could have an indication either
-  way, for your projects or for ours. This is not "we have no evidence of impact"; it is
-  that no evidence could exist.
+  way. This is not "we have no evidence of impact"; it is that no evidence could exist.
+
+  About our own hosted hub we can say slightly more, and only from the code rather than from
+  any record: neither path could have fired on a default deployment. Purging is an explicit
+  owner action in the dashboard with no automatic trigger, and it has not been performed.
+  Retention only runs for a project that sets `retentionDays`, and **no path in the product
+  writes that setting** - the column is created empty and nothing updates it. We have not
+  queried the database to confirm this; the structural argument is what we have, and it does
+  not extend to a deployment where someone has edited that configuration directly.
 
   **If you purged anything before 0.5.2:** entries that came back are still there, and
   upgrading does not remove them. Purge those threads again and it will hold. The purge
