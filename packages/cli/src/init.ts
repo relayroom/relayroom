@@ -140,8 +140,45 @@ build_launch() {
 }
 
 LAUNCH="$PRIMARY"
+
+# Whether the relayroom-channel MCP server will actually LOAD in this worktree,
+# as "<ready|notready|unknown> <layer that decided>".
+#
+# The general defect this exists to prevent: we inferred OUR readiness from SOMEONE
+# ELSE'S feature flag. \`claude --channels\` answers "does Claude Code have channels",
+# and prepare_launch used to treat that as "will our channel server load" - different
+# questions. When they diverged, delivery=channel was written, the channel silently
+# did not load (claude does not exit or warn - measured), and the pager returned before
+# subscribing. The failure being prevented is not "channel does not work"; it is
+# "channel does not work and everything says it does" - heartbeat still green, status
+# bar still painted, nothing delivered. That is why the caller treats anything short of
+# positive evidence as pager rather than branching on a known failure.
+channel_ready() {
+  local out=""
+  # Layer 1, the observable: \`claude mcp list\` reports the server's real state,
+  # approval included. An outcome rather than a config key, so it still answers if a
+  # future Claude Code moves the gate somewhere we have not heard of.
+  out="$(claude mcp list 2>/dev/null || true)"
+  if grep -q '^relayroom-channel:' <<<"$out"; then
+    if grep -q '^relayroom-channel:.*Connected' <<<"$out"; then echo "ready observed"; else echo "notready observed"; fi
+    return
+  fi
+  # Layer 2, the approval keys doctor reads. Only reached when layer 1 could not answer,
+  # and the caller logs WHICH layer decided - otherwise a silently broken layer 1 would
+  # be covered for by layer 2 until a gate change broke that too, with nobody having
+  # noticed the first one die.
+  case " $(unapproved_servers) " in
+    *" relayroom-channel "*) echo "notready settings"; return ;;
+  esac
+  if [ -f "$ROOT/.mcp.json" ] && grep -q '"relayroom-channel"' "$ROOT/.mcp.json" 2>/dev/null; then
+    echo "ready settings"; return
+  fi
+  # Layer 3: no positive evidence either way. Channel mode requires evidence.
+  echo "unknown none"
+}
+
 prepare_launch() {
-  local mode="pager" probe="" base="$PRIMARY" byp=""
+  local mode="pager" probe="" base="$PRIMARY" byp="" why="" verdict="" layer=""
   # Capture the probe to a var FIRST: piping \`claude --channels\` into grep under
   # \`set -o pipefail\` would report claude's intentional nonzero exit and make the
   # \`if\` always false (channels never activate). \`|| true\` keeps the nonzero from
@@ -149,8 +186,17 @@ prepare_launch() {
   if [ "$PRIMARY" = "claude" ]; then
     probe="$(claude --channels 2>&1 || true)"
     if grep -q "argument missing" <<<"$probe"; then
-      base="claude --dangerously-load-development-channels server:relayroom-channel"
-      mode="channel"
+      # Channels EXIST. Whether ours LOADS is a separate question - ask it.
+      read -r verdict layer <<< "$(channel_ready)"
+      case "$verdict" in
+        ready)
+          base="claude --dangerously-load-development-channels server:relayroom-channel"
+          mode="channel"; why=" (relayroom-channel loadable, via $layer)" ;;
+        notready)
+          why=" (channel supported, but relayroom-channel is not approved here - run ./rr.sh setup; via $layer)" ;;
+        *)
+          why=" (channel supported, but relayroom-channel could not be confirmed loadable - run ./rr.sh setup)" ;;
+      esac
     fi
   fi
   # The pager and channel server MUST agree on the mode; a stale value causes missed
@@ -184,7 +230,7 @@ RRPROFILE
     fi
   fi
   [ "$NEW" = "1" ] && echo "session: NEW" >&2 || echo "session: resume last (--new for fresh)" >&2
-  echo "wake delivery: $mode" >&2
+  echo "wake delivery: $mode$why" >&2
 }
 
 # ── pager ────────────────────────────────────────────────────────────────────
