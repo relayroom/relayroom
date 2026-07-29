@@ -183,7 +183,12 @@ export default async function AgentDetailPage({ params, searchParams }: Props) {
         />
       )}
       {isMyMainAgent && auditResult?.result && (
-        <WakeAuditPanel rows={auditResult.items} summary={auditResult.summary} />
+        <WakeAuditPanel
+          rows={auditResult.items}
+          summary={auditResult.summary}
+          blockedSends={auditResult.blockedSends}
+          blockedSendsSummary={auditResult.blockedSendsSummary}
+        />
       )}
 
       {/* Token usage summary - big numbers */}

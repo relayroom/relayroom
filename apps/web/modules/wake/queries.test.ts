@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { db } from "@/lib/db"
 import { projects, agents, wakeEvents } from "@relayroom/db/schema"
 import { better_auth_user } from "@relayroom/db/auth-schema"
-import { getOwnerWakeBudget, listOwnerWakeAudit } from "./queries"
+import { getOwnerWakeBudget, listOwnerWakeAudit, listProjectSuppressions } from "./queries"
 
 const OWNER_A = "wake_owner_a"
 const OWNER_B = "wake_owner_b"
@@ -74,6 +74,7 @@ beforeAll(async () => {
       senderUserId: SENDER,
       urgent: false,
       suppressed: true,
+      reason: "budget_exhausted",
       createdAt: hours(3),
     },
     // OWNER_A, OUTSIDE the 24h window (25h ago) - must be excluded.
@@ -96,6 +97,21 @@ beforeAll(async () => {
       senderUserId: SENDER,
       urgent: true,
       suppressed: false,
+      createdAt: hours(1),
+    },
+    // A loop-breaker trip by OWNER_A. This is the shape `pipeline.ts` writes, and
+    // the shape is the point: NO ownerUserId and NO agentId, only senderUserId.
+    // Nothing was suppressed for anyone - a send was blocked by someone - so the
+    // row is keyed on the sender. A fixture that also set ownerUserId would let a
+    // query filtering on ownerUserId find it, which is exactly the mistake the
+    // server removed, and the test would pass while production returned nothing.
+    {
+      projectId,
+      senderPart: "backend",
+      senderUserId: OWNER_A,
+      urgent: false,
+      suppressed: true,
+      reason: "loop_breaker",
       createdAt: hours(1),
     },
   ])
@@ -138,6 +154,109 @@ describe("listOwnerWakeAudit", () => {
     expect(resB.items).toHaveLength(1)
     expect(resB.summary.total).toBe(1)
     expect(resB.summary.urgentCount).toBe(1)
+  })
+})
+
+/**
+ * The two axes are keyed on DIFFERENT COLUMNS, and that is what these pin.
+ *
+ * A wake aimed at a part is keyed on ownerUserId. A send blocked by the loop
+ * breaker is keyed on senderUserId, with ownerUserId left null - nothing was
+ * suppressed for anyone. Reading both through ownerUserId returns the second axis
+ * empty forever, which renders as "no send of yours was ever blocked" and is a
+ * claim this app cannot make.
+ */
+describe("listOwnerWakeAudit splits the two axes", () => {
+  it("keeps a loop-breaker trip out of the wakes-for-my-parts list", async () => {
+    const res = await listOwnerWakeAudit(OWNER_A, 24)
+    expect(res.result).toBe(true)
+    if (!res.result) return
+
+    // Still 3 - the loop-breaker row is A's and in-window, so before the split it
+    // would have made this 4.
+    expect(res.items).toHaveLength(3)
+    expect(res.items.every((r) => r.agentId !== null)).toBe(true)
+    expect(res.summary.total).toBe(3)
+    expect(res.summary.suppressedCount).toBe(1) // the budget row, not the send
+  })
+
+  it("reports the blocked send on its own axis", async () => {
+    const res = await listOwnerWakeAudit(OWNER_A, 24)
+    expect(res.result).toBe(true)
+    if (!res.result) return
+
+    expect(res.blockedSends).toHaveLength(1)
+    expect(res.blockedSends[0]!.agentId).toBeNull()
+    expect(res.blockedSends[0]!.senderPart).toBe("backend")
+    expect(res.blockedSendsSummary.total).toBe(1)
+    expect(res.blockedSendsSummary.suppressedCount).toBe(1)
+  })
+
+  it("counts each axis from SQL, so neither summary includes the other's rows", async () => {
+    const res = await listOwnerWakeAudit(OWNER_A, 24)
+    expect(res.result).toBe(true)
+    if (!res.result) return
+
+    // The two totals partition the window; nothing is double-counted or dropped.
+    // They come from separate gated queries, so a row counted twice or missed
+    // entirely shows up here rather than in one axis looking plausible alone.
+    expect(res.summary.total + res.blockedSendsSummary.total).toBe(4)
+    expect(res.summary.suppressedCount + res.blockedSendsSummary.suppressedCount).toBe(2)
+  })
+
+  it("an owner with no blocked sends gets an empty axis, not the other axis' rows", async () => {
+    const resB = await listOwnerWakeAudit(OWNER_B, 24)
+    expect(resB.result).toBe(true)
+    if (!resB.result) return
+    expect(resB.blockedSends).toHaveLength(0)
+    expect(resB.blockedSendsSummary.total).toBe(0)
+  })
+})
+
+/**
+ * The project-level view. The incident it exists for is "several parts are idle
+ * and nothing says which one to look at", so it must answer starting from the
+ * project rather than from a part the operator has already picked.
+ */
+describe("listProjectSuppressions", () => {
+  it("groups withheld wakes by part and names the reason", async () => {
+    const res = await listProjectSuppressions(projectId, OWNER_A, 24)
+    expect(res.result).toBe(true)
+    if (!res.result) return
+
+    expect(res.items).toHaveLength(1)
+    const part = res.items[0]!
+    expect(part.part).toBe("backend")
+    expect(part.total).toBe(1)
+    // The reason is the whole point - "suppressed" without it is the screen this
+    // replaces.
+    expect(part.byReason).toEqual([{ reason: "budget_exhausted", count: 1 }])
+  })
+
+  it("excludes issued wakes - only what was WITHHELD belongs here", async () => {
+    const res = await listProjectSuppressions(projectId, OWNER_A, 24)
+    expect(res.result).toBe(true)
+    if (!res.result) return
+    // OWNER_A has two issued wakes on this part in the window. Counting them would
+    // turn a busy part into an alarming one.
+    expect(res.items[0]!.total).toBe(1)
+  })
+
+  it("excludes the blocked send, which has no part to group under", async () => {
+    const res = await listProjectSuppressions(projectId, OWNER_A, 24)
+    expect(res.result).toBe(true)
+    if (!res.result) return
+    // The loop-breaker row is suppressed, is OWNER_A's, and is in this project -
+    // it is excluded only because it names no part. An inner join is doing that;
+    // this pins it.
+    expect(res.items.flatMap((p) => p.byReason).some((r) => r.reason === "loop_breaker")).toBe(false)
+  })
+
+  it("returns nothing for an owner whose parts were never withheld from", async () => {
+    const res = await listProjectSuppressions(projectId, OWNER_B, 24)
+    expect(res.result).toBe(true)
+    if (!res.result) return
+    expect(res.items).toHaveLength(0)
   })
 })
 

@@ -277,7 +277,15 @@ export async function dispatch(db: Db, input: DispatchInput): Promise<DispatchRe
     // senderUserId is required (it is the aggregation key); skip for unowned senders.
     if (input.fromUserId) {
       await db.insert(wakeEvents).values({
-        ownerUserId: input.fromUserId, // subject = the sender who tripped the breaker
+        // ownerUserId is deliberately NOT set. Every other row in this table uses it
+        // for the owner of the agent that was going to be woken; this row has no such
+        // agent - nothing was suppressed FOR anyone, a send was blocked BY someone.
+        // Writing the sender here made one column carry two different subjects, so a
+        // query filtering `ownerUserId = me` returned both "wakes suppressed for my
+        // agents" and "sends I made that were blocked", and the dashboard's audit
+        // panel was doing exactly that. The sender is already recorded, twice over,
+        // in senderUserId and senderPart - which is also what governance groups on
+        // (governance/detect.ts), so nothing needs it here.
         projectId: input.projectId,
         urgent: input.urgent,
         suppressed: true,
@@ -352,8 +360,15 @@ export async function dispatch(db: Db, input: DispatchInput): Promise<DispatchRe
       )
       if (!allowed) {
         // Cooldown: keep delivery, suppress only the wake. Record a suppressed
-        // control row (reason=direct_cooldown) for audit/governance (08/10), then
-        // emit and move on without reserving a wake.
+        // control row for audit/governance (08/10), then emit and move on without
+        // reserving a wake.
+        //
+        // The comment here used to say "(reason=direct_cooldown)" while the insert
+        // set no reason, so the row stored NULL - the same defect as the
+        // budget_exhausted row, which was fixed one commit earlier without this one
+        // being noticed. Worse, direct_cooldown was then removed from the column's
+        // comment as a value "nothing writes", when in fact it is a real cause whose
+        // row exists with its name missing. Found by rrc-web reading every writer.
         if (r.ownerUserId) {
           await db.insert(wakeEvents).values({
             ownerUserId: r.ownerUserId,
@@ -364,6 +379,7 @@ export async function dispatch(db: Db, input: DispatchInput): Promise<DispatchRe
             phantom: false,
             senderPart: input.fromPart,
             senderUserId: input.fromUserId,
+            reason: 'direct_cooldown',
           })
         }
         suppressed++

@@ -329,6 +329,11 @@ export const wakeIntents = pgTable('wake_intent', {
 // control/ledger reconciliation (compared against events.usage = the real ledger).
 export const wakeEvents = pgTable('wake_event', {
   id: uuidPk(),
+  // The owner of the agent that was going to be woken - ONE subject, always. A row
+  // where nothing was going to be woken (a blocked send) leaves this null rather
+  // than borrowing it for the sender: the sender is in senderUserId, and a column
+  // that means "who this happened to" in some rows and "who did it" in others makes
+  // every consumer filtering on it wrong in a way nothing tells them about.
   ownerUserId: text('owner_user_id').references(() => better_auth_user.id, { onDelete: 'set null' }),
   agentId: uuid('agent_id').references(() => agents.id, { onDelete: 'set null' }),
   projectId: uuid('project_id').references(() => projects.id, { onDelete: 'set null' }),
@@ -338,12 +343,28 @@ export const wakeEvents = pgTable('wake_event', {
   urgent: boolean('urgent').notNull().default(false),
   suppressed: boolean('suppressed').notNull().default(false), // true = budget-exhausted, no nudge fired
   phantom: boolean('phantom').notNull().default(false),       // true = real turn seen w/o matching issued wake
-  // Provenance tag for governance detection (phase 08). Free-form, nullable for
-  // legacy rows. Known values: 'message' | 'reply' | 'direct_cooldown' |
-  // 'loop_breaker' | 'limited'. loop_breaker rows are suppressed=true control rows written by
-  // the pipeline when the in-memory loop-breaker trips, so 08 can aggregate trips
-  // on the STABLE principal (senderUserId) without a separate table.
-  reason: text('reason'),
+  // WHY a wake was suppressed. Nullable, and null means two different things:
+  // an issued row (suppressed=false never sets it) or a legacy suppressed row.
+  //
+  // The complete set of values any writer puts here is FOUR, verified by reading
+  // every insert rather than by reading a type:
+  //   'budget_exhausted' - the owner's hourly budget was spent
+  //   'limited'          - the agent is parked on a provider rate limit. Written
+  //                        only when the trigger is not the 30s sweep, which would
+  //                        otherwise emit an identical row every tick.
+  //   'loop_breaker'     - the in-memory send loop-breaker tripped. Note this row
+  //                        has agentId NULL and ownerUserId = the SENDER, so it is
+  //                        a different subject from every other row here.
+  //   'direct_cooldown'  - a direct message inside the cooldown window. Delivery
+  //                        still happened; only the wake was suppressed.
+  //
+  // This comment previously listed 'message', 'reply' and 'direct_cooldown' as
+  // known values. The first two are never written here and were removed. The third
+  // WAS removed on the same grounds and that was wrong: its writer set no reason
+  // while its own comment claimed it did, so the row existed with its name missing.
+  // A cause stored as NULL is indistinguishable from a value that never occurs, so
+  // the correction deleted the evidence of a bug instead of the bug. Both are fixed.
+  reason: text('reason').$type<'budget_exhausted' | 'limited' | 'loop_breaker' | 'direct_cooldown'>(),
   createdAt: createdAt(),
 }, t => [
   index('wake_event_owner_created_idx').on(t.ownerUserId, t.createdAt),

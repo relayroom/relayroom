@@ -1,11 +1,12 @@
 {
   "owner": {
     "sectionTitle": "Wake 예산",
-    "sectionDescription": "내가 소유한 전체 part 합산 기준.",
+    "sectionDescription": "이 예산은 이 프로젝트가 아니라 나에게 속합니다. 내가 속한 모든 프로젝트의 내가 소유한 모든 part가 여기서 함께 차감되므로, 다른 프로젝트에서 일하는 part도 같은 몫을 씁니다.",
     "wakesLabel": "롤링 1시간당 자동 wake 최대",
     "wakesZeroHint": "0은 침묵이 아닙니다. 프로젝트마다 최소 보장분이 남아 있어 일부 자동 wake는 계속 도착하고, 이 보장은 프로젝트 단위라 소유한 프로젝트 수만큼 늘어납니다. 완전히 끌 수 있는 건 urgent뿐입니다.",
     "urgentLabel": "urgent 최대 (시간당)",
     "urgentZeroHint": "아무도 나를 urgent로 깨우지 못합니다.",
+    "newPartBudgetHint": "새 part는 이미 소유한 part들과 같은 wake 예산에서 차감됩니다. 이 프로젝트뿐 아니라 다른 프로젝트의 part도 마찬가지이며, part를 늘려도 예산이 늘지는 않습니다.",
     "toastSaving": "저장 중...",
     "toastSaved": "Wake 예산을 저장했습니다.",
     "toastError": "Wake 예산 저장에 실패했습니다."
@@ -28,8 +29,23 @@
     "urgent": "urgent",
     "suppressed": "억제됨",
     "wokeBy": "이(가) 깨움",
+    "blockedSendsTitle": "내가 보내려다 차단된 것",
+    "blockedSendsSubtitle": "이건 part에 도달하지 않았으므로, 이것 때문에 조용해진 part는 없습니다. 보낸 사람인 나에게 기록되는 항목이라 위 wake 목록과 분리해 둡니다. 여기 나오는 것은 loop breaker에 걸린 것뿐입니다.",
+    "sendBlocked": "이(가) 보내려다 차단됨 -",
     "empty": "이 윈도우 동안 소비된 wake가 없습니다.",
     "suppressedBadge": "억제",
+    "reasonBudgetExhausted": "예산 소진",
+    "reasonLimited": "프로바이더 제한",
+    "reasonLoopBreaker": "loop breaker",
+    "reasonDirectCooldown": "쿨다운",
+    "reasonUnknown": "사유 미기록",
+    "suppressionsTitle": "보류된 wake",
+    "suppressionsSubtitle": "최근 {hours}시간 동안 nudge를 받지 못한 내 part와 그 이유. 여기 없는 part는 보류된 적이 없습니다.",
+    "suppressionsEmpty": "이 프로젝트에서 보류된 wake가 없습니다.",
+    "suppressionsScope": "여기에는 보류된 wake만 나옵니다. 이미 예약된 wake에 합쳐진 경우는 보류가 아니라서 기록되지 않으므로, 이 목록은 모든 wake 판단의 기록이 아닙니다.",
+    "suppressionsBudgetNote": "이 중 오너가 바꿀 수 있는 것은 예산뿐입니다. 예산은 나에게 속하며 내가 속한 모든 프로젝트가 함께 씁니다.",
+    "suppressionsLimitedNote": "프로바이더 제한은 누군가 보낸 메시지에 대해서만 집계됩니다. 제한으로 park된 part는 30초마다 재확인되는데 그 확인은 의도적으로 기록하지 않으므로, 실제 park된 시간은 이 숫자보다 깁니다.",
+    "suppressionsCooldownNote": "쿨다운은 nudge만 보류합니다. 메시지는 이미 전달됐고 part는 다음 턴에 봅니다.",
     "loadMore": "더보기 ({count}개 더)"
   }
 }

@@ -1,5 +1,31 @@
 # @relayroom/db
 
+## 0.5.3
+
+### Patch Changes
+
+- 525b430: Purging a thread now refuses an entry it cannot fully clear, instead of quietly unlinking it.
+
+  An entry distilled from more than one thread used to be _detached_: the purged thread's reference was stripped and the entry kept. The reference went and the text derived from that thread stayed - a success report over surviving content, in the tool whose purpose is removing something sensitive.
+
+  Purge cannot keep both of its promises for such an entry. It contains text derived from the purged thread, and nothing records which sentence came from where, so that text cannot be removed without deleting the entry. Detaching resolved that conflict silently and in the direction that loses. It is now resolved out loud: everything removable is still removed, and any entry that cannot be fully cleared is named in the result and in the audit trail so an operator can decide what to do about it.
+
+  No deployment can reach this today - nothing produces an entry citing two threads - which is why the change is behaviour-neutral, and why the refusal exists now rather than later: it fires on the day that stops being true, in front of the operator who would otherwise have been told the purge succeeded.
+
+- 030214e: A blocked send no longer appears in the audit list of wakes suppressed for your agents.
+
+  The wake audit table records, per row, the owner of the agent that was going to be woken. A row written when the send loop-breaker blocked a message has no such agent - nothing was suppressed _for_ anyone, a send was blocked _by_ someone - but it was borrowing that column for the sender anyway. So a screen filtering on it returned two different kinds of event in one list, with nothing to tell them apart, and the agent audit panel was doing exactly that.
+
+  The sender is still recorded, in the columns meant for it, which is also where governance detection already read it from. Blocked sends are still visible; they belong to a different question, and now they can be asked separately.
+
+- 6db0a47: Name every suppressed wake in the audit trail, and correct the reason vocabulary.
+
+  Two of the four causes that suppress a wake stored no reason at all, so they arrived in an audit view unlabelled while the other two arrived named. One was an exhausted budget - the cause an operator is most likely to want to act on. The other was a direct message inside its cooldown window, whose code comment claimed it recorded a reason while the write did not set one. Both are now recorded.
+
+  Behind them, two type-level corrections. `WakeSuppressReason` describes what the wake decision returns to its caller, not what is stored: most of its values leave no row at all, and the causes written by the message pipeline were not among them. It is now separate from `PersistedWakeReason`, which is the set an audit view can actually show, and which is enumerated from the writes rather than from a declaration. The dead value `not_idle` is removed - it was declared and never produced.
+
+  The column's own comment listed values nothing writes. Two of them genuinely never occur and were removed. The third turned out to be a real cause whose row existed with its name missing, which is why it looked like a value that never occurs - a cause stored as nothing is indistinguishable from a cause that never happens, so the first correction removed the evidence of the second defect rather than the defect. Both are fixed.
+
 ## 0.5.2
 
 ### Patch Changes

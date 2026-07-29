@@ -9,7 +9,7 @@
  */
 import { randomBytes } from 'node:crypto'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { agentConnections, agents, configurations, messageRecipients, messages, ownerWakeBudgets, projects, threads, wakeIntents } from '@relayroom/db'
+import { agentConnections, agents, configurations, messageRecipients, messages, ownerWakeBudgets, projects, threads, wakeEvents, wakeIntents } from '@relayroom/db'
 import { and, eq, inArray } from 'drizzle-orm'
 import postgres from 'postgres'
 import { checkLoopBreaker, resetLoopBreaker } from '../src/wake/pipeline'
@@ -741,6 +741,45 @@ describe('MCP resource server (/mcp/:connectCode)', () => {
       .from(threads)
       .where(eq(threads.projectId, projectId))
     expect(threadRows.length).toBe(0)
+  })
+
+  it('a loop-breaker row records the sender, and leaves ownerUserId null', async () => {
+    // The axis this pins: `ownerUserId` means "the owner of the agent that was going
+    // to be woken". A blocked send has no such agent - nothing was suppressed FOR
+    // anyone, a send was blocked BY someone. Writing the sender there made one column
+    // carry two subjects, and the dashboard's audit panel, which filters
+    // `ownerUserId = me`, was returning both kinds in one list with no way to tell
+    // them apart.
+    //
+    // Nothing asserted this before, which is why changing it broke no test.
+    resetLoopBreaker()
+    const { projectId, connectCode, rawToken, userId } = await setupCaller()
+    await ensureAgents(projectId, 'a')
+
+    // Same payload 3x in 60s trips the identical-send breaker (spec 15.1).
+    for (let i = 0; i < 4; i++) {
+      await callTool(connectCode, rawToken, 'sender', 'send', {
+        subject: 'repeat', body: 'the same thing again', to: ['a'],
+      })
+    }
+
+    const rows = await db.select({
+      ownerUserId: wakeEvents.ownerUserId,
+      senderUserId: wakeEvents.senderUserId,
+      agentId: wakeEvents.agentId,
+      suppressed: wakeEvents.suppressed,
+    }).from(wakeEvents).where(and(
+      eq(wakeEvents.projectId, projectId),
+      eq(wakeEvents.reason, 'loop_breaker'),
+    ))
+
+    expect(rows.length).toBeGreaterThan(0)
+    for (const r of rows) {
+      expect(r.ownerUserId).toBeNull()      // not the sender, not anyone
+      expect(r.senderUserId).toBe(userId)   // the sender is recorded, here
+      expect(r.agentId).toBeNull()          // no agent was going to be woken
+      expect(r.suppressed).toBe(true)
+    }
   })
 
   it('human part excluded from the broadcast cap, counted in recipientCount', async () => {

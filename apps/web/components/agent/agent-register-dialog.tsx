@@ -54,6 +54,7 @@ export function AgentRegisterDialog({ connectCode, projectName, projects, trigge
   // `errors` translator (see modules/thread/schema.ts). Memoized because a new
   // schema object on every render would rebuild the resolver each time.
   const tErrors = useTranslations("errors")
+  const tWake = useTranslations("wake")
   const schema = useMemo(() => connectAgentSchema(tErrors), [tErrors])
   const router = useRouter()
   const [open, setOpen] = useState(false)
@@ -199,6 +200,15 @@ export function AgentRegisterDialog({ connectCode, projectName, projects, trigge
               <Label htmlFor="nickname">{t("agentConnect.nicknameLabel")}</Label>
               <Input id="nickname" placeholder={t("agentConnect.nicknamePlaceholder")} {...form.register("nickname")} />
             </div>
+
+            {/* Said here rather than in a notification after the fact: adding a part
+                is when the owner is already thinking about fleet size, so one line
+                lands. A later alert would be nagging about a guess - part count does
+                not predict wake pressure, since a read-only part costs nothing and a
+                few busy ones can exhaust the hour by themselves. Same wording as the
+                budget card, deliberately: two places saying it differently is its own
+                confusion. */}
+            <p className="text-[11px] text-muted-foreground">{tWake("owner.newPartBudgetHint")}</p>
 
             {/* Appearance (secondary) - collapsed behind a toggle */}
             <button

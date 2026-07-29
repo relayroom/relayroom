@@ -310,10 +310,12 @@
     "noEntries": "no entries",
     "previewLoading": "Checking what this affects...",
     "confirmTitle": "Purge knowledge derived from this thread?",
-    "confirmBody": "{deleted, plural, =0 {No entries will be deleted} =1 {1 entry will be deleted} other {# entries will be deleted}}, and {detached, plural, =0 {none detached} =1 {1 entry will keep with this thread removed from its sources} other {# entries will keep with this thread removed from their sources}}. This cannot be undone.",
+    "confirmBody": "{deleted, plural, =1 {1 entry will be deleted} other {# entries will be deleted}}, and this thread will not be distilled again. This cannot be undone.",
+    "confirmBodyPartial": "{deleted, plural, =1 {1 entry will be deleted} other {# entries will be deleted}}, but {refused, plural, =1 {1 entry cannot be} other {# entries cannot be}} - {refused, plural, =1 {it was} other {they were}} derived from other threads too, and this thread's contribution cannot be separated out.",
     "confirmBodyNothing": "There is no derived knowledge left to delete - but this is not a no-op. Purging records that this thread must not be distilled again, so a lesson taken from it cannot come back. That record is the point when nothing is left to delete.",
     "pending": "Purging...",
-    "done": "Purged: {deleted} deleted, {detached} detached. This thread will not be distilled again.",
+    "done": "Purged {deleted, plural, =1 {1 entry} other {# entries}}. This thread will not be distilled again.",
+    "donePartial": "Purged {deleted, plural, =1 {1 entry} other {# entries}}, and left {refused, plural, =1 {1 that} other {# that}} other threads also derived. This thread will not be distilled again.",
     "doneNothing": "Nothing was left to delete. This thread will not be distilled again."
   },
   "knowledgeProposals": {

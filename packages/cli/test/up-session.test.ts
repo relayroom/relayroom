@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process"
 import { createServer, type Server } from "node:http"
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, chmodSync, utimesSync } from "node:fs"
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, chmodSync, utimesSync, existsSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
@@ -83,14 +83,23 @@ describe("generated rr.sh: up ensures setup and refuses a session that predates 
     // path and the launched "agent" is something that exits immediately.
     stub(
       "claude",
-      `if [ "\${1:-}" = "--channels" ]; then echo "error: unknown option" >&2; exit 1; fi
-if [ "\${1:-}" = "mcp" ] && [ "\${2:-}" = "add" ]; then
-  _url=""; for _a in "$@"; do case "$_a" in http://*|https://*) _url="$_a"; break ;; esac; done
-  node -e 'var fs=require("fs");var j={};try{j=JSON.parse(fs.readFileSync(process.argv[1],"utf8"))}catch(e){}
+      `case "\${1:-}" in
+  --channels) echo "error: unknown option" >&2; exit 1 ;;
+  mcp)
+    if [ "\${2:-}" = "add" ]; then
+      _url=""; for _a in "$@"; do case "$_a" in http://*|https://*) _url="$_a"; break ;; esac; done
+      node -e 'var fs=require("fs");var j={};try{j=JSON.parse(fs.readFileSync(process.argv[1],"utf8"))}catch(e){}
 j.mcpServers=j.mcpServers||{};j.mcpServers.relayroom={type:"http",url:process.argv[2]};
 fs.writeFileSync(process.argv[1],JSON.stringify(j,null,2))' "${join(dir, ".mcp.json")}" "$_url"
-fi
-exit 0`,
+    fi
+    exit 0 ;;
+esac
+# Reached only when launched AS THE AGENT (rr.sh runs \`claude --continue || claude\`):
+# stay alive, like a real one. An immediate exit made the session's survival depend on
+# \`remain-on-exit\` being set ambiently - the same inherited-environment bug that turned
+# CI red, so these tests hold the session open themselves rather than relying on the
+# machine. Every non-agent subcommand must exit above, or rr.sh blocks on this sleep.
+sleep 120`,
     )
     // The relayroom CLI itself: setup's hooks install, prepare_launch's delivery write,
     // and the pager. Real ones would reach the network and the user's own config.
@@ -207,6 +216,101 @@ exit 0`,
     const { stdout } = await up("--restart")
     expect(stdout).toContain(`restarting session '${session}'`)
     expect(stdout).not.toContain("never read it")
+  })
+
+  /**
+   * `reconnect` is the in-session caller of the same respawn primitive `up --restart`
+   * uses. It runs from inside the session it replaces, so the kill would take its own
+   * shell with it mid-command - the work is handed to a detached script that outlives
+   * both. Driven here through a real tmux session rather than by calling the function,
+   * because "does the caller's shell survive long enough" is the whole question.
+   */
+  const runInSession = async (cmd: string) => {
+    const done = join(dir, "in-session-done")
+    // PATH is exported inside the command, not passed with `new-session -e`: a pane takes
+    // its PATH from the tmux SERVER's environment, and `-e` was measured not to override
+    // it (tmux 3.4). Without this the in-session run reaches the real `claude` and
+    // `relayroom` instead of the stubs - a test passing against the machine, not the
+    // fixture, which is the failure this suite has already shipped once.
+    await run("tmux", [
+      "new-session", "-d", "-s", session,
+      `export PATH=${env.PATH}; ${cmd} > ${join(dir, "in-session.out")} 2>&1; touch ${done}; sleep 120`,
+    ])
+    for (let i = 0; i < 120; i++) {
+      if (existsSync(done)) return readFileSync(join(dir, "in-session.out"), "utf8")
+      await new Promise((r) => setTimeout(r, 100))
+    }
+    throw new Error(`in-session command never finished: ${readFileSync(join(dir, "in-session.out"), "utf8")}`)
+  }
+
+  it("reconnect replaces the session from inside it, without killing its own shell", async () => {
+    const out = await runInSession(`bash ${join(dir, "rr.sh")} reconnect`)
+    // The command returned, which is the point: the shell outlived its own kill order.
+    expect(out).toContain("will be replaced as soon as this command returns")
+    expect(out).toContain("detached")
+    // And the replacement actually happens, after the caller exits.
+    for (let i = 0; i < 100; i++) {
+      const state = existsSync(join(dir, ".relayroom", "last-respawn"))
+        ? readFileSync(join(dir, ".relayroom", "last-respawn"), "utf8")
+        : ""
+      if (state.includes(" ok ")) {
+        expect((await run("tmux", ["has-session", "-t", `=${session}`])).code).toBe(0)
+        return
+      }
+      if (state.includes(" failed ")) throw new Error(`respawn failed: ${state}`)
+      await new Promise((r) => setTimeout(r, 100))
+    }
+    throw new Error("detached respawn never recorded an outcome")
+  })
+
+  /**
+   * The asymmetry that made detection safe enough to prefer over a flag: detached works
+   * from either caller, in-place only from outside. So a detection that CANNOT answer
+   * must resolve to detached - the cost is a slower restart instead of a shell killed
+   * mid-command. Simulated by making `tmux display` return nothing while `$TMUX` is set,
+   * which is what a detection failure looks like from inside the script.
+   */
+  it("falls back to the detached path when it cannot tell which session it is in", async () => {
+    // A tmux stub that answers everything except `display`, so the check goes blank.
+    stub("tmux", `if [ "\${1:-}" = "display" ]; then exit 0; fi\nexec /usr/bin/tmux "$@"`)
+    const out = await runInSession(`bash ${join(dir, "rr.sh")} reconnect`)
+    expect(out).toContain("will be replaced as soon as this command returns")
+    expect(out).not.toContain("restarting session")
+  })
+
+  it("reconnect re-registers before replacing the session", async () => {
+    await runInSession(`bash ${join(dir, "rr.sh")} reconnect`)
+    expect(calls()).toMatch(/claude mcp add -s project/)
+  })
+
+  /**
+   * A detached respawn outlives the process that asked for it, so a failure has nobody
+   * left to report it - the agent's session is gone and the owner sees only silence.
+   * `up` and `status` read the recorded outcome so the silence explains itself.
+   */
+  it("status reports a failed respawn instead of leaving the silence unexplained", async () => {
+    mkdirSync(join(dir, ".relayroom"), { recursive: true })
+    writeFileSync(join(dir, ".relayroom", "last-respawn"), `${Math.floor(Date.now() / 1000)} failed tmux-refused-new-session\n`)
+    const { stdout, stderr } = await run("bash", [join(dir, "rr.sh"), "status"], { cwd: dir, env })
+    expect(stdout + stderr).toContain("last session respawn FAILED")
+    expect(stdout + stderr).toContain("tmux-refused-new-session")
+  })
+
+  it("status says nothing about a respawn that succeeded", async () => {
+    mkdirSync(join(dir, ".relayroom"), { recursive: true })
+    writeFileSync(join(dir, ".relayroom", "last-respawn"), `${Math.floor(Date.now() / 1000)} ok respawned-detached\n`)
+    const { stdout, stderr } = await run("bash", [join(dir, "rr.sh"), "status"], { cwd: dir, env })
+    expect(stdout + stderr).not.toContain("FAILED")
+  })
+
+  it("up reports a failed respawn once, then clears it", async () => {
+    mkdirSync(join(dir, ".relayroom"), { recursive: true })
+    writeFileSync(join(dir, ".relayroom", "last-respawn"), `${Math.floor(Date.now() / 1000)} failed tmux-refused-new-session\n`)
+    const first = await up()
+    expect(first.stdout + first.stderr).toContain("last session respawn FAILED")
+    // A session exists again, so the failure is answered rather than reported forever.
+    const second = await up()
+    expect(second.stdout + second.stderr).not.toContain("FAILED")
   })
 
   it("errors rather than silently dropping --bypass on a running session", async () => {
