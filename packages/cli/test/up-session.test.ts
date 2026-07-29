@@ -3,7 +3,7 @@ import { createServer, type Server } from "node:http"
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, chmodSync, utimesSync, existsSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest"
 import { init } from "../src/init"
 import { SUBPROCESS_TIMEOUT_MS } from "./timeouts"
 
@@ -41,6 +41,25 @@ describe("generated rr.sh: up ensures setup and refuses a session that predates 
   let hub: Server
   let hubUrl: string
   let session: string
+  let socket: string
+  const bins: string[] = []
+
+  /**
+   * Every tmux call goes to a PRIVATE server, not the developer's.
+   *
+   * This is a guard rather than a note, and it is here because a note already failed.
+   * These tests twice passed for a reason that was not in them: the machine had
+   * `remain-on-exit on` set globally to debug something else, which both made a corpse
+   * test green that CI failed, and kept sessions alive that would otherwise have died.
+   * The lesson was written down after the first time and not applied the second - so the
+   * fix cannot be remembering it.
+   *
+   * A fresh private server starts with tmux's defaults, which is exactly CI's condition, so
+   * an ambient global cannot reach these tests at all. It also makes cleanup total: kill
+   * the server and nothing survives, including a detached respawn that would otherwise
+   * race teardown and recreate its session on the developer's server.
+   */
+  const tmux = (args: string[]) => run("tmux", ["-S", socket, ...args])
 
   const calls = () => {
     try {
@@ -67,6 +86,10 @@ describe("generated rr.sh: up ensures setup and refuses a session that predates 
     dir = mkdtempSync(join(tmpdir(), "relayroom-up-"))
     bin = mkdtempSync(join(tmpdir(), "relayroom-upbin-"))
     session = `RR-uptest-${process.pid}-${Math.floor(performance.now())}`
+    // -S, a path inside the test's own temp dir, rather than -L: a named socket lives in
+    // tmux's shared directory and its inode outlives `kill-server`, so every run would leave
+    // one behind. Here it is removed with the directory.
+    socket = join(bin, "tmux.sock")
     savedTmux = process.env.TMUX
     delete process.env.TMUX
     env = { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` }
@@ -101,6 +124,12 @@ esac
 # machine. Every non-agent subcommand must exit above, or rr.sh blocks on this sleep.
 sleep 120`,
     )
+    // rr.sh runs `tmux` itself, so it needs the same private server the test uses -
+    // otherwise half the session lifecycle happens on the developer's server and the
+    // isolation above buys nothing. Written directly rather than through `stub` so it
+    // does not fill calls.log with every tmux invocation rr.sh makes.
+    writeFileSync(join(bin, "tmux"), `#!/usr/bin/env bash\nexec /usr/bin/tmux -S ${socket} "$@"\n`, { mode: 0o755 })
+    chmodSync(join(bin, "tmux"), 0o755)
     // The relayroom CLI itself: setup's hooks install, prepare_launch's delivery write,
     // and the pager. Real ones would reach the network and the user's own config.
     stub(
@@ -114,16 +143,32 @@ exit 0`,
     )
   })
 
-  afterEach(() => {
-    run("tmux", ["kill-session", "-t", `=${session}`])
+  afterEach(async () => {
+    // Kill any pending detached respawn FIRST. Its whole job is to outlive its caller and
+    // recreate this session, so tearing down while one is armed just races it - and loses.
+    // Matched on this test's own temp path, so it cannot reach anything else.
+    await run("pkill", ["-f", join(dir, ".relayroom/respawn.sh")])
+    // Then the whole private server, which is total: no session, pane or pending respawn
+    // can outlive it, and nothing is left on the developer's tmux server either way.
+    await tmux(["kill-server"])
     hub.close()
     if (savedTmux !== undefined) process.env.TMUX = savedTmux
     rmSync(dir, { recursive: true, force: true })
-    rmSync(bin, { recursive: true, force: true })
+    // `bin` outlives the test on purpose. A detached respawn that pkill missed - it is
+    // spawned via setsid and may not be visible yet when pkill runs - resolves `tmux`
+    // through PATH when it finally wakes. With the shim gone it would find the REAL tmux
+    // and create its session on the developer's server; with the shim still there it
+    // targets the private socket, whose server is already dead, and fails harmlessly.
+    // Removing them at the end is cleanup; keeping them during the run is correctness.
+    bins.push(bin)
+  })
+
+  afterAll(() => {
+    for (const b of bins) rmSync(b, { recursive: true, force: true })
   })
 
   const up = (...flags: string[]) => run("bash", [join(dir, "rr.sh"), "up", ...flags], { cwd: dir, env })
-  const makeSession = () => run("tmux", ["new-session", "-d", "-s", session, "sleep 300"])
+  const makeSession = () => tmux(["new-session", "-d", "-s", session, "sleep 300"])
 
   /**
    * A session whose process has exited but whose pane tmux kept, i.e. the state
@@ -141,17 +186,34 @@ exit 0`,
    */
   const makeCorpse = async (status: number) => {
     const gate = join(dir, "corpse-gate")
-    await run("tmux", ["new-session", "-d", "-s", session, `while [ ! -f ${gate} ]; do sleep 0.05; done; exit ${status}`])
-    await new Promise((r) => setTimeout(r, 300))
-    await run("tmux", ["set-window-option", "-t", `=${session}`, "remain-on-exit", "on"])
-    writeFileSync(gate, "")
-    // Wait for the pane to actually be dead rather than guessing at a delay.
-    for (let i = 0; i < 60; i++) {
-      const { stdout } = await run("tmux", ["list-panes", "-t", `=${session}`, "-F", "#{pane_dead}"])
-      if (stdout.trim().split("\n").every((l) => l.trim() === "1")) return
+    await tmux(["new-session", "-d", "-s", session, `while [ ! -f ${gate} ]; do sleep 0.05; done; exit ${status}`])
+    // Wait for the session to EXIST rather than sleeping at it. A guessed 300ms was the
+    // bug: under load `set-window-option` ran before the session was there, failed with
+    // "no such window", and the option silently never applied - so the pane died, tmux
+    // destroyed the session, and this helper timed out looking for a corpse that could
+    // never form. Then verify the option took, because a set that did not apply is the
+    // failure being guarded against and it reports success either way.
+    for (let i = 0; ; i++) {
+      if ((await tmux(["has-session", "-t", `=${session}`])).code === 0) break
+      if (i > 100) throw new Error("session never appeared")
       await new Promise((r) => setTimeout(r, 50))
     }
-    throw new Error("pane never became dead - remain-on-exit did not take")
+    await tmux(["set-window-option", "-t", `=${session}`, "remain-on-exit", "on"])
+    const opt = await tmux(["show-window-options", "-t", `=${session}`, "remain-on-exit"])
+    if (!/remain-on-exit on/.test(opt.stdout)) throw new Error(`remain-on-exit did not apply: ${opt.stdout}${opt.stderr}`)
+    writeFileSync(gate, "")
+    // Wait for the pane to be dead AND for its exit status to be readable. Measured:
+    // `pane_dead` flips to 1 before `pane_dead_status` is populated, in 11 of 20 samples -
+    // so waiting on `pane_dead` alone is waiting on a proxy, and `up` sampling in that
+    // window legitimately reports `status ?` instead of `status 3`. That produced a
+    // roughly 1-in-3 flake, which is exactly the kind of red that gets re-run until green.
+    for (let i = 0; i < 100; i++) {
+      const { stdout } = await tmux(["list-panes", "-t", `=${session}`, "-F", "#{pane_dead} #{pane_dead_status}"])
+      const lines = stdout.trim().split("\n")
+      if (lines.every((l) => /^1 \S/.test(l.trim()))) return
+      await new Promise((r) => setTimeout(r, 50))
+    }
+    throw new Error("pane never became dead with a readable exit status")
   }
 
   it("runs setup on the way past, so a worktree that never had it registers", async () => {
@@ -195,7 +257,7 @@ exit 0`,
     // Two runs: the first registers, the second rewrites .mcp.json with identical
     // content. Only a content check can tell the two apart.
     await up()
-    await run("tmux", ["kill-session", "-t", `=${session}`])
+    await tmux(["kill-session", "-t", `=${session}`])
     await makeSession()
     setMtime(join(dir, ".mcp.json"), -600)
     const { stderr } = await up()
@@ -232,7 +294,7 @@ exit 0`,
     // it (tmux 3.4). Without this the in-session run reaches the real `claude` and
     // `relayroom` instead of the stubs - a test passing against the machine, not the
     // fixture, which is the failure this suite has already shipped once.
-    await run("tmux", [
+    await tmux([
       "new-session", "-d", "-s", session,
       `export PATH=${env.PATH}; ${cmd} > ${join(dir, "in-session.out")} 2>&1; touch ${done}; sleep 120`,
     ])
@@ -254,7 +316,7 @@ exit 0`,
         ? readFileSync(join(dir, ".relayroom", "last-respawn"), "utf8")
         : ""
       if (state.includes(" ok ")) {
-        expect((await run("tmux", ["has-session", "-t", `=${session}`])).code).toBe(0)
+        expect((await tmux(["has-session", "-t", `=${session}`])).code).toBe(0)
         return
       }
       if (state.includes(" failed ")) throw new Error(`respawn failed: ${state}`)
@@ -272,7 +334,9 @@ exit 0`,
    */
   it("falls back to the detached path when it cannot tell which session it is in", async () => {
     // A tmux stub that answers everything except `display`, so the check goes blank.
-    stub("tmux", `if [ "\${1:-}" = "display" ]; then exit 0; fi\nexec /usr/bin/tmux "$@"`)
+    // Same private server as the shim it replaces - otherwise this one test would talk to
+    // the developer's tmux and its session would outlive the run.
+    stub("tmux", `if [ "\${1:-}" = "display" ]; then exit 0; fi\nexec /usr/bin/tmux -S ${socket} "$@"`)
     const out = await runInSession(`bash ${join(dir, "rr.sh")} reconnect`)
     expect(out).toContain("will be replaced as soon as this command returns")
     expect(out).not.toContain("restarting session")
@@ -372,7 +436,7 @@ exit 0`,
 
   it("leaves a live session alone rather than treating it as a corpse", async () => {
     await makeSession()
-    await run("tmux", ["set-window-option", "-t", `=${session}`, "remain-on-exit", "on"])
+    await tmux(["set-window-option", "-t", `=${session}`, "remain-on-exit", "on"])
     const { stdout } = await up()
     expect(stdout).not.toContain("is a corpse")
     expect(stdout).not.toContain("restarting session")
