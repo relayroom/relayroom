@@ -69,6 +69,15 @@ describe("hookBlock", () => {
   })
 })
 
+/**
+ * Whole milliseconds. `statSync().mtimeMs` is a float built as `sec * 1000 + nsec / 1e6`,
+ * so a timestamp set to an exact millisecond can read back as `...779.999` depending on
+ * the filesystem's timestamp granularity - CI hit exactly that and this machine never
+ * does. `new Date(mtimeMs).getTime()` is not the fix: it TRUNCATES, turning 779.999 into
+ * 779, which is wrong by a millisecond instead of by a fraction.
+ */
+const mtime = (path: string) => Math.round(statSync(path).mtimeMs)
+
 describe("installHook", () => {
   let dir: string
   beforeEach(() => {
@@ -151,13 +160,13 @@ describe("installHook", () => {
   it("does not touch the file when a re-install would change nothing", () => {
     const path = join(dir, "settings.json")
     installHook({ agent: "claude", code: "c1", part: "web", settings: path })
-    const before = statSync(path).mtimeMs
+    const before = mtime(path)
     // Backdate so an unconditional write is unmistakable rather than same-millisecond.
     const old = new Date(Date.now() - 60_000)
     utimesSync(path, old, old)
     installHook({ agent: "claude", code: "c1", part: "web", settings: path })
-    expect(statSync(path).mtimeMs).toBe(old.getTime())
-    expect(statSync(path).mtimeMs).not.toBe(before)
+    expect(mtime(path)).toBe(old.getTime())
+    expect(mtime(path)).not.toBe(before)
   })
 
   it("still writes when the merged result actually differs", () => {
@@ -167,7 +176,7 @@ describe("installHook", () => {
     utimesSync(path, old, old)
     writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, "utf8")), model: "claude-opus-4-8" }))
     installHook({ agent: "claude", code: "c1", part: "web", settings: path })
-    expect(statSync(path).mtimeMs).toBeGreaterThan(old.getTime())
+    expect(mtime(path)).toBeGreaterThan(old.getTime())
     expect(JSON.parse(readFileSync(path, "utf8")).model).toBe("claude-opus-4-8")
   })
 

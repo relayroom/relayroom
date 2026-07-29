@@ -116,6 +116,35 @@ exit 0`,
   const up = (...flags: string[]) => run("bash", [join(dir, "rr.sh"), "up", ...flags], { cwd: dir, env })
   const makeSession = () => run("tmux", ["new-session", "-d", "-s", session, "sleep 300"])
 
+  /**
+   * A session whose process has exited but whose pane tmux kept, i.e. the state
+   * `remain-on-exit on` produces.
+   *
+   * The test ARRANGES that option rather than inheriting it. An earlier version relied on
+   * whatever the machine's tmux server happened to have set globally - it passed here
+   * only because someone had turned it on to debug something else, and failed in CI where
+   * the default `off` lets tmux destroy the session outright.
+   *
+   * Two details the arrangement depends on, both measured: `remain-on-exit` is a WINDOW
+   * option (`set-option` alone does not take), and it has to be set while the process is
+   * still alive - afterwards there is no window left to set it on. So the pane waits on a
+   * file rather than exiting immediately.
+   */
+  const makeCorpse = async (status: number) => {
+    const gate = join(dir, "corpse-gate")
+    await run("tmux", ["new-session", "-d", "-s", session, `while [ ! -f ${gate} ]; do sleep 0.05; done; exit ${status}`])
+    await new Promise((r) => setTimeout(r, 300))
+    await run("tmux", ["set-window-option", "-t", `=${session}`, "remain-on-exit", "on"])
+    writeFileSync(gate, "")
+    // Wait for the pane to actually be dead rather than guessing at a delay.
+    for (let i = 0; i < 60; i++) {
+      const { stdout } = await run("tmux", ["list-panes", "-t", `=${session}`, "-F", "#{pane_dead}"])
+      if (stdout.trim().split("\n").every((l) => l.trim() === "1")) return
+      await new Promise((r) => setTimeout(r, 50))
+    }
+    throw new Error("pane never became dead - remain-on-exit did not take")
+  }
+
   it("runs setup on the way past, so a worktree that never had it registers", async () => {
     await up()
     expect(calls()).toMatch(/claude mcp add -s project/)
@@ -230,9 +259,7 @@ exit 0`,
    * the flag was turned on to collect.
    */
   it("replaces a dead session kept alive by remain-on-exit, and reports its exit status", async () => {
-    await run("tmux", ["new-session", "-d", "-s", session, "--", "sh", "-c", "exit 3"])
-    await run("tmux", ["set-option", "-t", `=${session}`, "remain-on-exit", "on"])
-    await new Promise((r) => setTimeout(r, 300))
+    await makeCorpse(3)
     const { stdout } = await up()
     expect(stdout).toContain("is a corpse")
     expect(stdout).toContain("status 3")
@@ -241,7 +268,7 @@ exit 0`,
 
   it("leaves a live session alone rather than treating it as a corpse", async () => {
     await makeSession()
-    await run("tmux", ["set-option", "-t", `=${session}`, "remain-on-exit", "on"])
+    await run("tmux", ["set-window-option", "-t", `=${session}`, "remain-on-exit", "on"])
     const { stdout } = await up()
     expect(stdout).not.toContain("is a corpse")
     expect(stdout).not.toContain("restarting session")
