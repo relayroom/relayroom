@@ -1,11 +1,12 @@
 {
   "owner": {
     "sectionTitle": "Wake 예산",
-    "sectionDescription": "내가 소유한 전체 part 합산 기준.",
+    "sectionDescription": "이 예산은 이 프로젝트가 아니라 나에게 속합니다. 내가 속한 모든 프로젝트의 내가 소유한 모든 part가 여기서 함께 차감되므로, 다른 프로젝트에서 일하는 part도 같은 몫을 씁니다.",
     "wakesLabel": "롤링 1시간당 자동 wake 최대",
     "wakesZeroHint": "0은 침묵이 아닙니다. 프로젝트마다 최소 보장분이 남아 있어 일부 자동 wake는 계속 도착하고, 이 보장은 프로젝트 단위라 소유한 프로젝트 수만큼 늘어납니다. 완전히 끌 수 있는 건 urgent뿐입니다.",
     "urgentLabel": "urgent 최대 (시간당)",
     "urgentZeroHint": "아무도 나를 urgent로 깨우지 못합니다.",
+    "newPartBudgetHint": "새 part는 이미 소유한 part들과 같은 wake 예산에서 차감됩니다. 이 프로젝트뿐 아니라 다른 프로젝트의 part도 마찬가지이며, part를 늘려도 예산이 늘지는 않습니다.",
     "toastSaving": "저장 중...",
     "toastSaved": "Wake 예산을 저장했습니다.",
     "toastError": "Wake 예산 저장에 실패했습니다."

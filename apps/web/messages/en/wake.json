@@ -1,11 +1,12 @@
 {
   "owner": {
     "sectionTitle": "Wake budget",
-    "sectionDescription": "Counted across all parts you own, project-wide.",
+    "sectionDescription": "This budget belongs to you, not to this project. Every part you own draws from it, in every project you are in - so parts working elsewhere spend the same allowance as the ones here.",
     "wakesLabel": "Max auto-wakes per rolling hour",
     "wakesZeroHint": "Zero is not silence. Each project keeps a small guaranteed share, so some auto-wakes still arrive, and that share is per project - it adds up across the projects you own. Only urgent can be switched off completely.",
     "urgentLabel": "Max urgent per hour",
     "urgentZeroHint": "Nobody can wake you as urgent.",
+    "newPartBudgetHint": "A new part draws on the same wake budget as the ones you already own, here and in your other projects - it is yours, not this project's. Adding parts does not add allowance.",
     "toastSaving": "Saving...",
     "toastSaved": "Wake budget updated.",
     "toastError": "Could not save wake budget."
