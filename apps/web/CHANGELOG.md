@@ -1,5 +1,56 @@
 # @relayroom/web
 
+## 0.5.3
+
+### Patch Changes
+
+- cfbfe0c: Report a purge by what it removed, and say plainly when an entry could not be removed.
+
+  The confirmation and the result used to read "N deleted, M detached", where detached meant an entry citing this thread and others kept its text and lost the reference. Purge no longer does that - an entry it cannot fully remove is now refused instead, because stripping the reference left text derived from the purged thread in place while reporting success, which is what the operator is purging to avoid.
+
+  So the second number is gone rather than renamed. Showing a count for an outcome that can no longer happen tells the reader it can. When entries are refused, the copy says how many and why: they were derived from other threads too, and this thread's contribution cannot be separated out.
+
+  Everything removable is still removed. Nothing about this is reachable today, since nothing produces an entry citing two threads.
+
+- dafe50d: Ask for blocked sends with the column they are actually recorded under.
+
+  A send stopped by the loop breaker is recorded against the sender, and no longer against an owner - nothing was suppressed for anyone, so there is no owner to record. The audit read both axes through the owner column, which meant blocked sends matched nothing at all: the section never appeared, and its counts were always zero. That renders as "no send of yours has ever been blocked", which is not something this app was in a position to say.
+
+  Each axis is now its own query with its own gate - wakes for your parts by owner, blocked sends by sender - rather than one query widened to catch both. A single stated gate per query is a sentence that can be checked, and this table's history is one column being read as two things.
+
+  The test fixture built the old row shape by hand, so it kept passing while the real one returned nothing. It now matches what the server writes, and reverting the fix turns the tests red.
+
+- 1bf732e: Stop listing your own blocked sends among the wakes aimed at your parts.
+
+  The wake audit reads `wake_event` by owner, but that column carries two different subjects. Most rows mean "a wake was aimed at a part you own". A loop-breaker row means "you sent something and it was stopped" - it is recorded against the sender and names no part at all. Shown in one list, the second read as the first: a suppression appeared among a part's wakes with nothing to attribute it to, inviting the reader to blame a part that was never involved.
+
+  They are now separate sections with their own wording and their own counts, and the counts are computed per axis in SQL rather than from the capped row list, so neither summary includes the other's rows. The blocked-sends section appears only when there is something in it, and says what it does not cover: the loop breaker is the only thing that lands there.
+
+  The split keys on whether a row names a part, not on its reason string, so it holds while the reason vocabulary is being reworked.
+
+- bb53012: Say that a wake budget belongs to the owner, not to the project it is displayed in.
+
+  The budget card sits inside a project, and its description said only "counted across all parts you own, project-wide", which reads as a limit for that project. It is not: one allowance is shared by every part the owner runs, in every project they are in, so parts working somewhere else spend the same hour. Reading it the other way is what led to a fleet going quiet with no visible cause.
+
+  The same sentence now appears when registering a new part, since that is when someone is deciding how many parts to run. It is a hint at the point of the decision rather than an alert afterwards - part count does not predict wake pressure, because an idle part costs nothing while a few busy ones can exhaust the hour on their own.
+
+  Neither line quotes a number. The limits are server-side constants that this app cannot observe changing, so a figure printed here would go stale silently.
+
+- 16f9cc5: Show which parts had wakes withheld, and why.
+
+  A withheld wake left no trace anywhere an operator looks. A part that was not nudged is indistinguishable from a part with nothing to do, so a fleet going quiet had no explanation short of reading the server's budget code. The audit panel did show that something had been suppressed, but only on a part's own page - which requires already knowing which part to open, and not knowing that is the symptom.
+
+  Project settings now lists the parts that had wakes withheld in the last day, grouped by reason, next to the budget control. The reason matters more than the count: budget exhaustion is the only one an owner can do anything about, a provider limit clears itself, and a cooldown withheld only the nudge because the message was delivered anyway. The per-part audit names the reason too, instead of just saying "suppressed".
+
+  The panel states what it does not cover. A wake merged into one already pending is not withheld and is not recorded, and provider limits are counted only for messages someone sent, so a part parked on a limit was unreachable for longer than the count shows. Leaving that unsaid would make an incomplete record read as a complete one, which is the failure this is meant to end.
+
+- Updated dependencies [525b430]
+- Updated dependencies [030214e]
+- Updated dependencies [6db0a47]
+  - @relayroom/db@0.5.3
+  - @relayroom/telemetry@0.5.3
+  - @relayroom/shared@0.5.3
+
 ## 0.5.2
 
 ### Patch Changes

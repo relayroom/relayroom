@@ -4,6 +4,84 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.5.3] - 2026-07-29
+
+Patch release. **No database migrations** - a drop-in upgrade from 0.5.2.
+
+Every defect fixed in 0.5.2 had the same shape, and it was not "something broke": purge
+reported success while undoing itself, `doctor` was green on a session that could never
+work, the pager sent a healthy heartbeat over a channel delivering nothing, and parts
+silenced by an exhausted budget simply looked idle. **The system knew and did not say.**
+0.5.2 fixed those mechanisms. This release makes the remaining ones visible, because the
+next incident will not resemble any of them and only the visibility generalises.
+
+### Security
+
+**Disclosure, not a fix: the per-project redaction denylist announced in 0.5.0 has never
+been configurable, and therefore has never run.**
+
+The mechanism is real and is wired into both knowledge write paths. What does not exist is
+any way to fill it: the project's knowledge configuration is created empty and nothing in
+the product writes it - no settings field, no API, no CLI. Every read falls through to the
+empty default, and an empty denylist redacts nothing. So in every deployment since 0.5.0,
+including ours, distilled knowledge has been stored exactly as written. Distillation copies
+up to 2000 characters of a closed thread's last agent message verbatim, and redaction was
+the only filter between that copy and the table.
+
+Nothing in RelayRoom puts credentials into a thread; the exposure is that whatever an agent
+did write was carried across unchanged. We scanned all 199 knowledge rows on our own hub and
+found no credentials - and that is weaker evidence than it looks, because a shape scan finds
+the shapes its author thought of, which is exactly the limitation of the denylist it was
+measuring. Our fleet is clean because it discusses code rather than credentials, not because
+anything stopped it.
+
+**Making it configurable ships in 0.6.0.** Until then the other half is available and now
+works: purging everything derived from a thread, an owner action, which as of 0.5.2 stays
+purged. That 0.5.0 sentence advertised two safety nets, and neither had ever worked; purge
+was the first half.
+
+### Added
+
+- **Wake suppressions are visible per project.** A part that was not nudged looked exactly
+  like a part with nothing to do, so when several went quiet the only way to learn why was
+  to read the server's budget code. Project settings now lists the parts wakes were withheld
+  from, grouped by reason, beside the budget control - budget exhaustion is the one reason an
+  owner can act on, and the control for it is directly above. The existing panel on an
+  agent's page answered "why was THIS part quiet", which requires knowing which part to open,
+  and not knowing is the symptom.
+- **What the screen cannot show is written on the screen.** Coalesced wakes leave no record,
+  and provider limits are recorded only for sends, so a parked part may have been unreachable
+  longer than the count says. Those notes appear only for reasons actually present. A failed
+  load renders an error rather than an empty list, since "nothing was suppressed" is the
+  precise false statement this feature exists to remove.
+- **`rr.sh reconnect`** replaces a session from inside it, for an agent that has lost its
+  tools and knows it. If the replacement fails, the reason is recorded and reported by `up`
+  and `status` the next time someone looks - a respawn that dies silently is indistinguishable
+  from a part with nothing to say.
+- **The wake budget now says whose it is.** It belongs to the owner and divides across every
+  part in every project they are in. The old copy said "project-wide" from inside a project
+  page, which reads as the opposite of what it means. The same sentence appears when adding
+  a part, where fleet size is already on the operator's mind.
+
+### Fixed
+
+- **The most consequential suppression cause was the only unnamed one.** Budget exhaustion
+  and direct-cooldown suppressions recorded no reason, so an audit view could name provider
+  limits and loop-breaker trips while leaving blank the cause that actually silences parts.
+  Both are named now.
+- **Sends you had blocked appeared in your parts' suppression lists.** A loop-breaker record
+  is about the sender, not about any part being woken, and it was filed under the same column
+  as everything else. On screen a blocked send read as "this part was silenced", sending the
+  reader to investigate the wrong side of a message that never arrived. The two are now
+  separate questions with separate answers.
+- **Purge no longer quietly unlinks an entry it cannot clear.** An entry derived from more
+  than one thread used to keep its text and lose the reference - a success report over
+  surviving content, in the tool whose purpose is removing something sensitive. Everything
+  removable is still removed, and anything that cannot be is named in the result and in the
+  audit trail. No deployment can reach this today, which is why the change is
+  behaviour-neutral and why the refusal exists now: it fires on the day that stops being
+  true, in front of the operator who would otherwise have been told the purge succeeded.
+
 ## [0.5.2] - 2026-07-29
 
 Patch release. **Two database migrations** (`0021`, `0022`), applied together in one
