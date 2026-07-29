@@ -31,6 +31,8 @@ import {
   knowledgeValidations,
   playbookVersions,
   projects,
+  threadExtractions,
+  threads,
 } from './schema'
 
 /** Driver-agnostic db handle, or a transaction. See governance.ts. */
@@ -91,21 +93,86 @@ export interface PurgeResult {
  * recordKnowledgeSignal the same way), after checking owner access itself. A
  * button is not a gate, so the caller re-checks; there is no HTTP hop to add one.
  *
- * projectId is required and matched, so one project cannot purge another's
- * knowledge by naming its thread id.
+ * PROJECT BOUNDARY - CANONICAL, and the reason it moved (BUG-0010, 0.5.2). This
+ * used to say "projectId is required and matched, so one project cannot purge
+ * another's knowledge by naming its thread id". That was true only because the scan
+ * is project-scoped and a foreign thread matches no rows - so nothing happened. The
+ * boundary was not being checked; the outcome merely happened to be the same.
+ *
+ * With the watermark that stopped being harmless: this function now WRITES a row
+ * keyed by (project, thread), so a caller naming another project's thread could mark
+ * it "do not extract" - silently, and invisible to the victim. Not theft of anyone's
+ * knowledge, but stopping another project from learning. So the thread's membership
+ * is now checked explicitly, and a mismatch THROWS rather than returning zero counts:
+ * zero is indistinguishable from "nothing to purge", and that indistinguishability is
+ * exactly what kept the vacuous check invisible.
+ *
+ * THIS CHECK IS THE CANONICAL ONE. `apps/web`'s purge action carries the same check
+ * at its own boundary, deliberately. Neither is redundant - if one is ever deleted as
+ * a duplicate, the other is the only thing left, and whoever deletes it will not know
+ * that.
  */
+export type PurgeOpts =
+  | { dryRun: true }
+  | { dryRun?: false; actorUserId: string }
+
 export async function purgeKnowledgeFromThread(
   db: KnowledgeDb,
   projectId: string,
   threadId: string,
-  opts: { dryRun?: boolean } = {},
+  opts: PurgeOpts,
 ): Promise<PurgeResult> {
+  const dryRun = opts.dryRun === true
   // A dry run still runs in a transaction so its counts are a consistent snapshot,
-  // but it writes nothing.
+  // but it writes nothing - no watermark, no audit. That matters more than it looks:
+  // the dashboard runs a dry run to fill in the confirmation dialog, so a preview
+  // that left a watermark would suppress extraction for a thread the owner then
+  // declined to purge. A preview must not be destructive.
   return db.transaction(async tx => {
+    // The thread must belong to this project - see the header. Checked BEFORE
+    // anything is written, because the write is what made this matter.
+    const [owned] = await tx
+      .select({ id: threads.id })
+      .from(threads)
+      .where(and(eq(threads.id, threadId), eq(threads.projectId, projectId)))
+      .limit(1)
+    if (!owned) {
+      throw new Error(`thread ${threadId} is not in project ${projectId}`)
+    }
+
+    // THE WATERMARK FIRST, before the scan below (BUG-0010).
+    //
+    // Ordering is the whole point. If the scan ran first, a sweep committing between
+    // the scan and this write would leave the durable state saying "purged" while its
+    // freshly committed candidate was still stored - purge reporting success over
+    // content it never saw. Taking the row first means a competing sweep either
+    // finished before we scan (so we see and remove its row) or blocks on this key
+    // and loses its claim.
+    //
+    // Upsert, not update: a thread that was never extracted has no row, and purging
+    // it must still mean "do not extract this". An operator purging a thread means
+    // that whether or not we happened to have extracted it yet. And `purged`
+    // overwrites `extracted` because this column is state, not history - the sequence
+    // lives in knowledge_audit.
+    if (!dryRun) {
+      await tx.execute(sql`
+        insert into ${threadExtractions} (project_id, thread_id, reason)
+        values (${projectId}, ${threadId}, 'purged')
+        on conflict (project_id, thread_id)
+        do update set reason = 'purged', updated_at = now()
+      `)
+    }
+
     // Every entry in this project that cites the thread. `@>` containment finds an
     // array element that includes {threadId}; the sole-vs-multi split is then decided
     // per row in JS, where the array semantics are clearest.
+    //
+    // `for update`, ordered by id: the split below is a read-modify-write, so two
+    // concurrent purges could otherwise each compute `remaining` from a stale
+    // snapshot and the later write would drop the earlier one's edit. INSURANCE, not
+    // a fix - that outcome needs a row citing two threads, and no writer produces
+    // one (see the detach branch below). It costs nothing here and it gives
+    // concurrent purges a deterministic acquisition order.
     const rows = await tx
       .select({ id: knowledge.id, sourceRefs: knowledge.sourceRefs })
       .from(knowledge)
@@ -113,6 +180,8 @@ export async function purgeKnowledgeFromThread(
         eq(knowledge.projectId, projectId),
         sql`${knowledge.sourceRefs} @> ${JSON.stringify([{ threadId }])}::jsonb`,
       ))
+      .orderBy(knowledge.id)
+      .for('update')
 
     let deleted = 0
     let detached = 0
@@ -120,19 +189,52 @@ export async function purgeKnowledgeFromThread(
       const remaining = (row.sourceRefs ?? []).filter(ref => ref.threadId !== threadId)
       if (remaining.length === 0) {
         deleted++
-        if (!opts.dryRun) {
+        if (!dryRun) {
           await tx.delete(knowledge).where(eq(knowledge.id, row.id))
         }
       }
       else {
+        // UNREACHABLE TODAY, and deliberately kept. No writer produces a row citing
+        // two threads: the extractor writes exactly one (extract.ts), `learn` writes
+        // one or zero, and proposal approval sets no sourceRefs at all. The only
+        // UPDATE of the column is the one below, which can only shrink the array. So
+        // `detached` is structurally always zero.
+        //
+        // The trap this comment exists to defuse: the branch is written as though the
+        // case were normal, and detaching LEAVES THE CONTENT IN PLACE - only the
+        // reference goes. The first writer that produces a multi-source row therefore
+        // reintroduces "purge reports success and the text stays", silently, in the
+        // tool whose purpose is removing leaked secrets. If you are adding such a
+        // writer - a merge feature, a proposer that cites its inputs - revisit purge's
+        // contract and this function's header before shipping it.
         detached++
-        if (!opts.dryRun) {
+        if (!dryRun) {
           await tx.update(knowledge)
             .set({ sourceRefs: remaining, updatedAt: sql`now()` })
             .where(eq(knowledge.id, row.id))
         }
       }
     }
+    // The audit row. Purge wrote NO record of itself before 0.5.2, which is why
+    // "has this already happened to anyone?" had no answer when this bug was found -
+    // not "we looked and saw nothing", but "no mechanism could have told us". A
+    // remedy that leaves no trace makes its own failures unauditable.
+    //
+    // `knowledgeId` is null because the subject is the thread, not one row; the
+    // counts are kept SEPARATE because a deleted row is gone while a detached one
+    // still exists with one fewer source, and collapsing them destroys the
+    // distinction at the only point it is recorded.
+    if (!dryRun) {
+      await tx.insert(knowledgeAudits).values({
+        projectId,
+        action: 'purge',
+        knowledgeId: null,
+        actorKind: 'human',
+        actorUserId: opts.actorUserId,
+        detail: { threadId, deleted, detached },
+      })
+    }
+
     return { deleted, detached }
   })
 }
