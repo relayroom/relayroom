@@ -60,27 +60,34 @@ export function ThreadPurgeManager({ projectId, threads }: Props) {
   async function onPurge(row: PurgeableThreadRow) {
     setBusyId(row.threadId)
     try {
-      // Dry-run first: the confirm must state the real counts, and only the
-      // function knows the deleted/detached split.
+      // Dry-run first: the confirm must state the real count, and only the
+      // function knows it.
       const preview = await purgeThreadKnowledge(projectId, row.threadId, true)
       if (!preview.result) {
         toast.error(preview.message ?? t("knowledgePurge.done"))
         return
       }
-      const { deleted, detached } = preview.item
-
-      const nothingToDelete = deleted + detached === 0
+      // `complete: false` means some entries cannot be removed because another
+      // thread also derived them. Unreachable today - nothing writes a
+      // multi-source entry - but the union makes the case impossible to forget
+      // rather than a field someone has to remember to read, which is exactly how
+      // the old `detached` count misled while being rendered correctly.
+      const deleted = preview.item.deleted
+      const refused = preview.item.complete ? 0 : preview.item.refused.length
 
       const ok = await confirm({
         title: t("knowledgePurge.confirmTitle"),
-        // Zero counts do NOT mean nothing happens. A purge also records that this
+        // Zero does NOT mean nothing happens. A purge also records that this
         // thread must not be extracted again, and that record is the entire point
-        // when the counts are zero - the thread was purged before and the knowledge
-        // came back. So the zero copy describes what will be written rather than
-        // reporting an absence.
-        description: nothingToDelete
-          ? t("knowledgePurge.confirmBodyNothing")
-          : t("knowledgePurge.confirmBody", { deleted, detached }),
+        // when nothing is left to delete - the thread was purged before and the
+        // knowledge came back. So the zero copy describes what will be written
+        // rather than reporting an absence.
+        description:
+          refused > 0
+            ? t("knowledgePurge.confirmBodyPartial", { deleted, refused })
+            : deleted === 0
+              ? t("knowledgePurge.confirmBodyNothing")
+              : t("knowledgePurge.confirmBody", { deleted }),
         destructive: true,
       })
       if (!ok) return
@@ -98,9 +105,15 @@ export function ThreadPurgeManager({ projectId, threads }: Props) {
         success: (res) => {
           router.refresh()
           if (!res.result) return t("knowledgePurge.doneNothing")
-          return res.item.deleted + res.item.detached === 0
+          if (!res.item.complete) {
+            return t("knowledgePurge.donePartial", {
+              deleted: res.item.deleted,
+              refused: res.item.refused.length,
+            })
+          }
+          return res.item.deleted === 0
             ? t("knowledgePurge.doneNothing")
-            : t("knowledgePurge.done", { deleted: res.item.deleted, detached: res.item.detached })
+            : t("knowledgePurge.done", { deleted: res.item.deleted })
         },
         error: (err: unknown) => (err instanceof Error ? err.message : t("knowledgePurge.done")),
       })

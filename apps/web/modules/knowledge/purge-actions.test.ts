@@ -4,7 +4,7 @@
  * The purge logic itself is @relayroom/db's and tested there; these cover the web
  * action's contract: owner-only (checked from the action, not by which button
  * renders), dry-run counts without deleting, and the real purge honoring the
- * (다) semantic - sole-source entries deleted, multi-source entries detached. A
+ * (다) semantic - sole-source entries deleted, multi-source entries refused. A
  * separate suite covers that closing a thread from the dashboard sets the
  * extractor marker.
  */
@@ -103,21 +103,27 @@ afterAll(async () => {
 })
 
 describe("purgeThreadKnowledge", () => {
-  it("dry-run reports the split and deletes nothing", async () => {
+  it("dry-run reports what would happen and changes nothing", async () => {
     const sole = await addEntry([{ threadId: THREAD_A }], "sole")
     const multi = await addEntry([{ threadId: THREAD_A }, { threadId: THREAD_B }], "multi")
 
     const res = await purgeThreadKnowledge(projectId, THREAD_A, true)
     expect(res.result).toBe(true)
     if (!res.result) return
-    expect(res.item).toEqual({ deleted: 1, detached: 1 })
+    // A multi-source entry is refused, not detached: purge cannot remove this
+    // thread's contribution without deleting text another thread also produced,
+    // and silently keeping it was the shape of BUG-0010.
+    expect(res.item.complete).toBe(false)
+    expect(res.item.deleted).toBe(1)
+    if (res.item.complete) return
+    expect(res.item.refused).toEqual([multi])
 
     // Nothing changed.
     expect(await exists(sole)).toBe(true)
     expect((await refsOf(multi))).toHaveLength(2)
   })
 
-  it("real purge deletes sole-source and detaches multi-source (the 다 semantic)", async () => {
+  it("real purge deletes what it can and leaves the multi-source entry untouched", async () => {
     const sole = await addEntry([{ threadId: THREAD_A }], "sole")
     const multi = await addEntry([{ threadId: THREAD_A }, { threadId: THREAD_B }], "multi")
     const untouched = await addEntry([{ threadId: THREAD_B }], "other-thread")
@@ -125,11 +131,15 @@ describe("purgeThreadKnowledge", () => {
     const res = await purgeThreadKnowledge(projectId, THREAD_A, false)
     expect(res.result).toBe(true)
     if (!res.result) return
-    expect(res.item).toEqual({ deleted: 1, detached: 1 })
+    expect(res.item.complete).toBe(false)
+    expect(res.item.deleted).toBe(1)
 
     expect(await exists(sole)).toBe(false)            // sole source -> deleted
-    expect(await exists(multi)).toBe(true)            // multi -> kept
-    expect(await refsOf(multi)).toEqual([{ threadId: THREAD_B }]) // A stripped
+    expect(await exists(multi)).toBe(true)            // multi -> kept, and kept WHOLE
+    // Its refs are intact. Stripping this thread out is what the old detach did,
+    // and it left text derived from the purged thread behind while reporting
+    // success.
+    expect(await refsOf(multi)).toHaveLength(2)
     expect(await exists(untouched)).toBe(true)        // another thread -> untouched
     expect(await refsOf(untouched)).toEqual([{ threadId: THREAD_B }])
   })
@@ -145,7 +155,7 @@ describe("purgeThreadKnowledge", () => {
   it("a thread with no derived knowledge is a clean zero", async () => {
     const res = await purgeThreadKnowledge(projectId, THREAD_A, true)
     expect(res.result).toBe(true)
-    if (res.result) expect(res.item).toEqual({ deleted: 0, detached: 0 })
+    if (res.result) expect(res.item).toEqual({ complete: true, deleted: 0 })
   })
 })
 
@@ -166,8 +176,8 @@ describe("purging a thread that no knowledge cites (the BUG-0010 remedy)", () =>
 
     expect(res.result).toBe(true)
     if (!res.result) return
-    expect(res.item).toEqual({ deleted: 0, detached: 0 })
-    // The counts are zero and the operation still did the thing it was for.
+    expect(res.item).toEqual({ complete: true, deleted: 0 })
+    // The count is zero and the operation still did the thing it was for.
     expect(await watermarkReason(projectId, THREAD_A)).toBe("purged")
   })
 
