@@ -14,9 +14,9 @@ afterAll(() => db.$client.end())
 /**
  * Purging "knowledge derived from thread X" has to respect that sourceRefs is an
  * array: an entry can be distilled from several threads. So these pin the split the
- * design requires - sole-source entries deleted, multi-source entries only detached
- * - and that a dry run counts exactly what a real purge does, since the dashboard
- * preview and the irreversible delete are the same function.
+ * design requires - sole-source entries deleted, multi-source entries REFUSED rather
+ * than quietly detached - and that a dry run reports exactly what a real purge does,
+ * since the dashboard preview and the irreversible delete are the same function.
  *
  * BUG-0010 added three things these also pin: the watermark that makes a purge
  * durable against re-extraction, the audit row that makes a purge visible at all,
@@ -81,19 +81,42 @@ describe('purgeKnowledgeFromThread', () => {
     const a = await thread(p)
     const sole = await entry(p, [{ threadId: a }])
     const r = await purgeKnowledgeFromThread(db, p, a, { actorUserId: USER })
-    expect(r).toEqual({ deleted: 1, detached: 0 })
+    expect(r).toEqual({ complete: true, deleted: 1 })
     expect(await exists(sole)).toBe(false)
   })
 
-  it('detaches - not deletes - an entry that also cites another thread', async () => {
+  it('REFUSES - does not detach - an entry that also cites another thread', async () => {
+    // Unreachable in production: no writer makes a multi-source row. Constructed
+    // directly so the branch is covered by a test that actually runs.
+    //
+    // Until 0.5.3 this detached: the reference went and the text stayed, which is a
+    // success report over surviving content in the tool for removing leaked secrets.
     const p = await project()
     const a = await thread(p)
     const b = await thread(p)
     const multi = await entry(p, [{ threadId: a }, { threadId: b }])
     const r = await purgeKnowledgeFromThread(db, p, a, { actorUserId: USER })
-    expect(r).toEqual({ deleted: 0, detached: 1 })
+    expect(r).toEqual({ complete: false, deleted: 0, refused: [multi] })
+    // Untouched - not silently stripped of its reference.
     expect(await exists(multi)).toBe(true)
-    expect(await refsOf(multi)).toEqual([{ threadId: b }])
+    expect(await refsOf(multi)).toEqual([{ threadId: a }, { threadId: b }])
+  })
+
+  it('removes everything removable even when one entry is refused', async () => {
+    // An operator purging a secret is not helped by "one entry was complicated, so
+    // none of them were touched". This is why refusal is per-row, not per-call.
+    const p = await project()
+    const a = await thread(p)
+    const b = await thread(p)
+    const sole1 = await entry(p, [{ threadId: a }])
+    const sole2 = await entry(p, [{ threadId: a }])
+    const multi = await entry(p, [{ threadId: a }, { threadId: b }])
+
+    const r = await purgeKnowledgeFromThread(db, p, a, { actorUserId: USER })
+    expect(r).toEqual({ complete: false, deleted: 2, refused: [multi] })
+    expect(await exists(sole1)).toBe(false)
+    expect(await exists(sole2)).toBe(false)
+    expect(await exists(multi)).toBe(true)
   })
 
   it('a dry run counts what a real purge would do and writes nothing', async () => {
@@ -104,7 +127,7 @@ describe('purgeKnowledgeFromThread', () => {
     const multi = await entry(p, [{ threadId: a }, { threadId: b }])
 
     const preview = await purgeKnowledgeFromThread(db, p, a, { dryRun: true })
-    expect(preview).toEqual({ deleted: 1, detached: 1 })
+    expect(preview).toEqual({ complete: false, deleted: 1, refused: [multi] })
     expect(await exists(sole)).toBe(true)
     expect(await refsOf(multi)).toEqual([{ threadId: a }, { threadId: b }])
 
@@ -129,7 +152,7 @@ describe('purgeKnowledgeFromThread', () => {
     const p = await project()
     const a = await thread(p)
     const r = await purgeKnowledgeFromThread(db, p, a, { actorUserId: USER })
-    expect(r).toEqual({ deleted: 0, detached: 0 })
+    expect(r).toEqual({ complete: true, deleted: 0 })
     expect(await watermark(p, a)).toBe('purged')
   })
 
@@ -158,7 +181,7 @@ describe('purgeKnowledgeFromThread', () => {
     const a = await thread(p)
     const b = await thread(p)
     await entry(p, [{ threadId: a }])
-    await entry(p, [{ threadId: a }, { threadId: b }])
+    const multi = await entry(p, [{ threadId: a }, { threadId: b }])
 
     await purgeKnowledgeFromThread(db, p, a, { actorUserId: USER })
 
@@ -168,9 +191,9 @@ describe('purgeKnowledgeFromThread', () => {
     expect(rows[0]!.knowledgeId).toBeNull()
     expect(rows[0]!.actorKind).toBe('human')
     expect(rows[0]!.actorUserId).toBe(USER)
-    // Separate counts: a deleted row is gone, a detached one still exists with one
-    // fewer source. Collapsing them destroys the distinction where it is recorded.
-    expect(rows[0]!.detail).toMatchObject({ threadId: a, deleted: 1, detached: 1 })
+    // The refused ids are recorded, not counted: the operator's next action needs to
+    // know WHICH entry could not be cleared, and a count cannot be acted on.
+    expect(rows[0]!.detail).toMatchObject({ threadId: a, deleted: 1, refused: [multi] })
   })
 
   it('refuses a thread from another project, and writes nothing', async () => {

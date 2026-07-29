@@ -59,12 +59,25 @@ export async function markProjectKnowledgeDirty(db: KnowledgeDb, projectId: stri
   await db.update(projects).set({ knowledgeDirtyAt: sql`now()` }).where(eq(projects.id, projectId))
 }
 
-export interface PurgeResult {
-  /** Entries whose sole source was this thread; removed entirely. */
-  deleted: number
-  /** Entries citing this thread and others; this thread stripped from sourceRefs. */
-  detached: number
-}
+/**
+ * What a purge did. A DISCRIMINATED UNION on purpose, and the shape is the point.
+ *
+ * The obvious alternative - one object with a `refused` list beside the counts -
+ * is the failure this design exists to remove, wearing a different hat. That is
+ * exactly what the old `detached` count was: a successful-looking return with a
+ * field the caller was expected to remember to render. The caller DID render it,
+ * and it still misled, because a number beside "deleted" reads as a kind of
+ * removal. A field you must remember is not a guarantee.
+ *
+ * Here a caller cannot reach `deleted` without first deciding which case it is in.
+ *
+ * `complete` rather than `ok`: a purge that removed five entries and refused one
+ * is not a failure, and `ok: false` invites a caller to report it as one. What
+ * varies is whether the purge covered everything, not whether it ran.
+ */
+export type PurgeResult =
+  | { complete: true; deleted: number }
+  | { complete: false; deleted: number; refused: string[] }
 
 /**
  * Purge (or, with `dryRun`, count) the knowledge derived from a thread.
@@ -202,7 +215,7 @@ export async function purgeKnowledgeFromThread(
       .for('update')
 
     let deleted = 0
-    let detached = 0
+    const refused: string[] = []
     for (const row of rows) {
       const remaining = (row.sourceRefs ?? []).filter(ref => ref.threadId !== threadId)
       if (remaining.length === 0) {
@@ -212,36 +225,41 @@ export async function purgeKnowledgeFromThread(
         }
       }
       else {
-        // UNREACHABLE TODAY, and deliberately kept. No writer produces a row citing
-        // two threads: the extractor writes exactly one (extract.ts), `learn` writes
-        // one or zero, and proposal approval sets no sourceRefs at all. The only
-        // UPDATE of the column is the one below, which can only shrink the array. So
-        // `detached` is structurally always zero.
+        // MULTI-SOURCE: REFUSED, NOT DETACHED. Unreachable today - no writer
+        // produces a row citing two threads (the extractor writes exactly one,
+        // `learn` one or zero, proposal approval none, and the only UPDATE of the
+        // column is this function's own, which used to shrink it). This branch
+        // exists to fire on the day that stops being true, in production, in front
+        // of the operator.
         //
-        // The trap this comment exists to defuse: the branch is written as though the
-        // case were normal, and detaching LEAVES THE CONTENT IN PLACE - only the
-        // reference goes. The first writer that produces a multi-source row therefore
-        // reintroduces "purge reports success and the text stays", silently, in the
-        // tool whose purpose is removing leaked secrets. If you are adding such a
-        // writer - a merge feature, a proposer that cites its inputs - revisit purge's
-        // contract and this function's header before shipping it.
-        detached++
-        if (!dryRun) {
-          await tx.update(knowledge)
-            .set({ sourceRefs: remaining, updatedAt: sql`now()` })
-            .where(eq(knowledge.id, row.id))
-        }
+        // Until 0.5.3 this DETACHED: it stripped the threadId and kept the row, so
+        // the reference went and the text derived from this thread stayed. In the
+        // tool whose purpose is removing a leaked secret, that is a success report
+        // over surviving content - the exact shape of BUG-0010.
+        //
+        // Purge cannot keep both of its promises for such a row: the entry contains
+        // text derived from this thread, and there is no way to remove that without
+        // deleting the entry, because nothing records which sentence came from
+        // where. Detaching resolved that conflict SILENTLY and in the direction that
+        // loses. Refusing resolves it out loud and leaves the choice with whoever
+        // makes multi-source rows reachable - a merge feature and a proposer that
+        // cites its inputs have very different costs for deleting the whole entry.
+        //
+        // Note what is NOT done here: everything removable is still removed. An
+        // operator purging a secret is not helped by "one entry was complicated, so
+        // none of the six were touched".
+        refused.push(row.id)
       }
     }
+
     // The audit row. Purge wrote NO record of itself before 0.5.2, which is why
     // "has this already happened to anyone?" had no answer when this bug was found -
     // not "we looked and saw nothing", but "no mechanism could have told us". A
     // remedy that leaves no trace makes its own failures unauditable.
     //
-    // `knowledgeId` is null because the subject is the thread, not one row; the
-    // counts are kept SEPARATE because a deleted row is gone while a detached one
-    // still exists with one fewer source, and collapsing them destroys the
-    // distinction at the only point it is recorded.
+    // `knowledgeId` is null because the subject is the thread, not one row. The
+    // refused ids are recorded, not just counted: the operator's next action needs
+    // to know WHICH entry it could not clear, and a count cannot be acted on.
     if (!dryRun) {
       await tx.insert(knowledgeAudits).values({
         projectId,
@@ -249,11 +267,13 @@ export async function purgeKnowledgeFromThread(
         knowledgeId: null,
         actorKind: 'human',
         actorUserId: opts.actorUserId,
-        detail: { threadId, deleted, detached },
+        detail: { threadId, deleted, refused },
       })
     }
 
-    return { deleted, detached }
+    return refused.length === 0
+      ? { complete: true as const, deleted }
+      : { complete: false as const, deleted, refused }
   })
 }
 
