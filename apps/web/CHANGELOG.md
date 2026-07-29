@@ -1,5 +1,55 @@
 # @relayroom/web
 
+## 0.5.2
+
+### Patch Changes
+
+- dc4d94b: Remove the model badge from connection rows on the agent detail page.
+
+  A connection is an agent plus an access token and outlives any number of model switches, so there is no correct model to show against one. The badge read `agent_connection.model`, a column nothing writes, and it had therefore never rendered for anyone.
+
+  That made it worse than an ordinary unused field. Unlike the agent list, this badge had no fallback, so anyone who "fixed" the empty column by writing a model at connect time would have seen a badge appear where none had been - the change would have read as an improvement while quietly pinning every agent to the model it first connected with. Removing the badge removes the incentive.
+
+  Nothing is lost: the models an agent has actually run are already listed on the detail page from event data. Connection rows keep the fields that genuinely belong to a connection - machine, status, repo and branch, last seen.
+
+- 738bde8: Read the agent list's model badge from usage only, never from the connection.
+
+  Both agent list queries resolved the badge as `connection.model ?? usage.model`. Nothing writes `agent_connection.model`, so that column is always null and the badge already came from usage - it updates every turn, which is the behavior we want. But the dead read sat first and looked authoritative, so anyone noticing the column was never populated would naturally "fix" it by writing the model at connect time, and every badge in the product would freeze at first connect: no error, no visible change until an agent switched model.
+
+  The connection is the wrong grain for this in the first place. A connection is long-lived while the model is a per-turn property, so there is no correct value to store there. The read now goes straight to usage and carries a comment saying why, since the unused column would otherwise make the code look like the mistake.
+
+  No visible change today.
+
+- f92fd9c: Raise the knowledge extractor marker only when a thread is closed, not when it is answered.
+
+  Answered does not mean finished. In the board vocabulary it means "I have replied to you", which is how autoclose already reads it: an answered thread stays live and is closed once it goes idle. Extraction now agrees, so marking a project dirty on answered would wake a sweep that has nothing to take.
+
+  It also protected the wrong transcript. A thread is claimed by the first extraction that succeeds, so allowing a mid-conversation state to qualify would let a partial thread be distilled and lock out the complete one that follows on close. Answered threads are still extracted, about half an hour later, with everything that was said.
+
+- ac76105: Let an owner find any thread when purging knowledge, not only threads that still have knowledge citing them.
+
+  The purge picker was built by expanding the source references of existing knowledge entries, so it could only ever offer threads that had knowledge left. A thread whose knowledge was already purged had nothing to expand and never appeared - which excluded exactly the thread an owner needs when purged knowledge turns out to have come back.
+
+  There is now a search beside the list that starts from threads instead, so a thread with no knowledge at all is a result rather than an absence. It searches by title because that is what the owner in this situation knows; purge does not delete threads, so the title is still there afterwards. Results are capped, and the cap is stated rather than silently truncating.
+
+  Searching is owner-gated like the purge it feeds. This changes which threads an owner can reach, not who can reach them.
+
+  Purging such a thread now also runs for real instead of stopping at the preview. A purge with nothing to delete was previously treated as a no-op, which was right while purge only removed rows; now that it also records that a thread must not be distilled again, stopping short skipped the only thing the operator came for. The confirmation and the result say what that record does, so "0 entries" no longer reads as "nothing happened".
+
+- c3d941b: Explain what a wake budget of zero actually does.
+
+  The wake budget card let an owner drag "Max auto-wakes per rolling hour" down to zero with nothing next to it saying what zero means. It reads as silence, and it is not: every project keeps a small guaranteed share, so wakes keep arriving, and because that share is per project the total grows with the number of projects the owner is in. Setting zero to be left alone therefore gets noisier as they join more projects, which is the opposite of what they asked for.
+
+  Zero now shows a hint saying so, alongside the one the urgent slider already had. The two sit side by side because they genuinely differ: zero urgent really is absolute, zero auto-wakes is only the lowest setting. Nothing about the budget itself changed - the value is still accepted, the floor and the defaults are untouched.
+
+  The hint deliberately avoids naming a number. The floor is a server-side constant that this app cannot see change, so a figure printed here would quietly become wrong the day it moves.
+
+- Updated dependencies [cb69e67]
+- Updated dependencies [21a100c]
+  - @relayroom/db@0.5.2
+  - @relayroom/telemetry@0.5.2
+  - @relayroom/shared@0.5.2
+
 ## 0.5.1
 
 ### Patch Changes

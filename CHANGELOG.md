@@ -4,6 +4,124 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.5.2] - 2026-07-29
+
+Patch release. **Two database migrations** (`0021`, `0022`), applied together in one
+transaction on a direct upgrade from 0.5.1.
+
+### Security
+
+- **Purged knowledge could come back.**
+
+  When you purged the knowledge distilled from a thread, RelayRoom could distil that thread
+  again and recreate the entry. The extractor's only record that a thread had already been
+  processed was the entry itself, so removing the entry also removed the record - and the
+  thread's messages, which a purge does not touch, were still there to be read again.
+  Retention's hard delete had the same effect. Nothing errored, and the recreated entry
+  looked like any other automatic candidate.
+
+  This mattered most for the case purge exists to handle: removing something sensitive that
+  your redaction patterns did not catch.
+
+  A thread's distillation is now recorded separately from the entry it produced
+  (`thread_extraction`, migration `0022`), so removing the entry no longer removes the
+  record. Purging a thread marks it durably - whether or not it had produced an entry yet -
+  and purging now writes an audit entry, so the action is visible afterwards.
+
+  **We cannot tell you whether this happened to you.** Purging left no record of itself
+  before this release, so there is no mechanism by which we could have an indication either
+  way, for your projects or for ours. This is not "we have no evidence of impact"; it is
+  that no evidence could exist.
+
+  **If you purged anything before 0.5.2:** entries that came back are still there, and
+  upgrading does not remove them. Purge those threads again and it will hold. The purge
+  picker now reaches a thread even when nothing currently cites it, which it previously
+  could not - so before this release the remedy was not performable.
+
+  **If a project has retention configured**, entries that retention deleted before 0.5.2
+  have the same gap for the same reason. Such a thread may be distilled once more after you
+  upgrade; after that it stops. No action needed.
+
+  **There is no way to check this from the dashboard.** The Knowledge tab does not show
+  which thread an entry came from, so you cannot compare an entry's date against its source
+  thread's. If you run RelayRoom yourself, this query lists the candidates:
+
+  ```sql
+  with refs as materialized (
+    select k.id, k.title, k.created_at,
+           k.source_refs->0->>'threadId' as tid
+      from knowledge k
+     where k.source_kind = 'thread'
+       and jsonb_typeof(k.source_refs) = 'array'
+       and k.source_refs->0->>'threadId' ~
+           '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+  )
+  select r.id, r.title, r.created_at,
+         t.id as thread_id, t.updated_at as last_activity,
+         r.created_at - t.updated_at as gap
+    from refs r
+    join thread t on t.id = r.tid::uuid
+   where r.created_at - t.updated_at > interval '1 day'
+   order by gap desc;
+  ```
+
+  An entry created long after its thread went quiet is the signature. **It is a lead, not a
+  determination** - the same pattern comes from purging an old thread normally, and from the
+  one-time backfill when automatic distillation first shipped in 0.5.0, so exclude entries
+  created during that upgrade. Note also that a recreated entry does not appear on a timer:
+  it appears the next time any thread closes in that project.
+
+- **Purge did not verify that the thread belonged to the project.** The check was written
+  against the knowledge rows it was about to delete, so a thread from another project simply
+  matched nothing and the operation was harmlessly empty. Harmless stopped being true once
+  purge began writing a durable per-thread record. It now verifies the thread's project and
+  refuses rather than returning an empty result, because an empty result is indistinguishable
+  from "there was nothing to purge" - which is precisely what kept the missing check invisible.
+
+### Fixed
+
+- **`rr.sh setup` disconnected the other worktrees of the same repository.** Claude's local
+  MCP scope is keyed to the git repository root, so the removal that migrated one worktree to
+  project scope deleted the entry every sibling was still reading. They lost their connection
+  with no message and nothing changed in their own directory. The removal is now conditional
+  and silent when there is nothing to remove, `setup` reports which siblings still need
+  migrating, and `doctor` warns about the shared-scope state before it breaks rather than
+  after.
+- **`setup` registered an MCP server it never approved.** A project-scoped server needs an
+  approval that nothing wrote, so a freshly set-up worktree could come back from a restart
+  with neither the board nor wake delivery - and `doctor` reported it healthy. `setup` now
+  writes the approval alongside the registration, and `doctor` fails rather than warns when a
+  server is registered but not approved.
+- **Channel wake delivery was chosen on whether the flag existed, not on whether the channel
+  would load.** A worktree whose channel server could not load was put into channel mode
+  anyway, where the pager delivers nothing while the heartbeat continues to report health.
+  Readiness is now established from the observed state, and anything short of positive
+  evidence falls back to the pager.
+- **`rr.sh up` did not ensure setup, did not restart a stale session, and silently discarded
+  `--bypass` and `--new`.** A session that started before its own configuration could never
+  read it, and `up` - the command a user reaches for - attached to it and reported success.
+  `up` now runs setup, refuses a session older than its configuration while naming the
+  evidence, restarts on `--restart`, replaces a session whose agent has exited, and errors on
+  a flag it cannot apply.
+- **The agent model badge read a column nothing ever wrote.** It fell through to usage data,
+  so the badge was correct by accident; populating the column would have frozen every badge at
+  first connection.
+- **A wake budget of zero was not silence.** The setting now says what it does. The budget is
+  per owner and a per-project floor still applies, so zero is the lowest setting rather than
+  an off switch - only `urgentPerHour` at zero is absolute.
+
+### Changed
+
+- **A thread marked `answered` is no longer distilled.** `answered` means "I have replied",
+  not "this is finished" - which is how the rest of the product already read it, autoclose
+  included. The extractor was the only component treating it as terminal. Such threads are
+  still distilled: autoclose closes them after 30 minutes idle and they are then processed
+  with their full and final content.
+
+### Removed
+
+- `agent_connection.model`, a column no code path ever wrote (migration `0021`).
+
 ## [0.5.1] - 2026-07-24
 
 Patch release. No database migration. The CLI packages are unchanged and move only

@@ -1,5 +1,41 @@
 # @relayroom/cli
 
+## 0.5.2
+
+### Patch Changes
+
+- 9346b99: Select channel wake delivery on whether the channel server will load, not on whether Claude Code has the flag.
+
+  `prepare_launch` probed `claude --channels` and treated "the flag exists" as "our channel server will load". Those are different questions, and when they diverged the result was the worst available shape rather than a visible failure: `delivery=channel` was written to config, the channel silently did not load (claude does not exit, error or warn - measured against an unapproved server, a nonexistent server, and no `.mcp.json` at all), and the pager returns before subscribing under `delivery=channel`. So nothing delivered wakes while the heartbeat kept painting a healthy status bar.
+
+  Channel mode now requires positive evidence that `relayroom-channel` is loadable, checked in layers that each fail toward pager: `claude mcp list` (an outcome, so it survives a future change to how approval is gated), then the approval keys `doctor` already reads, then - with no evidence either way - pager. The chosen mode now prints the reason and the layer that decided it, so a declined channel reads `wake delivery: pager (channel supported, but relayroom-channel is not approved here - run ./rr.sh setup; via observed)` rather than a bare mode name, and a silently broken first layer is visible instead of being covered for by the second.
+
+  `delivery` is rewritten on every launch that reaches `prepare_launch`, so no config repair is needed - each worktree corrects itself at its next launch from scratch. A session that is already running does not re-decide, so the fix reaches it when it is next relaunched.
+
+- a70fe02: Stop one worktree's `setup` from silently disconnecting the others, and approve the servers it registers.
+
+  `mcp_add` ran `claude mcp remove relayroom -s local` unconditionally. Claude keys local scope to the git **repo root**, not the worktree, so that one line is a fleet-wide delete: every sibling worktree still reading the shared entry lost the board with no message, no log, and nothing changed in its own directory. It also announced itself on every run, no-op or not - so the session that read "Removed MCP server relayroom from local config" was never the session that lost anything, while the one that did lose a registration was told nothing.
+
+  `setup` now registers this worktree in project scope first, verifies the entry actually landed, and retires the shared local entry only when it names this same part. A local entry belonging to another part is left alone and reported; a run with nothing to remove says nothing at all. After registering, `setup` lists any sibling worktrees that have no registration of their own - it cannot write their files, since each needs the token from its own `.relayroom/config.json`, but the worktree whose setup would break them is the one that should say so. The enumeration is `git worktree list` because the blast radius is exactly one repo root.
+
+  `setup` also writes `enabledMcpjsonServers` into the worktree's `.claude/settings.json`, the file it already owns. Claude checks `.mcp.json` approval at startup, so a registered-but-unapproved worktree keeps working until its next relaunch and then comes back with no board **and** no wake channel - unable to report the condition, because reporting it needs the channel. The two RelayRoom servers are approved by name rather than with `enableAllProjectMcpServers`, so nothing else that lands in `.mcp.json` later is trusted, and existing approvals are merged rather than replaced.
+
+  `doctor` gains both states: it reports a repo-root local entry even when this worktree is healthy, since that is the one that breaks siblings later, and it treats registered-but-unapproved as an **error** rather than a warning - an all-ok report on a part that will not come back is the check that stops anyone looking. Its advice for a missing registration is now `./rr.sh setup`; it used to print the fleet-wide delete as the fix.
+
+- 6825442: `up` now does what its name promises: it ensures setup, refuses a session that predates its own configuration, and stops accepting flags it will not apply.
+
+  `up` never ran `setup`, so a worktree where registration had never happened got a tmux session and a pager and no MCP, silently. It now runs setup on the way past, before the launch decision, so the approval it writes is in place when channel readiness is probed.
+
+  It also short-circuited entirely when a session already existed. `.mcp.json` and `.claude/settings.json` are read at process start, so a registration written afterwards was never picked up - and `up` is the command people reach for to fix exactly that. This is the failure `doctor` structurally cannot see: every file on disk is correct and the process that needed to read them started earlier, so doctor is truthfully green about a session that will never work. `up` now compares the session's start time against those files and refuses with the evidence rather than the conclusion - "session started 09:41, .mcp.json written 10:02 - the running agent never read it" - and points at `./rr.sh up --restart`. It refuses rather than restarting silently because a restart discards whatever the agent is doing mid-turn; refusing is safe here specifically because `up` ends in attach, so the message always has a reader.
+
+  Staleness is read _before_ setup runs, and a config change made by setup itself is detected by content rather than mtime, because `claude mcp add` rewrites `.mcp.json` on every run whether or not anything changed. For the same reason `installHook` now writes `.claude/settings.json` only when the merged result differs: a no-op must be silent in every channel it can speak through, and mtime is one of them.
+
+  `--bypass` and `--new` are consumed only when a session is created, so passing them to a running session applied nothing and said nothing. That is now an error naming the flag and pointing at `--restart`, which does create a session and does apply them.
+
+  Also fixes `setup` doing nothing at all on a worktree whose config names no agent: everything else defaults to claude, but `read -ra` splits an empty string into zero words, so the registration loop ran zero times, silently.
+
+  `up` also replaces a session whose panes are all dead - the state `remain-on-exit on` produces, where tmux keeps the session alive after the agent exits so `tx_exists` says yes for a corpse. It reports the exit status, since that is the evidence anyone who turned that option on is trying to collect, and it does not wait for `--restart`: a corpse has no mid-turn work to lose, which is the only reason that flag exists.
+
 ## 0.5.1
 
 ## 0.5.0
