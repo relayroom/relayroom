@@ -84,19 +84,20 @@ export interface WakeAuditRow {
 /**
  * The suppression reasons that actually reach `wake_event.reason`.
  *
- * Deliberately not derived from the server's WakeSuppressReason: that union is
- * what the wake decision RETURNS, which is a different and larger set - several of
- * its values never produce a row at all. Reading it as this vocabulary is a
- * mistake two people made independently, so this list is the persisted one, and
- * nothing in this app should offer a filter or a label for anything outside it.
+ * DERIVED FROM THE COLUMN, never written out here. A hand-kept copy would be
+ * correct today and silently wrong the day a fifth reason is added: this app would
+ * keep compiling, the exhaustiveness check below would keep passing, and the new
+ * value would arrive at runtime and render as its raw string. Deriving means the
+ * schema is the only place the vocabulary exists, so adding one there breaks the
+ * build here - which is the whole reason to have the check.
+ *
+ * Note this is NOT the server's WakeSuppressReason. That union is what the wake
+ * decision RETURNS, a different and larger set: several of its values never
+ * produce a row, and `loop_breaker`, which does, is not in it at all. Reading one
+ * as the other is a mistake two people made independently in a single day, so the
+ * column - the thing the writers actually fill - is the source.
  */
-export const WAKE_SUPPRESSION_REASONS = [
-  "budget_exhausted",
-  "limited",
-  "loop_breaker",
-  "direct_cooldown",
-] as const
-export type WakeSuppressionReason = (typeof WAKE_SUPPRESSION_REASONS)[number]
+export type WakeSuppressionReason = NonNullable<typeof wakeEvents.$inferSelect["reason"]>
 
 export interface WakeAuditSummary {
   total: number
