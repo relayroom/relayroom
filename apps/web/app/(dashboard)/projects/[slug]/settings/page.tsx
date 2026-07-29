@@ -5,12 +5,13 @@ import { requireDashboardAccess } from "@/lib/auth-session"
 import { resolveActiveOrgId } from "@/lib/active-org"
 import { getProjectBySlug } from "@/modules/project/queries"
 import { canManageMembers } from "@/modules/project/member-queries"
-import { getOwnerWakeBudget } from "@/modules/wake/queries"
+import { getOwnerWakeBudget, listProjectSuppressions } from "@/modules/wake/queries"
 import { ProjectSettingsForm } from "./project-settings-form"
 import { RelayroomMdEditor } from "./relayroom-md-editor"
 import { ProjectBroadcastCapForm } from "./project-broadcast-cap-form"
 import { ProjectDangerZone } from "./project-danger-zone"
 import { OwnerWakeBudgetCard } from "../agents/[id]/owner-wake-budget-card"
+import { WakeSuppressionPanel } from "./wake-suppression-panel"
 
 export const dynamic = "force-dynamic"
 
@@ -31,9 +32,11 @@ export default async function ProjectSettingsPage({ params }: Props) {
 
   const project = result.item
 
-  const [canManage, budgetResult] = await Promise.all([
+  const SUPPRESSION_WINDOW_HOURS = 24
+  const [canManage, budgetResult, suppressions] = await Promise.all([
     canManageMembers(orgId, project.id, session.user.id),
     getOwnerWakeBudget(session.user.id),
+    listProjectSuppressions(project.id, session.user.id, SUPPRESSION_WINDOW_HOURS),
   ])
   const ownerBudget = budgetResult.result ? budgetResult.item : null
 
@@ -67,6 +70,16 @@ export default async function ProjectSettingsPage({ params }: Props) {
           "this project has no budget settings" rather than "we could not load
           them". Say which one it is. */}
       {!budgetResult.result && <LoadError variant="inline" message={budgetResult.message} />}
+
+      {/* Beside the budget on purpose: budget exhaustion is the one reason here an
+          owner can act on, and the control for it is the card directly above. */}
+      {suppressions.result ? (
+        <WakeSuppressionPanel parts={suppressions.items} windowHours={SUPPRESSION_WINDOW_HOURS} />
+      ) : (
+        /* A failed read must not render as "nothing was suppressed" - that is the
+           same silence this panel exists to break. */
+        <LoadError variant="inline" message={suppressions.message} />
+      )}
 
       <RelayroomMdEditor projectId={project.id} initial={project.relayroomMd} />
 

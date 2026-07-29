@@ -34,6 +34,18 @@
     "sendBlocked": "was blocked sending in",
     "empty": "No wakes consumed in this window.",
     "suppressedBadge": "suppressed",
+    "reasonBudgetExhausted": "budget spent",
+    "reasonLimited": "provider limit",
+    "reasonLoopBreaker": "loop breaker",
+    "reasonDirectCooldown": "cooldown",
+    "reasonUnknown": "reason not recorded",
+    "suppressionsTitle": "Wakes withheld",
+    "suppressionsSubtitle": "Parts of yours that were not nudged in the last {hours}h, and why. A part with nothing here was never withheld from.",
+    "suppressionsEmpty": "No wake was withheld from your parts in this project.",
+    "suppressionsScope": "Only wakes that were withheld appear here. A wake that was merged into one already pending is not withheld and is not recorded, so this is not a log of every wake decision.",
+    "suppressionsBudgetNote": "Budget is the one an owner can change - it is yours and shared across every project you are in.",
+    "suppressionsLimitedNote": "Provider limits are counted only for messages someone sent. A part parked on a limit is re-checked every 30 seconds and those checks are deliberately not recorded, so the real time spent parked is longer than this count suggests.",
+    "suppressionsCooldownNote": "A cooldown withholds the nudge only - the message was still delivered, and the part sees it on its next turn.",
     "loadMore": "Show more ({count} more)"
   }
 }

@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { db } from "@/lib/db"
 import { projects, agents, wakeEvents } from "@relayroom/db/schema"
 import { better_auth_user } from "@relayroom/db/auth-schema"
-import { getOwnerWakeBudget, listOwnerWakeAudit } from "./queries"
+import { getOwnerWakeBudget, listOwnerWakeAudit, listProjectSuppressions } from "./queries"
 
 const OWNER_A = "wake_owner_a"
 const OWNER_B = "wake_owner_b"
@@ -74,6 +74,7 @@ beforeAll(async () => {
       senderUserId: SENDER,
       urgent: false,
       suppressed: true,
+      reason: "budget_exhausted",
       createdAt: hours(3),
     },
     // OWNER_A, OUTSIDE the 24h window (25h ago) - must be excluded.
@@ -204,6 +205,53 @@ describe("listOwnerWakeAudit splits the two axes", () => {
     if (!resB.result) return
     expect(resB.blockedSends).toHaveLength(0)
     expect(resB.blockedSendsSummary.total).toBe(0)
+  })
+})
+
+/**
+ * The project-level view. The incident it exists for is "several parts are idle
+ * and nothing says which one to look at", so it must answer starting from the
+ * project rather than from a part the operator has already picked.
+ */
+describe("listProjectSuppressions", () => {
+  it("groups withheld wakes by part and names the reason", async () => {
+    const res = await listProjectSuppressions(projectId, OWNER_A, 24)
+    expect(res.result).toBe(true)
+    if (!res.result) return
+
+    expect(res.items).toHaveLength(1)
+    const part = res.items[0]!
+    expect(part.part).toBe("backend")
+    expect(part.total).toBe(1)
+    // The reason is the whole point - "suppressed" without it is the screen this
+    // replaces.
+    expect(part.byReason).toEqual([{ reason: "budget_exhausted", count: 1 }])
+  })
+
+  it("excludes issued wakes - only what was WITHHELD belongs here", async () => {
+    const res = await listProjectSuppressions(projectId, OWNER_A, 24)
+    expect(res.result).toBe(true)
+    if (!res.result) return
+    // OWNER_A has two issued wakes on this part in the window. Counting them would
+    // turn a busy part into an alarming one.
+    expect(res.items[0]!.total).toBe(1)
+  })
+
+  it("excludes the blocked send, which has no part to group under", async () => {
+    const res = await listProjectSuppressions(projectId, OWNER_A, 24)
+    expect(res.result).toBe(true)
+    if (!res.result) return
+    // The loop-breaker row is suppressed, is OWNER_A's, and is in this project -
+    // it is excluded only because it names no part. An inner join is doing that;
+    // this pins it.
+    expect(res.items.flatMap((p) => p.byReason).some((r) => r.reason === "loop_breaker")).toBe(false)
+  })
+
+  it("returns nothing for an owner whose parts were never withheld from", async () => {
+    const res = await listProjectSuppressions(projectId, OWNER_B, 24)
+    expect(res.result).toBe(true)
+    if (!res.result) return
+    expect(res.items).toHaveLength(0)
   })
 })
 

@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl"
 import { ChevronDownIcon } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { useTimeAgo } from "@/lib/time-ago"
+import { suppressionReasonKey } from "@/components/wake/suppression-reason-label"
 import type { WakeAuditRow } from "@/modules/wake/queries"
 
 const PAGE = 10
@@ -53,7 +54,13 @@ export function WakeAuditList({
                 </Badge>
               )}
               {row.suppressed && (
-                <Badge variant="secondary">{t("audit.suppressedBadge")}</Badge>
+                <Badge variant="secondary">
+                  {/* The reason, not just the fact. "Suppressed" alone was the
+                      whole problem: it told an operator something was withheld
+                      and left them to guess whether they could do anything about
+                      it. Only one of these reasons is theirs to change. */}
+                  {t(suppressionReasonKey(row.reason))}
+                </Badge>
               )}
             </div>
             <span className="shrink-0 font-mono text-xs text-muted-foreground">

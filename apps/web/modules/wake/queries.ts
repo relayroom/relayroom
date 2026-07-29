@@ -70,9 +70,33 @@ export interface WakeAuditRow {
   agentId: string | null
   agentPart: string | null
   urgent: boolean
-  /** true = budget-exhausted suppression (no nudge fired) - NOT a charged consume. */
+  /** true = the wake was not fired. `reason` says why. NOT a charged consume. */
   suppressed: boolean
+  /**
+   * Why the wake was suppressed. Null on an issued wake (there is no reason to
+   * give for something that happened) and on suppressions recorded before the
+   * writers started stamping one, which is why the UI reads it together with
+   * `suppressed` rather than alone.
+   */
+  reason: WakeSuppressionReason | null
 }
+
+/**
+ * The suppression reasons that actually reach `wake_event.reason`.
+ *
+ * Deliberately not derived from the server's WakeSuppressReason: that union is
+ * what the wake decision RETURNS, which is a different and larger set - several of
+ * its values never produce a row at all. Reading it as this vocabulary is a
+ * mistake two people made independently, so this list is the persisted one, and
+ * nothing in this app should offer a filter or a label for anything outside it.
+ */
+export const WAKE_SUPPRESSION_REASONS = [
+  "budget_exhausted",
+  "limited",
+  "loop_breaker",
+  "direct_cooldown",
+] as const
+export type WakeSuppressionReason = (typeof WAKE_SUPPRESSION_REASONS)[number]
 
 export interface WakeAuditSummary {
   total: number
@@ -118,6 +142,86 @@ function splitByAxis(rows: WakeAuditRow[]): WakeAuditAxes {
     else sender.push(row)
   }
   return { recipient, sender }
+}
+
+export interface PartSuppression {
+  agentId: string
+  part: string
+  /** Suppressions in the window, by reason. Only reasons with a count appear. */
+  byReason: { reason: WakeSuppressionReason | null; count: number }[]
+  total: number
+}
+
+/**
+ * Which of this owner's parts had wakes suppressed in a project, and why.
+ *
+ * The existing audit panel lives on an agent's own page, so it answers "why was
+ * THIS part quiet" - useful only once you already know which part to open. The
+ * incident this is for looks the other way round: several parts sit idle and
+ * nothing says which one to look at, because a suppressed wake leaves no trace
+ * anywhere the operator is looking. So this groups by part and starts from the
+ * project.
+ *
+ * Recipient axis only (`agentId is not null`). A blocked send has no part to group
+ * under and is a statement about the sender, not about a part going quiet.
+ *
+ * WHAT THIS CANNOT SHOW, and it matters that the screen says so:
+ *  - Coalesced wakes (a wake was already pending) write no row. That is correct -
+ *    the part was not silenced - but it means this is not a complete record of
+ *    every wake decision, only of the ones that withheld a nudge.
+ *  - `limited` is recorded only on sender-attributed paths. The 30-second sweep
+ *    re-evaluates a parked part every tick and deliberately writes nothing, so the
+ *    count here is "sends blocked by a provider limit", not "times this part was
+ *    unreachable".
+ */
+export async function listProjectSuppressions(
+  projectId: string,
+  userId: string,
+  windowHours: number,
+): Promise<ApiResultWithItems<PartSuppression>> {
+  const t = await getErrorTranslations()
+  try {
+    const since = new Date(Date.now() - windowHours * 60 * 60 * 1000)
+    const rows = await db
+      .select({
+        agentId: wakeEvents.agentId,
+        part: agents.part,
+        reason: wakeEvents.reason,
+        count: count(),
+      })
+      .from(wakeEvents)
+      .innerJoin(agents, eq(wakeEvents.agentId, agents.id))
+      .where(
+        and(
+          eq(wakeEvents.ownerUserId, userId),
+          eq(wakeEvents.projectId, projectId),
+          eq(wakeEvents.suppressed, true),
+          gte(wakeEvents.createdAt, since),
+        ),
+      )
+      .groupBy(wakeEvents.agentId, agents.part, wakeEvents.reason)
+
+    const byAgent = new Map<string, PartSuppression>()
+    for (const r of rows) {
+      if (!r.agentId) continue
+      const entry = byAgent.get(r.agentId) ?? {
+        agentId: r.agentId,
+        part: r.part,
+        byReason: [],
+        total: 0,
+      }
+      const n = Number(r.count)
+      entry.byReason.push({ reason: r.reason, count: n })
+      entry.total += n
+      byAgent.set(r.agentId, entry)
+    }
+
+    const items = [...byAgent.values()].sort((a, b) => b.total - a.total)
+    return { result: true, items, totalCount: items.length }
+  } catch (err) {
+    console.error("[listProjectSuppressions]", err)
+    return { result: false, message: t("wake.auditLoadFailed") }
+  }
 }
 
 /**
@@ -172,6 +276,7 @@ export async function listOwnerWakeAudit(
         agentPart: agents.part,
         urgent: wakeEvents.urgent,
         suppressed: wakeEvents.suppressed,
+        reason: wakeEvents.reason,
       })
       .from(wakeEvents)
       .leftJoin(projects, eq(wakeEvents.projectId, projects.id))

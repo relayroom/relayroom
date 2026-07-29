@@ -34,6 +34,18 @@
     "sendBlocked": "이(가) 보내려다 차단됨 -",
     "empty": "이 윈도우 동안 소비된 wake가 없습니다.",
     "suppressedBadge": "억제",
+    "reasonBudgetExhausted": "예산 소진",
+    "reasonLimited": "프로바이더 제한",
+    "reasonLoopBreaker": "loop breaker",
+    "reasonDirectCooldown": "쿨다운",
+    "reasonUnknown": "사유 미기록",
+    "suppressionsTitle": "보류된 wake",
+    "suppressionsSubtitle": "최근 {hours}시간 동안 nudge를 받지 못한 내 part와 그 이유. 여기 없는 part는 보류된 적이 없습니다.",
+    "suppressionsEmpty": "이 프로젝트에서 보류된 wake가 없습니다.",
+    "suppressionsScope": "여기에는 보류된 wake만 나옵니다. 이미 예약된 wake에 합쳐진 경우는 보류가 아니라서 기록되지 않으므로, 이 목록은 모든 wake 판단의 기록이 아닙니다.",
+    "suppressionsBudgetNote": "이 중 오너가 바꿀 수 있는 것은 예산뿐입니다. 예산은 나에게 속하며 내가 속한 모든 프로젝트가 함께 씁니다.",
+    "suppressionsLimitedNote": "프로바이더 제한은 누군가 보낸 메시지에 대해서만 집계됩니다. 제한으로 park된 part는 30초마다 재확인되는데 그 확인은 의도적으로 기록하지 않으므로, 실제 park된 시간은 이 숫자보다 깁니다.",
+    "suppressionsCooldownNote": "쿨다운은 nudge만 보류합니다. 메시지는 이미 전달됐고 part는 다음 턴에 봅니다.",
     "loadMore": "더보기 ({count}개 더)"
   }
 }
