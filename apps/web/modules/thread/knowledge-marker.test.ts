@@ -74,12 +74,17 @@ describe("closeThread sets the extractor marker", () => {
     expect(await dirtyAt()).not.toBeNull()
   })
 
-  it("marks dirty when a thread is answered", async () => {
+  it("does NOT mark dirty when a thread is answered - answered means replied, not finished", async () => {
+    // This used to assert the opposite. Answered is a live state: autoclose treats
+    // it as such and closes it once idle, and extraction no longer accepts it,
+    // because a thread is claimed by the first extraction that succeeds - letting a
+    // mid-conversation state qualify would distil the partial transcript and lock
+    // out the complete one. The thread is still extracted, when it actually closes.
     await clearDirty()
     const threadId = await makeThread()
     const res = await closeThread({ threadId, status: "answered" })
     expect(res.result).toBe(true)
-    expect(await dirtyAt()).not.toBeNull()
+    expect(await dirtyAt()).toBeNull()
   })
 
   it("does NOT mark dirty on cancel - not a resolution to learn from", async () => {

@@ -154,8 +154,10 @@ export const agentConnections = pgTable('agent_connection', {
     .notNull()
     .references(() => agents.id, { onDelete: 'cascade' }),
   accessTokenId: text('access_token_id'), // FK → oauth_access_token (added in F4)
+  // No `model` here on purpose. A connection is (agent, access token) and outlives
+  // model switches, so there is no correct model to attach to one. The models an
+  // agent has actually run are derived from events (agent detail's `models[]`).
   machineLabel: text('machine_label'),
-  model: text('model'),
   repo: text('repo'),
   branch: text('branch'),
   status: text('status').notNull().default('connected'), // connected | expired | revoked
@@ -446,6 +448,40 @@ export const knowledge = pgTable('knowledge', {
   uniqueIndex('knowledge_project_id_uq').on(t.projectId, t.id),
   check('knowledge_kind_ck', sql`${t.kind} in ('fact','convention','pitfall','decision')`),
   check('knowledge_state_ck', sql`${t.validationState} in ('candidate','trusted','contradicted','retired')`),
+])
+
+// ── thread_extraction ─────────────────────────────────────────────────────────
+// The durable record that a thread has been DECIDED, one row per (project, thread).
+//
+// WHY IT EXISTS (BUG-0010). The extractor's only previous record that a thread was
+// already processed was the existence of a knowledge row citing it in source_refs.
+// Two shipped paths delete that row while the thread's messages remain - retention's
+// hard delete and purgeKnowledgeFromThread - after which the next sweep re-extracts
+// and writes the candidate back. For purge, the operator's remedy for a leaked
+// secret, that meant the remedy silently undid itself. Evidence of the work is not a
+// record of the work; this table is the record.
+//
+// `reason` is STATE, not history: purge overwrites `extracted`, and the sequence
+// lives in knowledge_audit. Deliberately two values, both statements about content
+// that EXISTED. There is no third value for "extraction ran and produced nothing" -
+// that is the current output of a function over inputs that change (a project's
+// redactionPatterns are editable, the rule changes on deploy), so marking it would
+// convert "no lesson found yet" into "never look again", silently, on exactly the
+// threads a corrected pattern would recover.
+export const threadExtractions = pgTable('thread_extraction', {
+  projectId: uuid('project_id').notNull()
+    .references(() => projects.id, { onDelete: 'cascade' }),
+  threadId: uuid('thread_id').notNull()
+    .references(() => threads.id, { onDelete: 'cascade' }),
+  reason: text('reason').notNull(),           // extracted | purged
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, t => [
+  // The composite PK IS the uniqueness this design needs, and it is what every
+  // `on conflict (project_id, thread_id)` in the sweep and in purge targets. A
+  // separate unique index would be redundant.
+  primaryKey({ columns: [t.projectId, t.threadId] }),
+  check('thread_extraction_reason_ck', sql`${t.reason} in ('extracted','purged')`),
 ])
 
 // ── knowledge_validation ─────────────────────────────────────────────────────

@@ -22,17 +22,25 @@
  * than duplicating work. The lock auto-releases at transaction end - the reason 05
  * specifies an advisory lock over the wake-lease row, which is built for wake_intent.
  *
- * WHICH THREADS a dirty project's sweep processes: the marker is project-level, and
- * the only per-thread record of "already extracted" is a candidate whose sourceRefs
- * cite the thread. So the sweep extracts closed/answered threads that have NO such
- * candidate yet - each thread once, idempotent, bounded by un-extracted threads. Re-
- * extraction when a closed thread later changes, and a per-thread watermark, are
- * deferred with the intelligent extractor; a closed thread rarely gains messages, so
- * once-per-thread is the honest L3 behaviour, not a gap.
+ * WHICH THREADS a dirty project's sweep processes: the marker is project-level, so
+ * the sweep considers every closed/answered thread and skips the ones already decided.
+ * Each thread once, idempotent, bounded by un-decided threads.
+ *
+ * "ALREADY DECIDED" IS A `thread_extraction` ROW - the per-thread watermark L3 once
+ * deferred (BUG-0010, 0.5.2). It replaced a rule that read "a candidate whose
+ * sourceRefs cite the thread", and that rule was wrong for a reason worth keeping in
+ * mind: a knowledge row is EVIDENCE that extraction happened, not a RECORD of it, and
+ * two shipped paths delete the evidence while the thread's messages remain - retention's
+ * hard delete, and purge. So the sweep re-extracted and wrote the candidate back. For
+ * purge, the operator's remedy for a leaked secret, the remedy silently undid itself.
+ *
+ * The old source_refs predicate is STILL CHECKED alongside the watermark, but it is
+ * NOT what protects against resurrection - the claim in extractProject is. See there
+ * for what the predicate is actually still doing and what removing it would cost.
  */
 import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm'
 import type { Db, DbOrTx } from '@relayroom/db'
-import { knowledge, messages, projects, threads } from '@relayroom/db'
+import { knowledge, messages, projects, threadExtractions, threads } from '@relayroom/db'
 import { extractCandidateFromThread } from './extract'
 
 /** Advisory-lock namespace for the extractor, so its keys cannot collide with
@@ -145,6 +153,12 @@ async function extractProject(
         where k.project_id = ${projectId}
           and k.source_refs @> ${sql`jsonb_build_array(jsonb_build_object('threadId', ${threads.id}))`}
       )`,
+      // The watermark (BUG-0010). A knowledge row is EVIDENCE of extraction; this is
+      // the RECORD of it, and it outlives the row that purge or retention deletes.
+      sql`not exists (
+        select 1 from ${threadExtractions} te
+        where te.project_id = ${projectId} and te.thread_id = ${threads.id}
+      )`,
     ))
 
   let written = 0
@@ -159,20 +173,58 @@ async function extractProject(
       { threadId: thread.id, subject: thread.subject, messages: msgs },
       redactionPatterns,
     )
+    // NOTHING WORTH KEEPING IS NOT A DECISION. No watermark here, deliberately: this
+    // is the current output of a function over inputs that CHANGE - the project's
+    // redactionPatterns are editable and the rule itself changes on deploy - so
+    // marking it would convert "no lesson found yet" into "never look again", on
+    // exactly the threads a corrected pattern would recover. Re-reading them on a
+    // later tick is what today already does, and it cannot duplicate anything.
     if (!candidate) continue // nothing substantive, or redacted to nothing
 
-    // A double-check against the once-per-thread rule under the lock: insert only if
-    // still no candidate cites this thread. With the advisory lock held this cannot
-    // race another worker, but it also guards a re-run that raced its own clear.
-    const [existing] = await tx
-      .select({ id: knowledge.id })
-      .from(knowledge)
-      .where(and(
-        eq(knowledge.projectId, projectId),
-        sql`${knowledge.sourceRefs} @> ${JSON.stringify([{ threadId: thread.id }])}::jsonb`,
-      ))
-      .limit(1)
-    if (existing) continue
+    // CLAIM THE THREAD, and let the claim be the guard (BUG-0010).
+    //
+    // This replaces a double-check that re-read `knowledge` here. A plain NOT EXISTS
+    // cannot serialize against an UNCOMMITTED purge: we would see no row, insert the
+    // candidate, and meet the purge only afterwards. Two writers contending for the
+    // same primary key must queue on it, so the claim row is the serialization point:
+    //   purge commits first -> our insert conflicts, returns nothing, we write nothing
+    //   we claim first      -> purge waits, then its scan finds and removes our row
+    // `do nothing` also means we can never revert a `purged` mark back to `extracted`.
+    //
+    // The `not exists` on knowledge is CARRIED OVER from the check this replaces, and
+    // what it is actually for was settled by mutation-testing rather than by argument.
+    // Disabling it alone changes nothing; disabling the claim alone changes nothing;
+    // only disabling BOTH resurrects a purged candidate. So:
+    //   - THE CLAIM is the resurrection protection. This clause is not.
+    //   - This clause's one independent job is the `learn` race: `learn` inserts a row
+    //     citing this thread WITHOUT taking our advisory lock (mcp.ts learn tool), so a
+    //     `learn` committing between the eligibility query and here is skipped only
+    //     because of this. Nothing else covers that.
+    // Which means removing it - as the extraction-quality design will, moving to
+    // watermark-only - costs exactly the `learn` race guard and nothing else. Solve
+    // that race in the same change; do not just delete the line.
+    //
+    // The ownership `exists` is not ceremony either: the thread could have been
+    // deleted since the eligibility query, and an FK violation here would abort the
+    // whole project's sweep rather than skipping one thread.
+    const claimed = await tx.execute<{ thread_id: string }>(sql`
+      insert into ${threadExtractions} (project_id, thread_id, reason)
+      select ${projectId}, ${thread.id}, 'extracted'
+       where exists (
+               select 1 from ${threads} t
+                where t.id = ${thread.id} and t.project_id = ${projectId}
+             )
+         and not exists (
+               select 1 from ${knowledge} k
+                where k.project_id = ${projectId}
+                  and k.source_refs @> ${JSON.stringify([{ threadId: thread.id }])}::jsonb
+             )
+      on conflict (project_id, thread_id) do nothing
+      returning thread_id
+    `)
+    // Zero rows: a conflict, a deleted thread, or a knowledge row that appeared under
+    // us. They are indistinguishable from here and all three mean the same thing.
+    if (claimed.length === 0) continue
 
     await tx.insert(knowledge).values({
       projectId,

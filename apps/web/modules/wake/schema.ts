@@ -6,8 +6,12 @@ import { z } from "zod"
 // Owner edits their OWN budget. The ceiling matches the UI slider max (guards
 // runaway input). Defaults/dogfooding rationale: spec §15.1 (wakesPerHour 30,
 // urgentPerHour 5).
+// The two fields do NOT mean the same thing at 0, so do not treat them alike:
+// wakesPerHour 0 is only the lowest setting - the server still applies a
+// per-project floor, so wakes keep arriving and the total scales with the number
+// of projects the owner is in. urgentPerHour 0 is the absolute one.
 export const upsertOwnerWakeBudgetSchema = z.object({
-  wakesPerHour: z.number().int().min(0).max(240), // 0 = auto-wake fully blocked
+  wakesPerHour: z.number().int().min(0).max(240), // 0 = lowest, floor still applies
   urgentPerHour: z.number().int().min(0).max(60), // 0 = "nobody can wake me as urgent" (spec §7)
 })
 export type UpsertOwnerWakeBudgetInput = z.infer<typeof upsertOwnerWakeBudgetSchema>

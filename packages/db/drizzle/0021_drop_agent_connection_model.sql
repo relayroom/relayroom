@@ -1,0 +1,1 @@
+ALTER TABLE "agent_connection" DROP COLUMN "model";

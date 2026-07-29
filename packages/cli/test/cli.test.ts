@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
@@ -69,6 +69,15 @@ describe("hookBlock", () => {
   })
 })
 
+/**
+ * Whole milliseconds. `statSync().mtimeMs` is a float built as `sec * 1000 + nsec / 1e6`,
+ * so a timestamp set to an exact millisecond can read back as `...779.999` depending on
+ * the filesystem's timestamp granularity - CI hit exactly that and this machine never
+ * does. `new Date(mtimeMs).getTime()` is not the fix: it TRUNCATES, turning 779.999 into
+ * 779, which is wrong by a millisecond instead of by a fraction.
+ */
+const mtime = (path: string) => Math.round(statSync(path).mtimeMs)
+
 describe("installHook", () => {
   let dir: string
   beforeEach(() => {
@@ -116,5 +125,64 @@ describe("installHook", () => {
     expect(json.model).toBe("claude-opus-4-8")
     expect(json.hooks.Stop).toHaveLength(2)
     expect(JSON.stringify(json)).toContain("echo keep")
+  })
+
+  /**
+   * Claude checks .mcp.json approval at STARTUP, so a registered-but-unapproved
+   * worktree keeps working until its next relaunch and then comes back with no board
+   * and no wake channel - unable to report it, because reporting needs the channel.
+   * setup is the only thing that runs unattended, so setup has to grant the approval.
+   */
+  it("approves the RelayRoom MCP servers so an unattended relaunch keeps its board and wakes", () => {
+    const path = join(dir, "settings.json")
+    installHook({ agent: "claude", code: "c1", part: "web", settings: path })
+    const json = JSON.parse(readFileSync(path, "utf8"))
+    expect(json.enabledMcpjsonServers).toEqual(["relayroom", "relayroom-channel"])
+    // By name, never a blanket flag: approving everything would also trust whatever
+    // someone else adds to .mcp.json later.
+    expect(json.enableAllProjectMcpServers).toBeUndefined()
+  })
+
+  it("merges into the user's own approvals instead of replacing them", () => {
+    const path = join(dir, "settings.json")
+    writeFileSync(path, JSON.stringify({ enabledMcpjsonServers: ["their-server", "relayroom"] }))
+    installHook({ agent: "claude", code: "c1", part: "web", settings: path })
+    const json = JSON.parse(readFileSync(path, "utf8"))
+    expect(json.enabledMcpjsonServers).toEqual(["their-server", "relayroom", "relayroom-channel"])
+  })
+
+  /**
+   * A no-op must be silent in every channel it can speak through, and mtime is one of
+   * them. `up` decides whether a running session predates its own configuration by
+   * comparing this file's mtime against the session start - and `up` also runs setup, so
+   * an unconditional rewrite here would make every session look stale forever.
+   */
+  it("does not touch the file when a re-install would change nothing", () => {
+    const path = join(dir, "settings.json")
+    installHook({ agent: "claude", code: "c1", part: "web", settings: path })
+    const before = mtime(path)
+    // Backdate so an unconditional write is unmistakable rather than same-millisecond.
+    const old = new Date(Date.now() - 60_000)
+    utimesSync(path, old, old)
+    installHook({ agent: "claude", code: "c1", part: "web", settings: path })
+    expect(mtime(path)).toBe(old.getTime())
+    expect(mtime(path)).not.toBe(before)
+  })
+
+  it("still writes when the merged result actually differs", () => {
+    const path = join(dir, "settings.json")
+    installHook({ agent: "claude", code: "c1", part: "web", settings: path })
+    const old = new Date(Date.now() - 60_000)
+    utimesSync(path, old, old)
+    writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, "utf8")), model: "claude-opus-4-8" }))
+    installHook({ agent: "claude", code: "c1", part: "web", settings: path })
+    expect(mtime(path)).toBeGreaterThan(old.getTime())
+    expect(JSON.parse(readFileSync(path, "utf8")).model).toBe("claude-opus-4-8")
+  })
+
+  it("leaves non-claude agents' settings free of the claude-only approval key", () => {
+    const path = join(dir, ".gemini/settings.json")
+    installHook({ agent: "agy", code: "c1", part: "web", settings: path })
+    expect(JSON.parse(readFileSync(path, "utf8")).enabledMcpjsonServers).toBeUndefined()
   })
 })

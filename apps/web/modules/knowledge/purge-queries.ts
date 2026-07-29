@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm"
 import { db } from "@/modules/drizzle/db"
+import { THREAD_SEARCH_LIMIT } from "@/modules/knowledge/purge-constants"
 
 export interface PurgeableThread {
   threadId: string
@@ -37,6 +38,51 @@ export async function listPurgeableThreads(projectId: string): Promise<Purgeable
       AND ref->>'threadId' IS NOT NULL
     GROUP BY ref->>'threadId', t.subject
     ORDER BY last_activity DESC NULLS LAST
+  `)
+
+  return ((res.rows ?? []) as Array<{ thread_id: string; subject: string | null; n: string | number }>).map(
+    (r) => ({ threadId: r.thread_id, subject: r.subject, entryCount: Number(r.n) }),
+  )
+}
+
+/**
+ * Threads in a project matching a subject substring, newest first, INCLUDING
+ * threads that no knowledge entry cites.
+ *
+ * This exists because `listPurgeableThreads` cannot reach the case the purge
+ * remedy is for. That list starts from `knowledge` and expands source_refs, so a
+ * thread whose knowledge was already purged has nothing to expand and never
+ * appears - the operator who most needs to purge again is the one who cannot find
+ * the thread. This query starts from `thread` instead and joins knowledge on, so
+ * an entry count of zero is a result rather than an absence.
+ *
+ * Search by subject, not a pasted id: the owner in this situation knows what the
+ * conversation was called, not its UUID, and purge does not delete threads, so the
+ * subject is still there afterwards. Searching within a project also cannot name
+ * another project's thread, which a paste box invites - though that is a bonus,
+ * not the reason. The boundary is enforced where the purge happens, not here.
+ */
+export async function searchProjectThreads(projectId: string, query: string): Promise<PurgeableThread[]> {
+  const q = query.trim()
+  if (!q) return []
+
+  // Count citing entries per thread with a correlated subquery rather than a join:
+  // a thread with no knowledge must still produce a row, and the count must not be
+  // multiplied by the source_refs expansion.
+  const res = await db.execute(sql`
+    SELECT t.id      AS thread_id,
+           t.subject AS subject,
+           (
+             SELECT count(*)
+             FROM knowledge k
+             WHERE k.project_id = ${projectId}
+               AND k.source_refs @> jsonb_build_array(jsonb_build_object('threadId', t.id::text))
+           ) AS n
+    FROM thread t
+    WHERE t.project_id = ${projectId}
+      AND t.subject ILIKE ${"%" + q + "%"}
+    ORDER BY t.updated_at DESC NULLS LAST
+    LIMIT ${THREAD_SEARCH_LIMIT}
   `)
 
   return ((res.rows ?? []) as Array<{ thread_id: string; subject: string | null; n: string | number }>).map(

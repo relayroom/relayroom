@@ -73,10 +73,12 @@ export function deriveAgentStatus(args: {
 // Re-exported here because callers already import them from this module.
 export { PAGER_ONLINE_WINDOW_MS, isPagerOnline }
 
+// No `model` here on purpose. A connection is (agent, access token) and outlives
+// model switches, so there is no correct model to attach to one. The models an
+// agent has actually run are on AgentDetail.models, derived from events.
 export interface AgentConnectionDetail {
   id: string
   machineLabel: string | null
-  model: string | null
   repo: string | null
   branch: string | null
   status: string
@@ -152,7 +154,7 @@ export async function listAgents(
       .orderBy(desc(agents.createdAt))
 
     const agentIds = rows.map((r) => r.id)
-    const connectionMap = new Map<string, { id: string; model: string | null; status: string | null; lastSeenAt: Date | null }>()
+    const connectionMap = new Map<string, { id: string; status: string | null; lastSeenAt: Date | null }>()
     const usageMap = new Map<string, { input: number; output: number; cache: number; model: string | null }>()
     const eventMap = new Map<string, { type: string; createdAt: Date }>()
 
@@ -160,7 +162,7 @@ export async function listAgents(
       // Latest connection per agent.
       for (const agentId of agentIds) {
         const [conn] = await db
-          .select({ id: agentConnections.id, model: agentConnections.model, status: agentConnections.status, lastSeenAt: agentConnections.lastSeenAt })
+          .select({ id: agentConnections.id, status: agentConnections.status, lastSeenAt: agentConnections.lastSeenAt })
           .from(agentConnections)
           .where(eq(agentConnections.agentId, agentId))
           .orderBy(desc(agentConnections.connectedAt))
@@ -214,7 +216,10 @@ export async function listAgents(
           : (connLastSeen ?? r.lastSeenAt)
       return {
         ...r,
-        model: conn?.model ?? usage?.model ?? null,
+        // From usage, never from the connection: the model is a per-turn property
+        // and a connection outlives model switches, so only events know it. Usage
+        // carries the model of the most recent turn, which is what this badge means.
+        model: usage?.model ?? null,
         status: conn?.status ?? null,
         connectionId: conn?.id ?? null,
         connectionLastSeenAt: connLastSeen,
@@ -285,14 +290,14 @@ export async function listMyAgents(userId: string): Promise<ApiResultWithItems<M
       .orderBy(desc(agents.createdAt))
 
     const agentIds = rows.map((r) => r.id)
-    const connectionMap = new Map<string, { status: string | null; model: string | null; lastSeenAt: Date | null }>()
+    const connectionMap = new Map<string, { status: string | null; lastSeenAt: Date | null }>()
     const usageMap = new Map<string, { input: number; output: number; cache: number; model: string | null }>()
     const eventMap = new Map<string, { type: string; createdAt: Date }>()
 
     if (agentIds.length > 0) {
       for (const aid of agentIds) {
         const [conn] = await db
-          .select({ status: agentConnections.status, model: agentConnections.model, lastSeenAt: agentConnections.lastSeenAt })
+          .select({ status: agentConnections.status, lastSeenAt: agentConnections.lastSeenAt })
           .from(agentConnections)
           .where(eq(agentConnections.agentId, aid))
           .orderBy(desc(agentConnections.connectedAt))
@@ -341,7 +346,8 @@ export async function listMyAgents(userId: string): Promise<ApiResultWithItems<M
         projectSlug: r.projectSlug,
         projectName: r.projectName,
         lastSeenAt: liveLastSeen,
-        model: conn?.model ?? usage?.model ?? null,
+        // Usage, not the connection - see the note on the same field in listAgents.
+        model: usage?.model ?? null,
         status: conn?.status ?? null,
         usageInput: usage?.input ?? 0,
         usageOutput: usage?.output ?? 0,
@@ -563,7 +569,6 @@ export async function getAgent(
       .select({
         id: agentConnections.id,
         machineLabel: agentConnections.machineLabel,
-        model: agentConnections.model,
         repo: agentConnections.repo,
         branch: agentConnections.branch,
         status: agentConnections.status,

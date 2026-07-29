@@ -108,6 +108,10 @@ BYPASS=0; for _a in "$@"; do [ "$_a" = "--bypass" ] && BYPASS=1; done
 # reboot keeps context), falling back to a fresh start when there is none. Detected
 # anywhere in the args.
 NEW=0; for _a in "$@"; do [ "$_a" = "--new" ] && NEW=1; done
+# Opt-in restart: \`./rr.sh up --restart\` replaces a running session instead of attaching
+# to it. \`up\` stays non-destructive by default - people type it reflexively - so a session
+# that predates its own config is REFUSED with the evidence, and this is how you act on it.
+RESTART=0; for _a in "$@"; do [ "$_a" = "--restart" ] && RESTART=1; done
 # bypass flag for a CLI (defaults to PRIMARY) - so \`<cli> run --bypass\` works for all.
 bypass_flag() {
   case "\${1:-$PRIMARY}" in
@@ -140,8 +144,45 @@ build_launch() {
 }
 
 LAUNCH="$PRIMARY"
+
+# Whether the relayroom-channel MCP server will actually LOAD in this worktree,
+# as "<ready|notready|unknown> <layer that decided>".
+#
+# The general defect this exists to prevent: we inferred OUR readiness from SOMEONE
+# ELSE'S feature flag. \`claude --channels\` answers "does Claude Code have channels",
+# and prepare_launch used to treat that as "will our channel server load" - different
+# questions. When they diverged, delivery=channel was written, the channel silently
+# did not load (claude does not exit or warn - measured), and the pager returned before
+# subscribing. The failure being prevented is not "channel does not work"; it is
+# "channel does not work and everything says it does" - heartbeat still green, status
+# bar still painted, nothing delivered. That is why the caller treats anything short of
+# positive evidence as pager rather than branching on a known failure.
+channel_ready() {
+  local out=""
+  # Layer 1, the observable: \`claude mcp list\` reports the server's real state,
+  # approval included. An outcome rather than a config key, so it still answers if a
+  # future Claude Code moves the gate somewhere we have not heard of.
+  out="$(claude mcp list 2>/dev/null || true)"
+  if grep -q '^relayroom-channel:' <<<"$out"; then
+    if grep -q '^relayroom-channel:.*Connected' <<<"$out"; then echo "ready observed"; else echo "notready observed"; fi
+    return
+  fi
+  # Layer 2, the approval keys doctor reads. Only reached when layer 1 could not answer,
+  # and the caller logs WHICH layer decided - otherwise a silently broken layer 1 would
+  # be covered for by layer 2 until a gate change broke that too, with nobody having
+  # noticed the first one die.
+  case " $(unapproved_servers) " in
+    *" relayroom-channel "*) echo "notready settings"; return ;;
+  esac
+  if [ -f "$ROOT/.mcp.json" ] && grep -q '"relayroom-channel"' "$ROOT/.mcp.json" 2>/dev/null; then
+    echo "ready settings"; return
+  fi
+  # Layer 3: no positive evidence either way. Channel mode requires evidence.
+  echo "unknown none"
+}
+
 prepare_launch() {
-  local mode="pager" probe="" base="$PRIMARY" byp=""
+  local mode="pager" probe="" base="$PRIMARY" byp="" why="" verdict="" layer=""
   # Capture the probe to a var FIRST: piping \`claude --channels\` into grep under
   # \`set -o pipefail\` would report claude's intentional nonzero exit and make the
   # \`if\` always false (channels never activate). \`|| true\` keeps the nonzero from
@@ -149,8 +190,17 @@ prepare_launch() {
   if [ "$PRIMARY" = "claude" ]; then
     probe="$(claude --channels 2>&1 || true)"
     if grep -q "argument missing" <<<"$probe"; then
-      base="claude --dangerously-load-development-channels server:relayroom-channel"
-      mode="channel"
+      # Channels EXIST. Whether ours LOADS is a separate question - ask it.
+      read -r verdict layer <<< "$(channel_ready)"
+      case "$verdict" in
+        ready)
+          base="claude --dangerously-load-development-channels server:relayroom-channel"
+          mode="channel"; why=" (relayroom-channel loadable, via $layer)" ;;
+        notready)
+          why=" (channel supported, but relayroom-channel is not approved here - run ./rr.sh setup; via $layer)" ;;
+        *)
+          why=" (channel supported, but relayroom-channel could not be confirmed loadable - run ./rr.sh setup)" ;;
+      esac
     fi
   fi
   # The pager and channel server MUST agree on the mode; a stale value causes missed
@@ -184,7 +234,7 @@ RRPROFILE
     fi
   fi
   [ "$NEW" = "1" ] && echo "session: NEW" >&2 || echo "session: resume last (--new for fresh)" >&2
-  echo "wake delivery: $mode" >&2
+  echo "wake delivery: $mode$why" >&2
 }
 
 # ── pager ────────────────────────────────────────────────────────────────────
@@ -315,6 +365,83 @@ tx_start() {
 }
 tx_status() { tx_exists && echo "tmux: session '$SESSION' running" || echo "tmux: no session '$SESSION'"; }
 
+# A fingerprint of the config a session reads at startup. Content, not mtime: \`claude mcp
+# add\` rewrites .mcp.json unconditionally and is not ours to fix, so \`up\` running setup
+# would otherwise bump the very timestamps it then compares - the same cancellation that
+# made the installHook rewrite fatal, from a writer we do not control.
+config_fp() {
+  node -e 'var fs=require("fs"),c=require("crypto"),h=c.createHash("sha1");
+process.argv.slice(1).forEach(function(p){try{h.update(fs.readFileSync(p))}catch(e){h.update("")}});
+process.stdout.write(h.digest("hex"))' "$ROOT/.mcp.json" "$ROOT/.claude/settings.json" 2>/dev/null || true
+}
+
+# Epoch seconds a file was last written, 0 if it is not there. GNU stat, BSD fallback.
+file_mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0; }
+# Local HH:MM for an epoch, for messages that name evidence rather than a conclusion.
+at_hhmm() { date -d "@$1" +%H:%M 2>/dev/null || date -r "$1" +%H:%M 2>/dev/null || echo "$1"; }
+
+# Echo "<file> <written-epoch> <session-started-epoch>" when the RUNNING session predates
+# a config file it reads at startup, and return 0. Return 1 when it is current.
+#
+# This is the gap doctor structurally cannot see: doctor inspects files on disk and every
+# file here is correct - the process that needed to read them just started earlier. The
+# check has to be liveness of the config against the process, not correctness of the
+# config on its own.
+#
+# It relies on those mtimes being honest, which is why \`installHook\` writes only on
+# change. An unconditional rewrite would make every session look stale forever, since
+# \`up\` runs setup on the way past.
+session_stale() {
+  tx_exists || return 1
+  local created f m
+  # \`list-sessions -F\` rather than \`display -p -t\`: display needs an attached client and
+  # returns EMPTY for a detached session, which is every session this check cares about.
+  created="$(tmux list-sessions -F '#{session_name} #{session_created}' 2>/dev/null | awk -v s="$SESSION" '$1 == s { print $2; exit }' || true)"
+  [ "\${created:-0}" -gt 0 ] 2>/dev/null || return 1
+  for f in "$ROOT/.mcp.json" "$ROOT/.claude/settings.json"; do
+    [ -f "$f" ] || continue
+    m="$(file_mtime "$f")"
+    if [ "\${m:-0}" -gt "$created" ] 2>/dev/null; then echo "$f $m $created"; return 0; fi
+  done
+  return 1
+}
+
+# Echo the exit status of a session whose panes are ALL dead, and return 0. A corpse:
+# the agent exited and \`remain-on-exit on\` kept the pane, so tmux did not destroy the
+# session and \`tx_exists\` still says yes.
+#
+# Without this, \`up\` attaches to a dead pane and reports success - and the operator who
+# turned remain-on-exit on to find out WHY an agent is dying is the one most likely to
+# hit it. A corpse also has nothing to lose mid-turn, which is why the caller replaces it
+# without waiting for --restart: the reason that flag exists does not apply here.
+session_dead() {
+  tx_exists || return 1
+  local panes; panes="$(tmux list-panes -t "=$SESSION" -F '#{pane_dead} #{pane_dead_status}' 2>/dev/null || true)"
+  [ -n "$panes" ] || return 1
+  awk '$1 != "1" { alive = 1 } END { exit(alive ? 1 : 0) }' <<<"$panes" || return 1
+  awk '$1 == "1" { print ($2 == "" ? "?" : $2); exit }' <<<"$panes"
+}
+
+# Replace the running session with a fresh one carrying the current config. The ONE
+# respawn primitive: \`up --restart\` calls it from outside the session, so it can kill and
+# recreate directly. The in-session caller (an agent that re-registered its own MCP and
+# needs the session to reload it) needs the same steps behind a detached \`setsid\` script,
+# because killing your own session kills the shell mid-command - when that lands, it wraps
+# this rather than reimplementing it.
+respawn_session() {
+  # Refuse to saw off the branch: from INSIDE the session being replaced, the kill takes
+  # this shell with it before the relaunch can run.
+  if [ -n "\${TMUX:-}" ] && [ "$(tmux display -p '#{session_name}' 2>/dev/null || true)" = "$SESSION" ]; then
+    echo "rr: --restart cannot run from inside '$SESSION' - it would kill this shell before relaunching." >&2
+    echo "    Run it from outside the session, or detach first ('Ctrl-b d')." >&2
+    return 1
+  fi
+  prepare_launch
+  tmux kill-session -t "=$SESSION" 2>/dev/null || true
+  echo "restarting session '$SESSION' running '$LAUNCH'"
+  tmux new-session -d -s "$SESSION" "$LAUNCH"
+}
+
 # Migrate a renamed session: if init recorded a previous name (PREV) and that old
 # session is still running while the new name is free, rename it in place. The
 # agent keeps running - only the label changes - so a naming-convention change
@@ -353,6 +480,88 @@ self_update_if_pending() {
 # mcp_add (warn before taking a global entry over) and doctor (diagnose after the
 # fact) read it, so the two can never disagree about what is registered.
 registered_part() { grep -oE 'part=[A-Za-z0-9_-]+' "$1" 2>/dev/null | head -1 | cut -d= -f2 || true; }
+
+# The part named by the repo-root LOCAL registration, empty if there is none (and
+# "unknown" for an entry whose url carries no part=).
+#
+# Claude keys local scope to the git COMMON dir's parent - the MAIN repo root - not
+# to the worktree you run it from. So there is exactly ONE local entry per repo and
+# every worktree reads it, which makes \`claude mcp remove -s local\` a fleet-wide
+# delete rather than a local cleanup. mcp_add reads this before deciding whether it
+# is allowed to remove it; doctor reads it to warn about the state before it bites.
+local_scope_part() {
+  local root
+  root="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || echo /nonexistent/.git)")"
+  [ -d "$root" ] || return 0
+  node -e 'var fs=require("fs"),os=require("os"),path=require("path");
+try{
+  var c=JSON.parse(fs.readFileSync(path.join(os.homedir(),".claude.json"),"utf8"));
+  var s=(((c.projects||{})[process.argv[1]]||{}).mcpServers||{}).relayroom;
+  if(!s)process.exit(0);
+  var m=/[?&]part=([A-Za-z0-9_-]+)/.exec(s.url||"");
+  process.stdout.write(m?m[1]:"unknown");
+}catch(e){}' "$root" 2>/dev/null || true
+}
+
+# Servers registered in this worktree's .mcp.json that Claude has NOT been told to
+# trust, space separated, empty when all of them are approved.
+#
+# The approval is checked at STARTUP, so a worktree in this state keeps working until
+# its next relaunch and then comes back with no board and no wake channel - it cannot
+# even report that, because reporting needs the channel. A doctor that reports all-ok
+# on a part that will not come back is worse than no doctor, because it is the check
+# that stops anyone looking.
+#
+# Read as "registered but not reachable", which is the durable question. The key below
+# is the mechanism on today's Claude Code; if a future version gates it differently,
+# this check is what should be re-pointed, not the registration.
+unapproved_servers() {
+  [ -f "$ROOT/.mcp.json" ] || return 0
+  node -e 'var fs=require("fs"),os=require("os"),path=require("path");
+function read(p){try{return JSON.parse(fs.readFileSync(p,"utf8"))}catch(e){return {}}}
+var root=process.argv[1];
+var declared=Object.keys(read(path.join(root,".mcp.json")).mcpServers||{});
+if(!declared.length)process.exit(0);
+var ok=new Set(),all=false;
+[read(path.join(root,".claude/settings.json")),
+ read(path.join(root,".claude/settings.local.json")),
+ ((read(path.join(os.homedir(),".claude.json")).projects||{})[root]||{})].forEach(function(s){
+  if(s.enableAllProjectMcpServers)all=true;
+  (Array.isArray(s.enabledMcpjsonServers)?s.enabledMcpjsonServers:[]).forEach(function(n){ok.add(n)});
+});
+if(all)process.exit(0);
+process.stdout.write(declared.filter(function(n){return !ok.has(n)}).join(" "));' "$ROOT" 2>/dev/null || true
+}
+
+# Sibling worktrees of this repo that have no relayroom server in their OWN .mcp.json.
+# Those are the ones still living off the shared local entry, so they go dark the
+# moment it is removed. We cannot register them from here - each needs the token from
+# its own .relayroom/config.json - but the worktree whose setup breaks them is the one
+# that should say so, at the moment it happens rather than in a doctor run nobody performs.
+#
+# \`git worktree list\` is the right enumeration because it is REPO-scoped, and so is the
+# damage: local scope keys per repo root, so a removal here can never reach a different
+# repo's worktrees. Do not widen this to every RelayRoom worktree on the machine - the
+# report's scope has to match the blast radius or it raises alarms about the unaffected.
+report_sibling_worktrees() {
+  git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+  local wt missing=""
+  while read -r wt; do
+    [ -n "$wt" ] || continue
+    [ "$wt" = "$ROOT" ] && continue
+    # Only RelayRoom worktrees: a plain worktree has no part to lose.
+    [ -f "$wt/.relayroom/config.json" ] || continue
+    [ -n "$(registered_part "$wt/.mcp.json")" ] && continue
+    missing="\${missing}       $wt
+"
+  done <<< "$(git worktree list --porcelain 2>/dev/null | awk '/^worktree /{ print substr($0, 10) }')"
+  [ -n "$missing" ] || return 0
+  echo "note: these sibling worktrees have no relayroom server of their own:" >&2
+  printf '%s' "$missing" >&2
+  echo "      They read the shared repo-root LOCAL entry, which setup removes." >&2
+  echo "      Run ./rr.sh setup inside each one - it cannot be done from here," >&2
+  echo "      since each needs the token from its own .relayroom/config.json." >&2
+}
 
 # The config file an agent reads its MCP servers from. claude's is per-worktree;
 # codex and agy have ONE global file per machine.
@@ -397,16 +606,54 @@ mcp_add() {
   else
     # Claude defaults to LOCAL scope, which it keys to the git REPO ROOT - so every
     # worktree shares one entry and they all post as the same part. Register in
-    # PROJECT scope (.mcp.json, per-worktree) for per-worktree identity, and drop any
-    # old shared local entry so the migration takes effect.
-    claude mcp remove relayroom -s local 2>/dev/null || true
-    claude mcp remove relayroom -s project 2>/dev/null || true
+    # PROJECT scope (.mcp.json, per-worktree) for per-worktree identity.
+    #
+    # The old code dropped the local entry unconditionally, which is a fleet-wide
+    # delete: every sibling worktree still reading it lost the board with no message,
+    # no log, and nothing changed in its own directory. Read it FIRST, migrate
+    # ourselves, and remove it only when it names THIS part - i.e. only when the
+    # registration we just wrote is the thing that replaced it.
+    #
+    # A no-op must also stay SILENT. The old line printed "Removed MCP server relayroom
+    # from local config" on every run, including in worktrees that never used local
+    # scope - so the one session that read the alarming message was never the session
+    # that lost anything, while the sibling that actually went dark was told nothing.
+    local _lp; _lp="$(local_scope_part)"
+    # Ours alone (project scope is per-worktree) and re-added on the next line, so its
+    # "Removed ..." line is noise about a registration that is not going away.
+    claude mcp remove relayroom -s project >/dev/null 2>&1 || true
     claude mcp add -s project --transport http relayroom "$URL" --header "Authorization: Bearer $TOKEN"
+    # Verify rather than trust the exit code. What follows is destructive for every
+    # other worktree, so it must never run off an add that reported success while
+    # writing nothing.
+    if [ "$(registered_part "$ROOT/.mcp.json")" != "$PART" ]; then
+      echo "warning: project-scope registration did not land in $ROOT/.mcp.json." >&2
+      echo "         Leaving the shared repo-root local entry alone." >&2
+      return 1
+    fi
+    if [ "$_lp" = "$PART" ]; then
+      echo "removing the repo-root LOCAL registration (part=$_lp) - this part now has its own .mcp.json entry"
+      claude mcp remove relayroom -s local 2>/dev/null || true
+    elif [ -n "$_lp" ]; then
+      echo "note: a repo-root LOCAL relayroom registration remains, as part '$_lp'." >&2
+      echo "      It is SHARED by every worktree of this repo, so removing it here would" >&2
+      echo "      disconnect that part. Leave it until that worktree runs ./rr.sh setup." >&2
+    fi
   fi
   echo "registered relayroom MCP for $a"
+  [ "$a" = "claude" ] && report_sibling_worktrees || true
 }
 hooks_install() { $CLI hooks install --agent "$1"; }
-setup() { local a; IFS=',' read -ra _AS <<< "$AGENT"; for a in "\${_AS[@]}"; do mcp_add "$a" && hooks_install "$a"; done; }
+# Fall back to PRIMARY when config names no agent. Everything else already defaults that
+# way (\`PRIMARY="\${AGENT%%,*}"\` then claude), but \`read -ra\` splits an empty string into
+# ZERO words, so setup used to run its loop no times and register nothing - silently, and
+# on exactly the worktrees whose config predates the agent field.
+setup() {
+  local a
+  IFS=',' read -ra _AS <<< "\${AGENT:-}"
+  [ "\${#_AS[@]}" -gt 0 ] || _AS=("$PRIMARY")
+  for a in "\${_AS[@]}"; do [ -n "$a" ] || a="$PRIMARY"; mcp_add "$a" && hooks_install "$a"; done
+}
 
 # ── doctor: diagnose common setup problems + print the exact fix command ───────
 # The #1 support issue is the git-worktree identity tangle: agents in different
@@ -453,11 +700,38 @@ doctor() {
     fi
   elif [ "$PRIMARY" = "claude" ]; then
     echo "$WRN claude relayroom MCP not in this worktree's .mcp.json - likely sharing the repo-root local scope."
-    echo "       If worktrees post as the same part, run:  claude mcp remove relayroom -s local && ./rr.sh setup"
+    # Deliberately NOT 'claude mcp remove relayroom -s local': local scope is keyed to
+    # the repo root, so that command disconnects every sibling worktree reading it.
+    # setup registers this worktree first and cleans the shared entry up only when it
+    # is this part's to clean.
+    echo "       Run:  ./rr.sh setup"
   else
     echo "$WRN $PRIMARY relayroom MCP not registered ($cfgdesc) - run: ./rr.sh setup"
   fi
   [ -n "$global" ] && echo "       note: $PRIMARY MCP config is GLOBAL - worktrees can't hold separate identities here (use claude for that)."
+  # Report the repo-root LOCAL entry even when this worktree is healthy. It is shared
+  # by every worktree and the next setup in ANY of them removes it, so it is the state
+  # that breaks siblings later rather than the one that is broken now - a diagnostic
+  # that only fires after the damage is half a diagnostic.
+  if [ "$PRIMARY" = "claude" ]; then
+    # ERR, not WARN: this worktree is fine right now and will not come back from its
+    # next relaunch. A green check here is what stops anyone looking.
+    local unapproved; unapproved="$(unapproved_servers)"
+    if [ -n "$unapproved" ]; then
+      echo "$ERR registered but NOT approved:$unapproved"
+      echo "       Claude checks .mcp.json approval at startup, so this worktree keeps"
+      echo "       working until its next relaunch and then comes back with no board and"
+      echo "       no wakes - unable to report it, because reporting needs the channel."
+      echo "       Fix: ./rr.sh setup   (writes enabledMcpjsonServers to .claude/settings.json)"
+    fi
+    local lp; lp="$(local_scope_part)"
+    if [ -n "$lp" ]; then
+      echo "$WRN claude relayroom MCP is ALSO registered in repo-root LOCAL scope (part=$lp)."
+      echo "       That entry is shared by every worktree of this repo, and the next"
+      echo "       './rr.sh setup' run in the worktree that owns part '$lp' will retire it."
+      [ "$lp" = "$PART" ] && echo "       It is this part's own leftover - re-run ./rr.sh setup here to clear it."
+    fi
+  fi
   if mcp_online; then echo "$OKM server reachable ($SERVER)"; else echo "$ERR server UNREACHABLE ($SERVER) - is the hub up?"; fi
   pg_running && echo "$OKM pager running (pid $(cat "$PIDFILE"))" || echo "$WRN pager stopped - start with: ./rr.sh up"
   if session_name_ok; then
@@ -474,8 +748,10 @@ doctor() {
 usage() {
   cat <<EOF
 RelayRoom console (part=$PART, session=$SESSION, agent=$AGENT)
-  rr.sh up [--bypass] [--new]    auto-update if a newer CLI is out, then rebuild
-                                 session + start pager + attach (after reboot)
+  rr.sh up [--bypass] [--new] [--restart]
+                                 auto-update if a newer CLI is out, ensure setup, then
+                                 rebuild session + start pager + attach (after reboot).
+                                 --restart replaces a session that predates its config
   rr.sh launch [--bypass] [--new]  from INSIDE a session: set delivery + pager + run the agent
   rr.sh down                     stop pager + kill the tmux session
   rr.sh status                   show tmux + pager status
@@ -498,6 +774,55 @@ case "\${1:-help}" in
     assert_session_name
     self_update_if_pending "$@"   # auto-update first if the hub flagged a newer CLI (may re-exec)
     migrate_session_name          # rename a still-running old-named session to the standard name
+    # \`up\` is meant to be the one command that makes a part work, so it ENSURES the
+    # registration rather than treating it as a separate ceremony. setup is idempotent
+    # (and genuinely so now that installHook writes only on change), and it has to run
+    # before prepare_launch so the approval it writes is in place when channel readiness
+    # is probed. A failure here is reported, not fatal - the human still gets a session.
+    # Read the staleness evidence BEFORE setup runs, for the reason config_fp exists:
+    # setup rewrites .mcp.json whether or not anything changed, so afterwards the file is
+    # always newer than the session and every check would fire. Taken here, the mtimes
+    # still describe the last time the config actually changed.
+    _stale="$(session_stale || true)"; _fp_before="$(config_fp)"; _dead="$(session_dead || true)"
+    setup || echo "rr: setup reported a problem - continuing. Run ./rr.sh doctor" >&2
+    _fp_after="$(config_fp)"
+    _respawned=0
+    if tx_exists && { [ "$RESTART" = "1" ] || [ -n "$_dead" ]; }; then
+      [ -n "$_dead" ] && echo "rr: session '$SESSION' is a corpse - its agent exited (status $_dead) and remain-on-exit kept the pane."
+      respawn_session; _respawned=1
+    fi
+    # Everything below asks about a session we did NOT just create. After a respawn it is
+    # current by construction, and its launch flags were applied by prepare_launch.
+    if [ "$_respawned" = "0" ] && tx_exists; then
+      # Flags that only prepare_launch consumes. With a session already up that branch
+      # never runs, so accepting them here would apply nothing and say nothing - which is
+      # worse than refusing, because the caller believes the flag took effect.
+      if [ "$BYPASS" = "1" ] || [ "$NEW" = "1" ]; then
+        echo "rr: session '$SESSION' is already running, so $([ "$BYPASS" = "1" ] && echo "--bypass" || echo "--new") would have no effect." >&2
+        echo "    Launch flags apply when the session is created. Use ./rr.sh up --restart to" >&2
+        echo "    replace it, or ./rr.sh down first." >&2
+        exit 1
+      fi
+      # A session that predates its own config will never read it: .mcp.json and
+      # settings.json are read at process start. Refuse with the evidence rather than
+      # restarting silently, which would discard whatever the agent is doing mid-turn.
+      # \`up\` ends in attach/switch-client, so this message always has a reader.
+      if [ -n "$_stale" ]; then
+        set -- $_stale
+        echo "rr: session '$SESSION' started $(at_hhmm "$3"), $(basename "$1") written $(at_hhmm "$2") - the running agent never read it." >&2
+        echo "    Nothing on disk is wrong; the process that needed it started earlier, which is why doctor is green." >&2
+        echo "    Restart it with:  ./rr.sh up --restart" >&2
+        exit 1
+      elif [ "$_fp_before" != "$_fp_after" ]; then
+        # setup CHANGED something just now, so the running session predates it as of this
+        # second. Caught by content rather than mtime, so the unconditional rewrites that
+        # setup performs on every run do not masquerade as a change.
+        echo "rr: setup just changed this worktree's config, and session '$SESSION' started before it." >&2
+        echo "    The running agent reads .mcp.json and settings.json at startup, so it will not see this." >&2
+        echo "    Restart it with:  ./rr.sh up --restart" >&2
+        exit 1
+      fi
+    fi
     if ! tx_exists; then prepare_launch; echo "starting session '$SESSION' running '$LAUNCH'"; tmux new-session -d -s "$SESSION" "$LAUNCH"; fi
     # RESTART the pager (not just start): a pager left over from a previous session
     # has the OLD target baked in (it reads config.json once at startup and has no

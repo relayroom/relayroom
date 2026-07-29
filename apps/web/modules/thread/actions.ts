@@ -358,14 +358,22 @@ export async function closeThread(input: CloseThreadInput): Promise<ApiResult> {
         )
     }
 
-    // Wake the extractor: a thread reaching closed/answered is what makes its
-    // conversation eligible for distillation. Without this, a dashboard-closed
-    // thread would never carry the dirty marker and would never be extracted -
-    // the same shared setter the server's closers call, so all three agree. Note
-    // the status set differs from the unread-clear above: extraction cares about
-    // closed/answered, not canceled (a canceled thread is not a resolution to
-    // learn from).
-    if (status === "closed" || status === "answered") {
+    // Wake the extractor: a thread reaching closed is what makes its conversation
+    // eligible for distillation. Without this, a dashboard-closed thread would
+    // never carry the dirty marker and would never be extracted - the same shared
+    // setter the server's closers call, so all three agree.
+    //
+    // Note the status set differs from the unread-clear above, and in both
+    // directions:
+    //   canceled - not a resolution to learn from.
+    //   answered - not a finished thread. In our vocabulary it means "I have
+    //     replied to you", not "this is over", and autoclose treats it as live and
+    //     closes it after it goes idle. Marking here would raise the marker for a
+    //     thread the extractor cannot take, and extraction claims a thread once:
+    //     letting a mid-conversation state qualify would hand the claim to the
+    //     partial transcript and lock out the full one. The thread is extracted
+    //     when it actually closes, roughly half an hour later.
+    if (status === "closed") {
       await markProjectKnowledgeDirty(db, threadCheck.thread.projectId)
     }
 

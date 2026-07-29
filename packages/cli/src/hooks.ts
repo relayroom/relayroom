@@ -99,8 +99,16 @@ interface HookGroup {
 type HookMap = Record<string, HookGroup[] | undefined>
 interface AgentSettings {
   hooks?: HookMap
+  enabledMcpjsonServers?: unknown
   [k: string]: unknown
 }
+
+/**
+ * The servers RelayRoom itself registers in the worktree's `.mcp.json` - the board
+ * and the wake channel. Approving them by name is deliberate: `enableAllProjectMcpServers`
+ * would also trust whatever anyone else adds to that file later.
+ */
+export const RELAYROOM_MCP_SERVERS = ["relayroom", "relayroom-channel"] as const
 
 /**
  * One hook group for this agent. agy (like Gemini) requires a `matcher` on each group (and
@@ -179,12 +187,51 @@ export function installHook(opts: HookOpts): void {
     )
     pre.push({ matcher: "AskUserQuestion", hooks: [{ type: "command", command: `node "${guard}"` }] })
     settings.hooks["PreToolUse"] = pre
+
+    // Claude gates a project-scoped `.mcp.json` server behind an approval, and checks
+    // it at STARTUP. An unattended agent has nobody to answer that prompt, so a
+    // worktree that is registered but not approved comes back from its next relaunch
+    // with no board AND no wake channel - and cannot report the condition, because
+    // reporting it needs exactly the thing that is missing. Approving here is what
+    // makes a fresh worktree usable with no human interaction.
+    //
+    // Merge, never replace: this is a project file that may already hold the user's
+    // own approvals, and it is the same file the hooks above live in.
+    const approved = new Set(
+      Array.isArray(settings.enabledMcpjsonServers)
+        ? settings.enabledMcpjsonServers.filter((s): s is string => typeof s === "string")
+        : [],
+    )
+    for (const name of RELAYROOM_MCP_SERVERS) approved.add(name)
+    settings.enabledMcpjsonServers = [...approved]
+  }
+
+  // Write ONLY when the result differs. A no-op must be silent in every channel it can
+  // speak through, and mtime is one of those channels: an unconditional rewrite is a lie
+  // in the filesystem, and everything downstream that compares mtimes inherits it. `up`
+  // decides whether a running session predates its own configuration by exactly that
+  // comparison, and since `up` also runs setup, a no-op rewrite here would make every
+  // session look stale forever.
+  const next = `${JSON.stringify(settings, null, 2)}\n`
+  let current: string | undefined
+  try {
+    current = readFileSync(path, "utf8")
+  } catch {
+    current = undefined
+  }
+  if (current === next) {
+    console.log(`RelayRoom usage hook already current (${event}) -> ${path}`)
+    if (agent === "codex") console.log(codexFeatureNote())
+    return
   }
 
   mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, `${JSON.stringify(settings, null, 2)}\n`)
+  writeFileSync(path, next)
   console.log(`Installed RelayRoom usage hook (${event}) -> ${path}`)
-  if (agent === "claude") console.log("Installed AskUserQuestion guard (PreToolUse, non-main only)")
+  if (agent === "claude") {
+    console.log("Installed AskUserQuestion guard (PreToolUse, non-main only)")
+    console.log(`Approved the RelayRoom MCP servers (${RELAYROOM_MCP_SERVERS.join(", ")}) so an unattended relaunch keeps its board and wakes`)
+  }
 
   if (agent === "codex") console.log(codexFeatureNote())
 }
