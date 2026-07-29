@@ -99,12 +99,13 @@ beforeAll(async () => {
       suppressed: false,
       createdAt: hours(1),
     },
-    // OWNER_A as the SENDER: a loop-breaker trip. This is the shape `pipeline.ts`
-    // writes - ownerUserId is whoever tripped the breaker, and there is no agentId,
-    // because the send never reached a part. It shares a column with the rows above
-    // and means something else entirely.
+    // A loop-breaker trip by OWNER_A. This is the shape `pipeline.ts` writes, and
+    // the shape is the point: NO ownerUserId and NO agentId, only senderUserId.
+    // Nothing was suppressed for anyone - a send was blocked by someone - so the
+    // row is keyed on the sender. A fixture that also set ownerUserId would let a
+    // query filtering on ownerUserId find it, which is exactly the mistake the
+    // server removed, and the test would pass while production returned nothing.
     {
-      ownerUserId: OWNER_A,
       projectId,
       senderPart: "backend",
       senderUserId: OWNER_A,
@@ -157,11 +158,13 @@ describe("listOwnerWakeAudit", () => {
 })
 
 /**
- * `ownerUserId` carries two different subjects. A row with an agentId is a wake
- * aimed at a part this owner runs; a row without one is a send BY this user that
- * the loop breaker stopped. Before the split they were returned as one list, so a
- * blocked send appeared among the part's wakes with no part on it - an owner
- * reading it would count a suppression against a part that was never involved.
+ * The two axes are keyed on DIFFERENT COLUMNS, and that is what these pin.
+ *
+ * A wake aimed at a part is keyed on ownerUserId. A send blocked by the loop
+ * breaker is keyed on senderUserId, with ownerUserId left null - nothing was
+ * suppressed for anyone. Reading both through ownerUserId returns the second axis
+ * empty forever, which renders as "no send of yours was ever blocked" and is a
+ * claim this app cannot make.
  */
 describe("listOwnerWakeAudit splits the two axes", () => {
   it("keeps a loop-breaker trip out of the wakes-for-my-parts list", async () => {
@@ -195,6 +198,8 @@ describe("listOwnerWakeAudit splits the two axes", () => {
     if (!res.result) return
 
     // The two totals partition the window; nothing is double-counted or dropped.
+    // They come from separate gated queries, so a row counted twice or missed
+    // entirely shows up here rather than in one axis looking plausible alone.
     expect(res.summary.total + res.blockedSendsSummary.total).toBe(4)
     expect(res.summary.suppressedCount + res.blockedSendsSummary.suppressedCount).toBe(2)
   })

@@ -1,4 +1,4 @@
-import { and, count, desc, eq, gte, sql } from "drizzle-orm"
+import { and, count, desc, eq, gte, isNotNull, isNull, sql } from "drizzle-orm"
 import type { ApiResultWithItem, ApiResultWithItems } from "@relayroom/shared"
 import { db } from "@/modules/drizzle/db"
 import { wakeEvents, ownerWakeBudgets, projects, agents } from "@relayroom/db/schema"
@@ -107,44 +107,27 @@ export interface WakeAuditSummary {
 }
 
 /**
- * `wake_event` holds two different statements under one `ownerUserId` column, and
- * telling them apart is not optional - they have different subjects.
+ * `wake_event` answers two different questions, and they are asked with DIFFERENT
+ * COLUMNS. This is the part that is easy to get wrong.
  *
- *  - `recipient`: a wake aimed at a part this user owns. ownerUserId is the part's
- *    owner, and `agentId` names the part.
- *  - `sender`: this user sent something and the loop breaker stopped it
- *    (`pipeline.ts` writes ownerUserId = the SENDER, and no agentId at all).
+ *  - `recipient`: a wake aimed at a part this user owns. Keyed by `ownerUserId`,
+ *    with `agentId` naming the part.
+ *  - `sender`: this user sent something and the loop breaker stopped it. Keyed by
+ *    `senderUserId`, with NO `agentId` and NO `ownerUserId` - nothing was
+ *    suppressed for anyone, a send was blocked by someone.
  *
- * So a row saying "suppressed" can mean "a part of mine was not woken" or "a send
- * of mine was blocked", and listing them together reads as the first for both. The
- * agent-detail audit panel has been doing exactly that: a loop-breaker row appeared
- * in the part's list with no part on it.
+ * They used to share `ownerUserId`, which is why the audit panel listed a blocked
+ * send among a part's wakes. The server stopped writing the sender there, so the
+ * two axes now need two queries with two gates. Asking for both with one
+ * `ownerUserId = me` filter returns the sender axis EMPTY, always - which looks
+ * exactly like "you have never had a send blocked" and is not a claim this app can
+ * make.
  *
- * The discriminator is `agentId`, not `reason`. That is deliberate - it holds
- * whatever the reason vocabulary turns out to be, and the vocabulary is being
- * reworked. A row about a part has a part; a row about a send does not.
- *
- * ONE PLACE ON PURPOSE. Everything downstream consumes the split result, never the
- * raw rows, so when the server exposes an axis-aware read this function is the only
- * thing that changes.
+ * Each query carries its own isolation gate, deliberately, rather than one query
+ * with an OR. A single gate is a sentence someone can check; two ORed conditions
+ * in one predicate is a thing to reason about, and this table's whole history is
+ * one column being read as two things.
  */
-export interface WakeAuditAxes {
-  /** Wakes aimed at parts this owner runs. */
-  recipient: WakeAuditRow[]
-  /** Sends by this user that were blocked before reaching anyone. */
-  sender: WakeAuditRow[]
-}
-
-function splitByAxis(rows: WakeAuditRow[]): WakeAuditAxes {
-  const recipient: WakeAuditRow[] = []
-  const sender: WakeAuditRow[] = []
-  for (const row of rows) {
-    if (row.agentId) recipient.push(row)
-    else sender.push(row)
-  }
-  return { recipient, sender }
-}
-
 export interface PartSuppression {
   agentId: string
   part: string
@@ -226,14 +209,19 @@ export async function listProjectSuppressions(
 }
 
 /**
- * Audit (spec §10.6, §11): "who consumed my wake budget". Returns ONLY the
- * logged-in owner's wakeEvents (ownerUserId === userId) within the window, newest
- * first. The `ownerUserId = userId` predicate is the SOLE isolation gate - no
- * other owner's events can leak in.
+ * Audit (spec §10.6, §11): "who consumed my wake budget", plus the sends of this
+ * user's that were blocked outright.
  *
- * Returned on two axes, because `ownerUserId` does not mean one thing: `items` are
- * wakes aimed at this owner's parts, `blockedSends` are this user's own sends that
- * the loop breaker stopped. See splitByAxis above for why they cannot share a list.
+ * TWO QUERIES, TWO GATES. `items` are wakes aimed at parts this user owns, gated
+ * on `ownerUserId = userId`. `blockedSends` are this user's own sends that the
+ * loop breaker stopped, gated on `senderUserId = userId` - a different column,
+ * because the server records a blocked send against the sender and leaves
+ * `ownerUserId` null. Filtering both with `ownerUserId` returns the second axis
+ * permanently empty, which the UI would render as "nothing was ever blocked".
+ *
+ * `agentId` still separates them, and both conditions are stated on both sides:
+ * the gate alone would be enough today, but stating it means neither query starts
+ * returning the other's rows if a future writer sets both columns.
  */
 export async function listOwnerWakeAudit(
   userId: string,
@@ -255,75 +243,75 @@ export async function listOwnerWakeAudit(
   }
   try {
     const since = new Date(Date.now() - windowHours * 60 * 60 * 1000)
-    // ownerUserId is the budget-isolation gate (budgets are per-owner, spanning all
-    // their projects). When a projectId is passed (e.g. on a project's agent page),
-    // also scope to that project so the list isn't mixed with other projects' wakes.
-    const ownerGate = and(
-      eq(wakeEvents.ownerUserId, userId),
+    const inWindow = [
       gte(wakeEvents.createdAt, since),
       ...(projectId ? [eq(wakeEvents.projectId, projectId)] : []),
-    )
+    ]
+    // The budget is per-owner and spans every project, so the owner gate is the
+    // isolation boundary; projectId only narrows what is shown.
+    const recipientGate = and(eq(wakeEvents.ownerUserId, userId), isNotNull(wakeEvents.agentId), ...inWindow)
+    const senderGate = and(eq(wakeEvents.senderUserId, userId), isNull(wakeEvents.agentId), ...inWindow)
 
-    const rows = await db
-      .select({
-        id: wakeEvents.id,
-        createdAt: wakeEvents.createdAt,
-        senderPart: wakeEvents.senderPart,
-        senderUserId: wakeEvents.senderUserId,
-        senderName: better_auth_user.name,
-        projectId: wakeEvents.projectId,
-        projectName: projects.name,
-        agentId: wakeEvents.agentId,
-        agentPart: agents.part,
-        urgent: wakeEvents.urgent,
-        suppressed: wakeEvents.suppressed,
-        reason: wakeEvents.reason,
-      })
-      .from(wakeEvents)
-      .leftJoin(projects, eq(wakeEvents.projectId, projects.id))
-      .leftJoin(agents, eq(wakeEvents.agentId, agents.id))
-      .leftJoin(better_auth_user, eq(wakeEvents.senderUserId, better_auth_user.id))
-      .where(ownerGate)
-      .orderBy(desc(wakeEvents.createdAt))
-      .limit(200)
+    const selection = {
+      id: wakeEvents.id,
+      createdAt: wakeEvents.createdAt,
+      senderPart: wakeEvents.senderPart,
+      senderUserId: wakeEvents.senderUserId,
+      senderName: better_auth_user.name,
+      projectId: wakeEvents.projectId,
+      projectName: projects.name,
+      agentId: wakeEvents.agentId,
+      agentPart: agents.part,
+      urgent: wakeEvents.urgent,
+      suppressed: wakeEvents.suppressed,
+      reason: wakeEvents.reason,
+    }
+    const rowsFor = (gate: ReturnType<typeof and>) =>
+      db
+        .select(selection)
+        .from(wakeEvents)
+        .leftJoin(projects, eq(wakeEvents.projectId, projects.id))
+        .leftJoin(agents, eq(wakeEvents.agentId, agents.id))
+        .leftJoin(better_auth_user, eq(wakeEvents.senderUserId, better_auth_user.id))
+        .where(gate)
+        .orderBy(desc(wakeEvents.createdAt))
+        .limit(200)
 
-    const [agg] = await db
-      .select({
-        total: count(),
-        urgentCount: sql<number>`count(*) filter (where ${wakeEvents.urgent})`,
-        suppressedCount: sql<number>`count(*) filter (where ${wakeEvents.suppressed})`,
-        // Counted per axis for the same reason the rows are split - a total that
-        // mixes "a part of mine was not woken" with "a send of mine was blocked"
-        // describes neither. Counted in SQL rather than from `rows`, which is
-        // capped at 200: a summary computed from a truncated list would quietly
-        // under-report exactly when there is most to report.
-        senderTotal: sql<number>`count(*) filter (where ${wakeEvents.agentId} is null)`,
-        senderSuppressed: sql<number>`count(*) filter (where ${wakeEvents.agentId} is null and ${wakeEvents.suppressed})`,
-        senderUrgent: sql<number>`count(*) filter (where ${wakeEvents.agentId} is null and ${wakeEvents.urgent})`,
-      })
-      .from(wakeEvents)
-      .where(ownerGate)
+    // Summaries come from SQL, not from the row lists above, which are capped at
+    // 200: a summary computed from a truncated list under-reports exactly when
+    // there is most to report.
+    const aggFor = (gate: ReturnType<typeof and>) =>
+      db
+        .select({
+          total: count(),
+          urgentCount: sql<number>`count(*) filter (where ${wakeEvents.urgent})`,
+          suppressedCount: sql<number>`count(*) filter (where ${wakeEvents.suppressed})`,
+        })
+        .from(wakeEvents)
+        .where(gate)
 
-    const axes = splitByAxis(rows)
-    const senderTotal = Number(agg?.senderTotal ?? 0)
+    const [rows, blockedSends, [agg], [senderAgg]] = await Promise.all([
+      rowsFor(recipientGate),
+      rowsFor(senderGate),
+      aggFor(recipientGate),
+      aggFor(senderGate),
+    ])
 
     return {
       result: true,
-      totalCount: axes.recipient.length,
-      // `items` and `summary` are the RECIPIENT axis - wakes aimed at this owner's
-      // parts, which is what every existing consumer meant by them.
-      items: axes.recipient,
+      totalCount: rows.length,
+      items: rows,
       summary: {
-        total: Number(agg?.total ?? 0) - senderTotal,
-        urgentCount: Number(agg?.urgentCount ?? 0) - Number(agg?.senderUrgent ?? 0),
-        suppressedCount: Number(agg?.suppressedCount ?? 0) - Number(agg?.senderSuppressed ?? 0),
+        total: Number(agg?.total ?? 0),
+        urgentCount: Number(agg?.urgentCount ?? 0),
+        suppressedCount: Number(agg?.suppressedCount ?? 0),
         windowHours,
       },
-      blockedSends: axes.sender,
+      blockedSends,
       blockedSendsSummary: {
-        total: senderTotal,
-        urgentCount: Number(agg?.senderUrgent ?? 0),
-        suppressedCount: Number(agg?.senderSuppressed ?? 0),
+        total: Number(senderAgg?.total ?? 0),
+        urgentCount: Number(senderAgg?.urgentCount ?? 0),
+        suppressedCount: Number(senderAgg?.suppressedCount ?? 0),
         windowHours,
       },
     }
