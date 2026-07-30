@@ -10,7 +10,7 @@
  */
 import { randomBytes } from 'node:crypto'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { agents, knowledge, projectAccess, projects, recallLogs, threads } from '@relayroom/db'
 import { INTERNAL_AGENT_CLIENT_ID, projectScope } from '@relayroom/shared'
 import postgres from 'postgres'

@@ -48,7 +48,24 @@ export type RedactionRule = LiteralRule | DetectorRule
  * whole file exists to prevent. If it turns up, it is unresolved like anything else.
  */
 export interface UnresolvedRule {
-  reason: 'unknown_detector' | 'unknown_version' | 'literal_too_short' | 'literal_too_long' | 'legacy_patterns'
+  reason:
+    | 'unknown_detector'
+    | 'unknown_version'
+    | 'literal_too_short'
+    | 'literal_too_long'
+    | 'legacy_patterns'
+    /** The stored value is not a rule this code understands - wrong `kind`, wrong types,
+     *  not an object, or not an array. The column is JSONB and TypeScript does not reach
+     *  into it, so this is the case that exists because the type is a claim about what
+     *  SHOULD be there rather than a check of what IS. */
+    | 'malformed_rule'
+    /** More rules than the bound allows. */
+    | 'too_many_rules'
+    /** OUR OWN catalogue entry does not compile, or matches the empty string. Reported
+     *  rather than skipped because a detector that cannot run is a protection the owner
+     *  switched on and we are not applying - the same reason every other entry here
+     *  exists, except that this one is our bug rather than their configuration. */
+    | 'broken_detector'
   detail: string
 }
 
@@ -76,6 +93,17 @@ export const MAX_REDACTION_RULES = 50
  */
 export const MIN_LITERAL_LENGTH = 4
 export const MAX_LITERAL_LENGTH = 200
+
+/** Whether a pattern compiles and would remove a real span. Mirrors `redact`'s two runtime
+ *  skips so that a pattern reaching it can always run. */
+function isUsablePattern(pattern: string): boolean {
+  try {
+    return !new RegExp(pattern, 'g').test('')
+  }
+  catch {
+    return false
+  }
+}
 
 /** Escape every regex metacharacter so a literal matches itself and nothing else. */
 export function escapeLiteral(literal: string): string {
@@ -112,7 +140,12 @@ export const DETECTOR_CATALOGUE: Record<string, Record<number, string>> = {
  * stated here because the cost of ignoring it is a stored secret.
  */
 export function resolveRedactionRules(config: {
-  redactionRules?: RedactionRule[]
+  // `unknown`, not `RedactionRule[]`, and the weaker type is the honest one: this comes
+  // out of a JSONB column, so a caller that has a typed view of it has a claim rather
+  // than a guarantee. Declaring the parameter as the union would let a caller's cast
+  // stand in for this function's checks, which is the substitution this whole file
+  // exists to refuse.
+  redactionRules?: unknown
   redactionPatterns?: unknown
 } | null | undefined): ResolvedRedaction {
   const patterns: string[] = []
@@ -125,28 +158,77 @@ export function resolveRedactionRules(config: {
     })
   }
 
-  for (const rule of config?.redactionRules ?? []) {
-    if (rule.kind === 'literal') {
-      if (rule.value.length < MIN_LITERAL_LENGTH) {
-        unresolved.push({ reason: 'literal_too_short', detail: `literal shorter than ${MIN_LITERAL_LENGTH} characters` })
-        continue
-      }
-      if (rule.value.length > MAX_LITERAL_LENGTH) {
-        unresolved.push({ reason: 'literal_too_long', detail: `literal longer than ${MAX_LITERAL_LENGTH} characters` })
-        continue
-      }
-      patterns.push(escapeLiteral(rule.value))
+  // EVERYTHING BELOW TREATS THE INPUT AS UNKNOWN, and the parameter type is the reason it
+  // has to. `knowledge_config` is JSONB; the TypeScript shape is a claim about what should
+  // be in the column, not a check of what is, and the whole point of this file is that a
+  // boundary made of claims is not a boundary. A row hand-edited in psql, a writer from a
+  // future version, or a bug in the dashboard all arrive here as `any` wearing a type.
+  const raw: unknown = config?.redactionRules
+  if (raw !== undefined && !Array.isArray(raw)) {
+    unresolved.push({ reason: 'malformed_rule', detail: 'redactionRules is not an array' })
+    return { patterns, unresolved }
+  }
+  const rules: unknown[] = Array.isArray(raw) ? raw : []
+
+  // The bound was exported and never read - a limit that exists only in the type is a
+  // limit the dashboard advertises and the server does not have.
+  if (rules.length > MAX_REDACTION_RULES) {
+    unresolved.push({
+      reason: 'too_many_rules',
+      detail: `${rules.length} rules exceeds the maximum of ${MAX_REDACTION_RULES}`,
+    })
+    return { patterns, unresolved }
+  }
+
+  for (const candidate of rules) {
+    if (typeof candidate !== 'object' || candidate === null) {
+      unresolved.push({ reason: 'malformed_rule', detail: `not an object: ${JSON.stringify(candidate)}` })
+      continue
+    }
+    const rule = candidate as Partial<LiteralRule> & Partial<DetectorRule> & { kind?: unknown }
+    if (rule.kind !== 'literal' && rule.kind !== 'detector') {
+      unresolved.push({ reason: 'malformed_rule', detail: `unknown kind: ${JSON.stringify(rule.kind)}` })
+      continue
+    }
+    if (rule.kind === 'literal' && typeof rule.value !== 'string') {
+      unresolved.push({ reason: 'malformed_rule', detail: 'literal rule without a string value' })
+      continue
+    }
+    if (rule.kind === 'detector' && (typeof rule.id !== 'string' || typeof rule.v !== 'number')) {
+      unresolved.push({ reason: 'malformed_rule', detail: 'detector rule without a string id and numeric version' })
       continue
     }
 
-    const versions = DETECTOR_CATALOGUE[rule.id]
-    if (!versions) {
-      unresolved.push({ reason: 'unknown_detector', detail: rule.id })
+    if (rule.kind === 'literal') {
+      if (rule.value!.length < MIN_LITERAL_LENGTH) {
+        unresolved.push({ reason: 'literal_too_short', detail: `literal shorter than ${MIN_LITERAL_LENGTH} characters` })
+        continue
+      }
+      if (rule.value!.length > MAX_LITERAL_LENGTH) {
+        unresolved.push({ reason: 'literal_too_long', detail: `literal longer than ${MAX_LITERAL_LENGTH} characters` })
+        continue
+      }
+      patterns.push(escapeLiteral(rule.value!))
       continue
     }
-    const pattern = versions[rule.v]
+
+    const versions = DETECTOR_CATALOGUE[rule.id!]
+    if (!versions) {
+      unresolved.push({ reason: 'unknown_detector', detail: rule.id! })
+      continue
+    }
+    const pattern = versions[rule.v!]
     if (pattern === undefined) {
       unresolved.push({ reason: 'unknown_version', detail: `${rule.id} v${rule.v}` })
+      continue
+    }
+    // OUR catalogue entry, checked before it is handed on. `redact` skips a pattern that
+    // does not compile or that matches the empty string, and that skip is documented as
+    // evidence that someone is writing raw patterns - which would be false if our own
+    // catalogue could produce one. Checking here keeps that claim true and turns a broken
+    // catalogue entry into a refused write instead of a silently absent protection.
+    if (!isUsablePattern(pattern)) {
+      unresolved.push({ reason: 'broken_detector', detail: `${rule.id} v${rule.v} does not compile or matches empty` })
       continue
     }
     patterns.push(pattern)

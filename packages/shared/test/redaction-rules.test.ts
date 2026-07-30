@@ -12,6 +12,7 @@ import {
   DETECTOR_CATALOGUE,
   escapeLiteral,
   MAX_LITERAL_LENGTH,
+  MAX_REDACTION_RULES,
   MIN_LITERAL_LENGTH,
   resolveRedactionRules,
 } from '../src/redaction-rules'
@@ -103,5 +104,69 @@ describe('resolveRedactionRules', () => {
     expect(resolveRedactionRules(undefined)).toEqual({ patterns: [], unresolved: [] })
     expect(resolveRedactionRules({})).toEqual({ patterns: [], unresolved: [] })
     expect(resolveRedactionRules({ redactionRules: [] })).toEqual({ patterns: [], unresolved: [] })
+  })
+})
+
+/**
+ * The resolver is a RUNTIME boundary, not a typed one.
+ *
+ * Review loop 10 found that the previous version trusted its parameter type: the column
+ * is JSONB, the TypeScript shape is a claim about what should be in it, and a hand-edited
+ * row or a future writer arrives as `any` wearing a type. Several shapes threw instead of
+ * resolving, unknown `kind` values were treated as detectors, and the rule-count bound was
+ * exported and never read - a limit the dashboard advertised and the server did not have.
+ *
+ * Every case below must produce `unresolved`, never a throw and never a silent pass,
+ * because both of those end with a write happening under a rule that was not applied.
+ */
+describe('resolveRedactionRules as a runtime boundary', () => {
+  const bad: [string, unknown][] = [
+    ['not an array', { redactionRules: {} }],
+    ['a scalar member', { redactionRules: [42] }],
+    ['a null member', { redactionRules: [null] }],
+    ['an unknown kind', { redactionRules: [{ kind: 'regex', value: '.*' }] }],
+    ['a literal with a non-string value', { redactionRules: [{ kind: 'literal', value: 7 }] }],
+    ['a detector with a string version', { redactionRules: [{ kind: 'detector', id: 'x', v: '1' }] }],
+    ['a detector with no id', { redactionRules: [{ kind: 'detector', v: 1 }] }],
+  ]
+
+  for (const [name, config] of bad) {
+    it(`reports ${name} instead of throwing or ignoring it`, () => {
+      const r = resolveRedactionRules(config as never)
+      expect(r.patterns).toEqual([])
+      expect(r.unresolved.length).toBeGreaterThan(0)
+    })
+  }
+
+  it('enforces the rule-count bound instead of only exporting it', () => {
+    const many = Array.from({ length: MAX_REDACTION_RULES + 1 }, (_, i) => ({
+      kind: 'literal' as const, value: `LITERAL-${i}`,
+    }))
+    const r = resolveRedactionRules({ redactionRules: many })
+    expect(r.patterns).toEqual([])
+    expect(r.unresolved.map(u => u.reason)).toEqual(['too_many_rules'])
+
+    // And the bound is not off by one in the other direction - the limit is usable.
+    const exact = many.slice(0, MAX_REDACTION_RULES)
+    expect(resolveRedactionRules({ redactionRules: exact }).unresolved).toEqual([])
+  })
+
+  it('refuses OUR OWN broken catalogue entry rather than letting redact skip it', () => {
+    // `redact` skips a pattern that does not compile or matches the empty string, and
+    // that skip is documented as evidence that someone is writing raw patterns. If our
+    // catalogue could produce one, that claim would be false and a detector the owner
+    // switched on would silently not run.
+    DETECTOR_CATALOGUE['broken-a'] = { 1: '(unclosed' }
+    DETECTOR_CATALOGUE['broken-b'] = { 1: 'x*' }
+    try {
+      expect(resolveRedactionRules({ redactionRules: [{ kind: 'detector', id: 'broken-a', v: 1 }] })
+        .unresolved.map(u => u.reason)).toEqual(['broken_detector'])
+      expect(resolveRedactionRules({ redactionRules: [{ kind: 'detector', id: 'broken-b', v: 1 }] })
+        .unresolved.map(u => u.reason)).toEqual(['broken_detector'])
+    }
+    finally {
+      delete DETECTOR_CATALOGUE['broken-a']
+      delete DETECTOR_CATALOGUE['broken-b']
+    }
   })
 })

@@ -1437,8 +1437,16 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
       // extractor uses. A human pasting a lesson can paste a secret with it, so the
       // learn path is not exempt (FEAT-0004 L3). A body redacted to nothing is
       // rejected rather than stored empty.
-      const [proj] = await db.select({ config: projects.knowledgeConfig })
-        .from(projects).where(eq(projects.id, ctx.projectId)).limit(1)
+      // The rules are read WITH the exact text Postgres renders for them, because the
+      // insert below has to prove it is still writing under the same ones - see there.
+      const [proj] = await db.execute<{
+        config: { redactionRules?: unknown; redactionPatterns?: unknown } | null
+        rules_text: string
+      }>(sql`
+        select knowledge_config as config,
+               coalesce(knowledge_config -> 'redactionRules', 'null'::jsonb)::text as rules_text
+          from ${projects} where ${projects.id} = ${ctx.projectId} limit 1
+      `)
       // Same rule as the extractor: if any configured redaction rule cannot be
       // resolved, refuse the write rather than storing under a protection that is not
       // being applied. `learn` refuses loudly by design, so this fits the path it is on.
@@ -1464,25 +1472,53 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
           text: 'error: the body was empty after redaction; nothing was recorded' }], isError: true }
       }
 
-      const [row] = await db.insert(knowledge).values({
-        projectId: ctx.projectId,
-        kind: args.kind,
-        title,
-        body,
-        sourceKind: 'learn',
-        sourceRefs,
-        // ALWAYS candidate. There is no argument this tool can take, and no branch
-        // in it, that produces a trusted row: promotion is a separate ledgered
-        // transaction with a human or CI as the issuer. An agent asserting its own
-        // claim is trustworthy is the failure this whole design is built to avoid.
-        validationState: 'candidate',
-        createdByUserId: ctx.userId,
-      }).returning({ id: knowledge.id, validationState: knowledge.validationState })
+      // THE SAME GUARD THE SWEEP CARRIES, on the write whose content the rules decided.
+      // Between the read above and this insert, an owner can save new rules; this text was
+      // redacted under the old ones, and storing it would put a secret in the table that
+      // the current configuration was written to remove. Read Committed gives this
+      // statement its own snapshot, so the check has to be IN it - the sweep learned that
+      // the expensive way (review loop 9), and copying the resolver here without copying
+      // the guard would have reproduced the same defect one path over.
+      //
+      // Nothing is claimed on this path, so a refusal costs the caller a retry and nothing
+      // else. `learn` already refuses loudly for four other reasons; this is a fifth.
+      //
+      // NOT INTERLEAVE-TESTED, and the reason is worth knowing before someone assumes it
+      // is: the window is between a read and an insert with only pure JS in between, so
+      // there is no point a test can commit a change from another connection into. Every
+      // hook tried lands on the wrong side - a row-level trigger fires after the WHERE has
+      // been evaluated, and a statement-level one runs in the same command, invisible to
+      // the statement's own snapshot. The sweep's identical guard IS interleave-tested
+      // (extractor-stale-patterns), and this is the same statement shape against the same
+      // column. That is verification by construction, which is weaker, and saying so is
+      // better than a test that reaches the wrong moment and reports green.
+      const [row] = await db.execute<{ id: string; validation_state: string }>(sql`
+        insert into ${knowledge} (project_id, kind, title, body, source_kind, source_refs, validation_state, created_by_user_id)
+        select ${ctx.projectId}, ${args.kind}, ${title}, ${body}, 'learn',
+               ${JSON.stringify(sourceRefs)}::jsonb,
+               -- ALWAYS candidate. There is no argument this tool can take, and no branch
+               -- in it, that produces a trusted row: promotion is a separate ledgered
+               -- transaction with a human or CI as the issuer. An agent asserting its own
+               -- claim is trustworthy is the failure this whole design is built to avoid.
+               'candidate', ${ctx.userId}
+         where exists (
+                 select 1 from ${projects} p
+                  where p.id = ${ctx.projectId}
+                    and coalesce(p.knowledge_config -> 'redactionRules', 'null'::jsonb)
+                        = ${proj?.rules_text ?? 'null'}::jsonb
+               )
+        returning id, validation_state
+      `)
+      if (!row) {
+        return { content: [{ type: 'text' as const,
+          text: 'error: the project\'s redaction rules changed while this was being recorded; '
+            + 'nothing was recorded. Retry.' }], isError: true }
+      }
 
       return {
         content: [{ type: 'text' as const, text: JSON.stringify({
-          id: row!.id,
-          validationState: row!.validationState,
+          id: row.id,
+          validationState: row.validation_state,
         }) }],
       }
     },
