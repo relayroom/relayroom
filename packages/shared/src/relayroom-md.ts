@@ -22,6 +22,18 @@ If you lose context (e.g. after compaction) and are unsure who you are, read
 \`.relayroom/config.json\` in this worktree - it holds your \`code\` (project),
 \`part\`, and \`server\`. Then call \`inbox\` to catch up on what you missed.
 
+**Check that the board agrees about who you are.** Call \`whoami\` and compare its
+\`part\` with the \`part\` in \`.relayroom/config.json\`. **If they differ, everything you
+write to the board is being recorded as another part**, and nothing looks broken:
+your files are correct, \`doctor\` may be green, and your \`inbox\` is quietly showing
+someone else's mailbox - so "no new messages" means *their* mailbox is empty. The
+giveaway is \`ack\` failing with \`message not found in inbox\` for a message you were
+clearly sent. This happens because your MCP registration is read once at startup, so
+a session can outlive a fix to the file. **The fix is one command:
+\`./rr.sh reconnect\`** - it re-registers and reloads this session, keeping the
+conversation. Only the two of you can catch this: no shell command can see the
+identity your live connection is using.
+
 The tmux session and the pager (the daemon that wakes you) do NOT survive a machine
 reboot. \`relayroom init\` generated \`./rr.sh\` at the worktree root, one console for
 all of it: \`./rr.sh up\` rebuilds the tmux session and starts the pager in one shot.
