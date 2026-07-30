@@ -22,7 +22,7 @@
  */
 import { createHash } from 'node:crypto'
 import { and, desc, eq, gt, inArray, sql } from 'drizzle-orm'
-import { redact, reportSkippedPatterns, resolveRedactionRules, skippedPatterns } from '@relayroom/shared'
+import { redact, REDACTION_INPUT_SNAPSHOT, REDACTION_INPUT_SNAPSHOT_P, reportSkippedPatterns, resolveRedactionRules, skippedPatterns } from '@relayroom/shared'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 import type { PgDatabase } from 'drizzle-orm/pg-core'
 import {
@@ -617,15 +617,49 @@ export async function proposeKnowledgeDiff(
   db: KnowledgeDb,
   input: ProposeKnowledgeDiffInput,
 ): Promise<typeof knowledgeProposals.$inferSelect | null> {
+  // REDACTION AT CREATION, not at approval. This row is durable and a human reads it to
+  // decide - it is a display surface, not an internal buffer - and the proposer builds its
+  // text out of error `code`, `errorClass`, the first line of `message`, `area` and `file`,
+  // which is exactly where a secret turns up. Redacting only on approval would put a clean
+  // copy in `knowledge` and leave the original here.
+  //
+  // Refusing outright (returning null) rather than storing unredacted is the same rule every
+  // knowledge writer follows: a rule that cannot be evaluated cannot be honoured. The cost
+  // is bounded because the proposer regenerates - it re-clusters a rolling window each sweep
+  // and is idempotent only on a PENDING signature - so a proposal skipped now is proposed
+  // again from the same events once the configuration resolves, as long as the events are
+  // still inside the window.
+  const [proj] = await db.execute<{
+    config: { redactionRules?: unknown; redactionPatterns?: unknown } | null
+  }>(sql`
+    select knowledge_config as config from ${projects} where ${projects.id} = ${input.projectId}
+  `)
+  const { patterns, unresolved } = resolveRedactionRules(proj?.config)
+  if (unresolved.length > 0) {
+    console.warn(
+      `[knowledge] proposer: refusing to create a proposal for project ${input.projectId} - `
+      + `${unresolved.length} redaction rule(s) could not be resolved: `
+      + unresolved.map(u => `${u.reason}(${u.detail})`).join(', '),
+    )
+    return null
+  }
+  reportSkippedPatterns(input.projectId, 'proposer_create', skippedPatterns(patterns))
+
+  const change = input.change as Record<string, unknown>
+  const redactedChange: Record<string, unknown> = { ...change }
+  for (const key of ['title', 'body'] as const) {
+    if (typeof change[key] === 'string') redactedChange[key] = redact(change[key] as string, patterns).text
+  }
+
   const inserted = await db
     .insert(knowledgeProposals)
     .values({
       projectId: input.projectId,
       target: input.target,
       evidence: input.evidence ?? {},
-      hypothesis: input.hypothesis,
-      disconfirming: input.disconfirming ?? null,
-      change: input.change,
+      hypothesis: redact(input.hypothesis, patterns).text,
+      disconfirming: input.disconfirming ? redact(input.disconfirming, patterns).text : null,
+      change: redactedChange,
       triggerSignature: input.triggerSignature ?? null,
       ...(input.createdByJob ? { createdByJob: input.createdByJob } : {}),
     })
@@ -723,10 +757,7 @@ export async function decideProposal(
         snapshot: string
       }>(sql`
         select knowledge_config as config,
-               jsonb_build_object(
-                 'rules', knowledge_config -> 'redactionRules',
-                 'legacy', knowledge_config -> 'redactionPatterns'
-               )::text as snapshot
+               ${sql.raw(REDACTION_INPUT_SNAPSHOT)} as snapshot
           from ${projects} where ${projects.id} = ${input.projectId}
       `)
       const { patterns, unresolved } = resolveRedactionRules(proj?.config)
@@ -744,10 +775,7 @@ export async function decideProposal(
          where exists (
                  select 1 from ${projects} p
                   where p.id = ${input.projectId}
-                    and jsonb_build_object(
-                          'rules', p.knowledge_config -> 'redactionRules',
-                          'legacy', p.knowledge_config -> 'redactionPatterns'
-                        )::text = ${proj?.snapshot ?? ''}
+                    and ${sql.raw(REDACTION_INPUT_SNAPSHOT_P)} = ${proj?.snapshot ?? ''}
                )
         returning id
       `)
@@ -782,6 +810,23 @@ export async function decideProposal(
       })
       .returning({ id: knowledgeAudits.id })
 
+    // REJECTION CLEARS THE PAYLOAD AND KEEPS THE DECISION. Same shape as purge, which
+    // removes derived content and keeps the watermark - one mechanism in two places rather
+    // than two mechanisms to learn. What stays is the audit value: who decided, when, on
+    // which trigger signature. What goes is the text nobody chose to keep.
+    //
+    // It is also the ONLY removal path this table has - `purge` is thread-scoped and does
+    // not reach it - so a proposal created before its project had any rule can be cleared
+    // by rejecting it.
+    //
+    // What this does NOT do is stop the proposal coming back: the unique index is partial
+    // on `pending` by design, and the sweep re-clusters a rolling window that still contains
+    // the events the owner judged. The recreated row is redacted at creation, so what
+    // clearing removes for good is the legacy unredacted text.
+    const clearedPayload = approved
+      ? {}
+      : { hypothesis: '', disconfirming: null, change: {} }
+
     await tx
       .update(knowledgeProposals)
       .set({
@@ -790,6 +835,7 @@ export async function decideProposal(
         decidedAt: sql`now()`,
         auditId: audit!.id,
         updatedAt: sql`now()`,
+        ...clearedPayload,
       })
       .where(eq(knowledgeProposals.id, proposal.id))
 

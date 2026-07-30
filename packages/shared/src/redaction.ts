@@ -138,7 +138,7 @@ export function reportSkippedPatterns(
   /** Every path that writes knowledge. Adding a writer means adding it here, and the
    *  compiler is what enforces that - `decideProposal` was a writer for two releases
    *  without appearing in any list like this one. */
-  path: 'learn' | 'extractor' | 'proposer' | 'close',
+  path: 'learn' | 'extractor' | 'proposer_create' | 'proposer' | 'close',
   skipped: readonly SkippedPattern[],
 ): void {
   if (skipped.length === 0) return

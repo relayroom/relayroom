@@ -107,10 +107,14 @@ describe('decideProposal', () => {
     // evaluate means the write does not happen. Nothing is written and the proposal stays
     // pending, so fixing the configuration makes the decision available again.
     const p = await project()
+    // The proposal is created FIRST, under a configuration that resolves - creation now
+    // refuses too, so setting the broken rule first would produce no proposal to approve
+    // and the test would pass for the wrong reason. This is the real sequence anyway: a
+    // proposal exists, then the rules break, then someone tries to approve it.
+    const proposal = await knowledgeProposal(p)
     await db.update(projects)
       .set({ knowledgeConfig: { redactionRules: [{ kind: 'detector', id: 'no-such-detector', v: 1 }] } })
       .where(eq(projects.id, p))
-    const proposal = await knowledgeProposal(p)
     const result = await decideProposal(db, { projectId: p, proposalId: proposal!.id, decision: 'approved', userId: USER })
     expect(result).toMatchObject({ ok: false, reason: 'redaction_unresolvable' })
 
@@ -249,5 +253,59 @@ describe('rollbackPlaybook', () => {
     await approvePlaybook(p, 'only body', 'sig-solo')
     const result = await rollbackPlaybook(db, { projectId: p, toVersion: 9, userId: USER })
     expect(result).toEqual({ ok: false, reason: 'version_not_found' })
+  })
+})
+
+describe('proposeKnowledgeDiff redaction', () => {
+  it('redacts at creation, so the staging row never holds the raw text', async () => {
+    // knowledge_proposal is durable and a human reads it to decide, so it is a display
+    // surface rather than an internal buffer. Redacting only on approval would leave the
+    // original here while putting a clean copy in `knowledge`.
+    const p = await project()
+    await db.update(projects)
+      .set({ knowledgeConfig: { redactionRules: [{ kind: 'literal', value: 'sk-staging-secret' }] } })
+      .where(eq(projects.id, p))
+    const proposal = await knowledgeProposal(p, {
+      hypothesis: 'sk-staging-secret keeps appearing in the logs',
+      change: { title: 'rotate sk-staging-secret', body: 'sk-staging-secret leaked', kind: 'pitfall' },
+    })
+    expect(proposal).not.toBeNull()
+    expect(proposal!.hypothesis).not.toContain('sk-staging-secret')
+    expect(JSON.stringify(proposal!.change)).not.toContain('sk-staging-secret')
+    expect(proposal!.hypothesis).toContain('keeps appearing')
+  })
+
+  it('creates nothing when a rule cannot be resolved', async () => {
+    // Same rule as every writer, and the cost is bounded: the sweep re-clusters a rolling
+    // window, so a proposal skipped now is proposed again once the configuration resolves.
+    const p = await project()
+    await db.update(projects)
+      .set({ knowledgeConfig: { redactionRules: [{ kind: 'detector', id: 'gone', v: 9 }] } })
+      .where(eq(projects.id, p))
+    expect(await knowledgeProposal(p)).toBeNull()
+  })
+})
+
+describe('rejection clears the payload', () => {
+  it('keeps the decision and removes the text', async () => {
+    // The only removal path this table has - purge is thread-scoped and does not reach it.
+    // Same shape as purge: purge keeps the watermark and removes the content; rejection
+    // keeps the decision and removes the content.
+    const p = await project()
+    const proposal = await knowledgeProposal(p, {
+      hypothesis: 'a hypothesis nobody wants kept',
+      change: { title: 'unwanted', body: 'unwanted body', kind: 'pitfall' },
+    })
+    const result = await decideProposal(db, { projectId: p, proposalId: proposal!.id, decision: 'rejected', userId: USER })
+    expect(result.ok).toBe(true)
+
+    const [row] = await db.select().from(knowledgeProposals).where(eq(knowledgeProposals.id, proposal!.id))
+    expect(row!.hypothesis).toBe('')
+    expect(row!.change).toEqual({})
+    // The decision survives - that is the half worth keeping.
+    expect(row!.status).toBe('rejected')
+    expect(row!.decidedByUserId).toBe(USER)
+    expect(row!.decidedAt).not.toBeNull()
+    expect(row!.triggerSignature).toBe(proposal!.triggerSignature)
   })
 })

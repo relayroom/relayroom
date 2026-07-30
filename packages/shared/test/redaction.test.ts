@@ -3,7 +3,7 @@
  * skip-bad-pattern behaviour are pinned here.
  */
 import { describe, expect, it } from 'vitest'
-import { hasRedaction, redact, skippedPatterns } from '@relayroom/shared'
+import { hasRedaction, redact, skippedPatterns } from '../src/redaction'
 
 describe('redact', () => {
   it('drops a matched span entirely - it does not mask', () => {

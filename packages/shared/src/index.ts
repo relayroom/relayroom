@@ -22,6 +22,7 @@ export * from './redaction-rules'
 // Applying the denylist. In shared because FOUR writers need it, one of them in
 // packages/db - see the file header.
 export * from './redaction'
+export * from './redaction-snapshot'
 
 // ── Attention signal ─────────────────────────────────────────────────────────
 
