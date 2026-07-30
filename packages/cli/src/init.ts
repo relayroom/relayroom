@@ -7,8 +7,8 @@ import { runtimePath } from "./runtime"
 
 /**
  * Register the Claude Channels server in the worktree's `.mcp.json` so Claude can
- * spawn it (and `--dangerously-load-development-channels server:relayroom-channel`
- * can reference it by name). Merges into any existing config, never clobbering other
+ * spawn it (and `--channels server:relayroom-channel` can reference it by name).
+ * Merges into any existing config, never clobbering other
  * servers. The server is invoked as `node <abs runtime path> --dir <worktree>`, which
  * avoids any PATH / npx dependency and self-recovers identity from .relayroom/config.
  * The server stays DORMANT unless `delivery=channel`, so its presence is harmless
@@ -199,7 +199,16 @@ prepare_launch() {
       read -r verdict layer <<< "$(channel_ready)"
       case "$verdict" in
         ready)
-          base="claude --dangerously-load-development-channels server:relayroom-channel"
+          # \`--channels\`, NOT \`--dangerously-load-development-channels\`. Measured: the
+          # dangerous form stops on a confirmation prompt on EVERY launch - it is not
+          # suppressed by --dangerously-skip-permissions, and accepting it stores no
+          # consent anywhere, so the next launch asks again. An unattended relaunch has
+          # nobody to press Enter, so the session exists, the process is alive, the pane
+          # reads \`zsh\`, and the agent sits on that prompt forever. \`--channels\` starts
+          # with no prompt and reports the channel active - it is what the warning itself
+          # tells you to use. Note the probe above already tests for \`--channels\`: we were
+          # detecting one flag and then launching with the other.
+          base="claude --channels server:relayroom-channel"
           mode="channel"; why=" (relayroom-channel loadable, via $layer)" ;;
         notready)
           why=" (channel supported, but relayroom-channel is not approved here - run ./rr.sh setup; via $layer)" ;;
@@ -431,6 +440,13 @@ session_dead() {
   awk '$1 == "1" { print ($2 == "" ? "?" : $2); exit }' <<<"$panes"
 }
 
+# Do NOT "simplify" the kill+new-session below into \`tmux respawn-pane\`. Measured:
+# \`#{pane_start_command}\` does hold the original launch string, but \`respawn-pane -k\`
+# called without a command does NOT reuse it - it starts the default shell. The string
+# existing and respawn using it are two different facts, and only the first is true. That
+# swap would produce a session containing a shell and no agent, which every check here
+# would read as healthy.
+#
 # Replace the running session with a fresh one carrying the current config. The ONE
 # respawn primitive: \`up --restart\` calls it from outside the session, so it can kill and
 # recreate directly. The in-session caller (an agent that re-registered its own MCP and
