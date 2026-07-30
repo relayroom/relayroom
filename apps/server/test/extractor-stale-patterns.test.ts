@@ -273,3 +273,73 @@ describe('extractor: an unresolvable redaction rule refuses the write, recoverab
     expect(after?.n).toBe(1)
   })
 })
+
+/**
+ * The gap between the claim and the candidate write, which is where review loop 9 found
+ * the previous fix still leaking.
+ *
+ * "The comparison rides on the claim" was written down as the fix one loop earlier. The
+ * claim and the candidate are separate statements and Read Committed gives each its own
+ * snapshot, so a settings save landing between them left the claim validated against the
+ * old rules and the row that actually holds the text written under them - permanently,
+ * since the claim is what the next sweep reads. The guard has to be on the statement
+ * that writes the sensitive bytes.
+ *
+ * Reached deterministically with a trigger on the watermark insert: it fires after the
+ * claim and before the candidate, which is exactly the window. The rule change is
+ * therefore visible to the candidate insert's own guard, which is the property under
+ * test - not the commit ordering of two transactions, which Postgres decides.
+ *
+ * Mutation-checked: removing the `where exists` from the candidate insert stores the row
+ * and leaves the claim, i.e. reproduces the loop 9 finding exactly.
+ */
+describe('extractor: the guard is on the write that stores the text', () => {
+  const TRIGGER3 = `claim_gap_${randomBytes(4).toString('hex')}`
+
+  afterAll(async () => {
+    await db.execute(sql.raw(`drop trigger if exists ${TRIGGER3} on thread_extraction`))
+    await db.execute(sql.raw(`drop function if exists ${TRIGGER3}_fn()`))
+  })
+
+  it('rolls the whole project back when the rules change after the claim', async () => {
+    const p = await project([])
+    await closedThread(p.id, p.agentId, 'a lesson that must not be stored under old rules')
+
+    await db.execute(sql.raw(`
+      create or replace function ${TRIGGER3}_fn() returns trigger as $$
+      begin
+        if new.project_id = '${p.id}' then
+          update project
+             set knowledge_config = jsonb_build_object('redactionRules',
+                   jsonb_build_array(jsonb_build_object('kind', 'literal', 'value', 'LATE-RULE')))
+           where id = '${p.id}';
+        end if;
+        return new;
+      end $$ language plpgsql;
+    `))
+    await db.execute(sql.raw(`
+      create trigger ${TRIGGER3} after insert on thread_extraction
+      for each row execute function ${TRIGGER3}_fn()
+    `))
+
+    await markProjectKnowledgeDirty(db, p.id)
+    const r = await runExtractorSweep(db, { projectId: p.id })
+    expect(r.candidates).toBe(0)
+    expect(r.projects).toBe(0) // the tick is rolled back, so the project was not processed
+
+    // Nothing stored, and no orphan claim - a watermark with no row behind it would
+    // foreclose this thread forever, which is why the remedy here is a rollback rather
+    // than skipping the thread.
+    expect(await storedBody(p.id)).toBe('')
+    const [claim] = await db.execute<{ n: number }>(sql`
+      select count(*)::int as n from thread_extraction where project_id = ${p.id}
+    `)
+    expect(claim?.n).toBe(0)
+
+    // And the marker survives the rollback, so the next tick redoes it under the new rule.
+    const [marker] = await db.execute<{ dirty: string | null }>(sql`
+      select knowledge_dirty_at::text as dirty from project where id = ${p.id}
+    `)
+    expect(marker?.dirty).not.toBeNull()
+  })
+})

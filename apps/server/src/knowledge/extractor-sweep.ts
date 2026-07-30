@@ -46,6 +46,22 @@ import type { RedactionRule } from '@relayroom/shared'
 import { resolveRedactionRules } from '@relayroom/shared'
 import { reportSkippedPatterns, skippedPatterns } from './redaction'
 
+/**
+ * Thrown when a project's redaction rules change while its sweep is mid-flight.
+ *
+ * Rolls the whole project transaction back rather than skipping a thread: a claim
+ * written and then abandoned would foreclose that thread forever with nothing stored,
+ * so partial work under superseded rules is not something to keep. The dirty marker is
+ * left set by construction - the clear is the last statement and never runs - so the
+ * next tick redoes the project under the new rules.
+ */
+class StaleRedactionRules extends Error {
+  constructor(readonly projectId: string) {
+    super(`redaction rules changed mid-sweep for project ${projectId}`)
+    this.name = 'StaleRedactionRules'
+  }
+}
+
 /** Advisory-lock namespace for the extractor, so its keys cannot collide with
  *  another subsystem's advisory locks on the same hashed project id. */
 const EXTRACTOR_LOCK_NAMESPACE = 0x4b4e4f57 // 'KNOW'
@@ -92,7 +108,26 @@ export async function runExtractorSweep(
   let processed = 0
   let candidates = 0
   for (const project of dirty) {
-    const written = await db.transaction(async (tx) => {
+    const written = await runProjectTick(db, project.id).catch((err) => {
+      if (err instanceof StaleRedactionRules) {
+        console.warn(`[knowledge] extractor: ${err.message}; rolled back and left the marker for the next tick`)
+        return null
+      }
+      throw err
+    })
+    if (written !== null) {
+      processed++
+      candidates += written
+    }
+  }
+
+  return { projects: processed, candidates }
+}
+
+async function runProjectTick(db: Db, projectId: string): Promise<number | null> {
+  {
+    const project = { id: projectId }
+    return db.transaction(async (tx) => {
       // Single writer: if another worker holds this project, skip it this tick. The
       // lock is transaction-scoped, so it releases when this block ends.
       const [{ locked }] = await tx.execute<{ locked: boolean }>(sql`
@@ -176,9 +211,16 @@ export async function runExtractorSweep(
         tx, project.id, patterns, snap?.rules_text ?? 'null',
       )
 
-      // A settings save landed mid-project. Leave the marker so the next tick redoes the
-      // remaining threads under the new patterns; what was already written was claimed
-      // atomically against the patterns in force at that moment, so it stays.
+      // A settings save landed between two threads, caught by the claim guard before
+      // anything was written for the current one. Leave the marker so the next tick redoes
+      // the remainder under the new rules, and KEEP what earlier threads produced: each of
+      // those rows passed the same comparison on its own insert, so each was written under
+      // rules that were current at that moment.
+      //
+      // The other order - guard passes on the claim, fails on the candidate insert - cannot
+      // keep anything, because it leaves a claim with no row behind it. That path throws
+      // and the transaction rolls back. Same cause, different remedy, and the difference is
+      // whether an orphan claim exists.
       if (staleConfig) {
         console.warn(
           `[knowledge] extractor: redaction patterns changed mid-sweep for project ${project.id};`
@@ -197,13 +239,7 @@ export async function runExtractorSweep(
       `)
       return n
     })
-    if (written !== null) {
-      processed++
-      candidates += written
-    }
   }
-
-  return { projects: processed, candidates }
 }
 
 /**
@@ -338,18 +374,41 @@ async function extractProject(
       continue
     }
 
-    await tx.insert(knowledge).values({
-      projectId,
-      kind: candidate.kind,
-      title: candidate.title,
-      body: candidate.body,
-      sourceKind: 'thread',
-      sourceRefs: candidate.sourceRefs,
-      // ALWAYS candidate. The extractor never writes trusted - promotion is a
-      // separate K-independent-issuer decision. This is what makes automatic
-      // extraction safe: a crude auto-candidate nobody promotes never reaches recall.
-      validationState: 'candidate',
-    })
+    // THE SAME COMPARISON, ON THE WRITE THAT STORES THE TEXT. Guarding only the claim
+    // was not enough, and the gap is narrow enough to have looked like nothing: the
+    // claim and this insert are separate statements, Read Committed gives each its own
+    // snapshot, so a settings save committing between them left the claim validated
+    // against the old rules and the CANDIDATE - the row that actually holds the secret -
+    // written under them anyway. Permanently, because the claim is what the next sweep
+    // reads. Found by review loop 9, one loop after "the comparison rides on the claim"
+    // was written down as the fix.
+    //
+    // The lesson is narrower than "check twice": the guard has to be on the statement
+    // that writes the sensitive bytes, not on a statement that happens to precede it.
+    const stored = await tx.execute<{ id: string }>(sql`
+      insert into ${knowledge} (project_id, kind, title, body, source_kind, source_refs, validation_state)
+      select ${projectId}, ${candidate.kind}, ${candidate.title}, ${candidate.body},
+             'thread', ${JSON.stringify(candidate.sourceRefs)}::jsonb,
+             -- ALWAYS candidate. The extractor never writes trusted; promotion is a
+             -- separate K-independent-issuer decision, and that is what makes automatic
+             -- extraction safe - a crude auto-candidate nobody promotes never reaches recall.
+             'candidate'
+       where exists (
+               select 1 from ${projects} p
+                where p.id = ${projectId}
+                  and coalesce(p.knowledge_config -> 'redactionRules', 'null'::jsonb)
+                      = ${patternsSnapshot}::jsonb
+             )
+      returning id
+    `)
+    if (stored.length === 0) {
+      // The rules changed between the claim and this insert. The claim is now a
+      // watermark with nothing behind it, which would foreclose the thread forever, so
+      // the ENTIRE project transaction has to go - claims and candidates from earlier
+      // threads in this tick included. The marker is never cleared on this path, so the
+      // next tick redoes all of it under the new rules.
+      throw new StaleRedactionRules(projectId)
+    }
     written++
   }
   return { written, staleConfig: false }
