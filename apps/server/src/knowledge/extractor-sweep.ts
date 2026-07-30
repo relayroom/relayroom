@@ -69,8 +69,24 @@ const EXTRACTOR_LOCK_NAMESPACE = 0x4b4e4f57 // 'KNOW'
 /** Max dirty projects handled per tick. */
 export const EXTRACTOR_PROJECT_BATCH = 50
 
-/** Thread statuses whose closure feeds the extractor. */
-const EXTRACTABLE_STATUSES = ['closed', 'answered'] as const
+/**
+ * Thread statuses whose closure feeds the extractor. **`'closed'` only.**
+ *
+ * `'answered'` was here and is not a resolution: it is a live thread the dashboard has
+ * marked as having an answer, and it can go on receiving messages. Extracting it froze a
+ * mid-conversation snapshot PERMANENTLY, because extraction is once-per-thread - the
+ * watermark makes the premature answer the only answer.
+ *
+ * The trade is stated rather than sold as free: for a long-lived answered thread, today
+ * produces something and this produces nothing until it closes. What today produces is the
+ * frozen snapshot above, so the trade is a premature answer for a later correct one.
+ *
+ * It relies on autoclose actually running - it treats `'answered'` as active and closes it
+ * after the idle window, so the wait is bounded at roughly that window rather than forever.
+ * If autoclose were ever disabled, this delay becomes unbounded, and that dependency is the
+ * reason to name it here rather than in a commit message.
+ */
+const EXTRACTABLE_STATUSES = ['closed'] as const
 
 export interface ExtractorSweepResult {
   /** Projects whose marker was claimed and cleared this tick. */
