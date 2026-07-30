@@ -27,12 +27,19 @@ import { markProjectKnowledgeDirty } from "@relayroom/db/knowledge"
  * database, so a concurrent writer touching a different key does not lose it
  * either - reading, merging in memory and writing back would.
  *
- * MARKS THE PROJECT DIRTY, and this is not bookkeeping. The extractor only
- * revisits a project that carries the marker. Changing redaction settings without
- * it means a thread that produced nothing - because an over-broad pattern removed
- * everything worth keeping - STAYS empty after the pattern is corrected, until
- * some unrelated thread happens to close. The recovery the settings screen
- * promises is this call.
+ * MARKS THE PROJECT DIRTY, IN THE SAME TRANSACTION. The extractor only revisits a
+ * project that carries the marker. Changing redaction settings without it means a
+ * thread that produced nothing - because an over-broad pattern removed everything
+ * worth keeping - STAYS empty after the pattern is corrected, until some unrelated
+ * thread happens to close. The recovery the settings screen promises is this call.
+ *
+ * One transaction rather than two statements, because either order fails on its
+ * own and fails silently:
+ *   - config first, then a crash: the settings are live and nothing asks for a
+ *     re-look, so the recovery never happens for that project.
+ *   - marker first, and a sweep consumes and clears it before the config commits:
+ *     the marker that would have triggered the re-look is already spent.
+ * Both leave the screen's promise false for one project with nothing recording it.
  *
  * That promise is the other half of a decision made in 0.5.2: extraction
  * deliberately writes no watermark when it produces nothing, precisely so a
@@ -48,10 +55,12 @@ export async function mergeKnowledgeConfig(
   projectId: string,
   patch: Record<string, unknown>,
 ): Promise<void> {
-  await db
-    .update(projects)
-    .set({ knowledgeConfig: sql`${projects.knowledgeConfig} || ${JSON.stringify(patch)}::jsonb` })
-    .where(eq(projects.id, projectId))
+  await db.transaction(async (tx) => {
+    await tx
+      .update(projects)
+      .set({ knowledgeConfig: sql`${projects.knowledgeConfig} || ${JSON.stringify(patch)}::jsonb` })
+      .where(eq(projects.id, projectId))
 
-  await markProjectKnowledgeDirty(db, projectId)
+    await markProjectKnowledgeDirty(tx, projectId)
+  })
 }
