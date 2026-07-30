@@ -157,6 +157,12 @@ export function RedactionCard({
           // delay protection they can already have.
           <p className="text-xs text-muted-foreground">{t("knowledgeRedaction.detectorsEmpty")}</p>
         ) : (
+          // `detectorsHint` ends by saying the built-in formats are a list of shapes we
+          // thought of, not a guarantee that a secret cannot get through. Re-read that
+          // sentence whenever a detector is added - this branch first renders when one
+          // is. It was easy to write while the catalogue was empty and gets harder with
+          // every entry, because a longer list feels more like coverage. If it has been
+          // softened, the catalogue did not get more complete; we got used to it.
           <p className="text-xs text-muted-foreground">{t("knowledgeRedaction.detectorsHint")}</p>
         )}
 
