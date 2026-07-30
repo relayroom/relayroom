@@ -207,12 +207,16 @@ export async function purgeKnowledgeFromThread(
     // array element that includes {threadId}; the sole-vs-multi split is then decided
     // per row in JS, where the array semantics are clearest.
     //
-    // `for update`, ordered by id: the split below is a read-modify-write, so two
-    // concurrent purges could otherwise each compute `remaining` from a stale
-    // snapshot and the later write would drop the earlier one's edit. INSURANCE, not
-    // a fix - that outcome needs a row citing two threads, and no writer produces
-    // one (see the detach branch below). It costs nothing here and it gives
-    // concurrent purges a deterministic acquisition order.
+    // `for update`, ordered by id. THE HAZARD: these rows are read here and deleted
+    // a few lines down, so anything that changes them in between - another purge, a
+    // promotion, retention - would be acted on with a stale view of what it was.
+    // Locking closes that window; ordering by id keeps two concurrent purges from
+    // deadlocking on the same set.
+    //
+    // This comment is on its third rewrite, which is the tell: the first two
+    // described the mechanism of the day (a read-modify-write that no longer
+    // happens, since the multi-source path stopped writing anything) and went stale
+    // with it. Written as a hazard instead, because the hazard outlives the shape.
     const rows = await tx
       .select({ id: knowledge.id, sourceRefs: knowledge.sourceRefs })
       .from(knowledge)
