@@ -50,7 +50,7 @@ async function project(patterns: string[]): Promise<{ id: string; agentId: strin
     slug: `sp-${sfx}`,
     name: 'Stale patterns',
     connectCode: `sp-cc-${sfx}`,
-    knowledgeConfig: { redactionPatterns: patterns },
+    knowledgeConfig: { redactionRules: patterns.map(value => ({ kind: 'literal' as const, value })) },
   }).returning({ id: projects.id })
   const [a] = await db.insert(agents).values({ projectId: p!.id, part: 'w' }).returning({ id: agents.id })
   return { id: p!.id, agentId: a!.id }
@@ -89,7 +89,8 @@ describe('extractor: redaction patterns are read where the marker is read', () =
       begin
         if new.project_id = '${first.id}' then
           update project
-             set knowledge_config = jsonb_build_object('redactionPatterns', jsonb_build_array('${SECRET}'))
+             set knowledge_config = jsonb_build_object('redactionRules',
+                   jsonb_build_array(jsonb_build_object('kind', 'literal', 'value', '${SECRET}')))
            where id = '${second.id}';
         end if;
         return new;
@@ -179,7 +180,8 @@ describe('extractor: a pattern change mid-project stops the sweep, without a loc
       begin
         if new.project_id = '${p.id}' then
           update project
-             set knowledge_config = jsonb_build_object('redactionPatterns', jsonb_build_array('${SECRET2}'))
+             set knowledge_config = jsonb_build_object('redactionRules',
+                   jsonb_build_array(jsonb_build_object('kind', 'literal', 'value', '${SECRET2}')))
            where id = '${p.id}';
         end if;
         return new;
@@ -219,5 +221,55 @@ describe('extractor: a pattern change mid-project stops the sweep, without a loc
     expect(bodies).toHaveLength(2)
     expect(bodies.map(b => b.body).join('\n')).not.toContain(SECRET2)
     expect(bodies.some(b => b.body.includes('the second lesson mentions'))).toBe(true)
+  })
+})
+
+/**
+ * A rule we cannot resolve stops the write, and the refusal is a deferral rather than a
+ * loss.
+ *
+ * rrc-web proposed reporting an unresolvable detector instead of skipping it silently.
+ * Reporting alone is not enough, and their own sentence is why: reporting is
+ * observation, not protection - the row still gets stored while a protection the owner
+ * switched on is not being applied. What the invariant forbids is the storage.
+ *
+ * So the write is refused. The part that makes that acceptable is the second assertion:
+ * nothing is claimed, so fixing the catalogue lets the thread extract on a later tick.
+ * That property is inherited from BUG-0010's decision not to watermark an empty
+ * extraction, and this is the second feature to depend on it.
+ */
+describe('extractor: an unresolvable redaction rule refuses the write, recoverably', () => {
+  it('writes nothing, claims nothing, and extracts once the rule resolves', async () => {
+    const sfx = randomBytes(6).toString('hex')
+    const [p] = await db.insert(projects).values({
+      organizationId: `ur-org-${sfx}`,
+      slug: `ur-${sfx}`,
+      name: 'Unresolvable',
+      connectCode: `ur-cc-${sfx}`,
+      knowledgeConfig: { redactionRules: [{ kind: 'detector', id: 'detector-that-does-not-exist', v: 1 }] },
+    }).returning({ id: projects.id })
+    const [a] = await db.insert(agents).values({ projectId: p!.id, part: 'w' }).returning({ id: agents.id })
+    const t = await closedThread(p!.id, a!.id, 'a perfectly ordinary lesson')
+
+    await markProjectKnowledgeDirty(db, p!.id)
+    const refused = await runExtractorSweep(db, { projectId: p!.id })
+    expect(refused.candidates).toBe(0)
+
+    // No claim: this is the difference between a deferral and a permanent loss.
+    const [claim] = await db.execute<{ n: number }>(sql`
+      select count(*)::int as n from thread_extraction where project_id = ${p!.id}
+    `)
+    expect(claim?.n).toBe(0)
+
+    // The owner removes the broken rule. Same thread, now extractable.
+    await db.update(projects).set({ knowledgeConfig: { redactionRules: [] } }).where(eq(projects.id, p!.id))
+    await markProjectKnowledgeDirty(db, p!.id)
+    const ok = await runExtractorSweep(db, { projectId: p!.id })
+    expect(ok.candidates).toBe(1)
+    expect(await storedBody(p!.id)).toContain('ordinary lesson')
+    const [after] = await db.execute<{ n: number }>(sql`
+      select count(*)::int as n from thread_extraction where project_id = ${p!.id} and thread_id = ${t}
+    `)
+    expect(after?.n).toBe(1)
   })
 })

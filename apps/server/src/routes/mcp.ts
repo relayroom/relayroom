@@ -63,6 +63,7 @@ import { shouldWake } from '../wake/issuance'
 import { isWakeBudgetEnabled } from '../wake/flag'
 import { CapabilityError, getCapabilities, resolveUrgent } from '../priority/capability'
 import { seedOwnerWakeBudget } from '../budget/seed-owner-budget'
+import { resolveRedactionRules } from '@relayroom/shared'
 import { redact, reportSkippedPatterns } from '../knowledge/redaction'
 import { markProjectKnowledgeDirty, recordKnowledgeSignal } from '@relayroom/db'
 import { tokenScopeAllowsProject } from '../lib/token-scope'
@@ -1438,7 +1439,16 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
       // rejected rather than stored empty.
       const [proj] = await db.select({ config: projects.knowledgeConfig })
         .from(projects).where(eq(projects.id, ctx.projectId)).limit(1)
-      const patterns = proj?.config?.redactionPatterns ?? []
+      // Same rule as the extractor: if any configured redaction rule cannot be
+      // resolved, refuse the write rather than storing under a protection that is not
+      // being applied. `learn` refuses loudly by design, so this fits the path it is on.
+      const { patterns, unresolved } = resolveRedactionRules(proj?.config)
+      if (unresolved.length > 0) {
+        return { content: [{ type: 'text' as const,
+          text: `error: this project has ${unresolved.length} redaction rule(s) that cannot be applied `
+            + `(${unresolved.map(u => u.reason).join(', ')}); nothing was recorded. `
+            + 'Re-save the project\'s redaction settings.' }], isError: true }
+      }
       const titleResult = redact(args.title, patterns)
       const bodyResult = redact(args.body, patterns)
       const title = titleResult.text

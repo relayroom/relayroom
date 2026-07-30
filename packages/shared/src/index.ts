@@ -14,6 +14,11 @@ export * from './agent-colors'
 // enforcer (server), which must not disagree on it.
 export * from './oauth'
 
+// Redaction rules: the stored shape, the detector catalogue, and the one function
+// that turns configuration into patterns. Shared because the dashboard writes it and
+// the server compiles it, and two copies of that rule is two rules.
+export * from './redaction-rules'
+
 // ── Attention signal ─────────────────────────────────────────────────────────
 
 /**

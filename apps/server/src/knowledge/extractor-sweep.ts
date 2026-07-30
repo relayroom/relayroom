@@ -42,6 +42,8 @@ import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm'
 import type { Db, DbOrTx } from '@relayroom/db'
 import { knowledge, messages, projects, threadExtractions, threads } from '@relayroom/db'
 import { extractCandidateFromThread } from './extract'
+import type { RedactionRule } from '@relayroom/shared'
+import { resolveRedactionRules } from '@relayroom/shared'
 import { reportSkippedPatterns, skippedPatterns } from './redaction'
 
 /** Advisory-lock namespace for the extractor, so its keys cannot collide with
@@ -139,19 +141,39 @@ export async function runExtractorSweep(
       // is exactly what BUG-0010's watermark exists to make permanent.
       const [snap] = await tx.execute<{
         dirty_at: string | null
-        patterns: string[] | null
-        patterns_text: string
+        config: { redactionRules?: RedactionRule[]; redactionPatterns?: unknown } | null
+        rules_text: string
       }>(sql`
         select knowledge_dirty_at::text as dirty_at,
-               knowledge_config -> 'redactionPatterns' as patterns,
-               coalesce(knowledge_config -> 'redactionPatterns', 'null'::jsonb)::text as patterns_text
+               knowledge_config as config,
+               coalesce(knowledge_config -> 'redactionRules', 'null'::jsonb)::text as rules_text
           from ${projects} where ${projects.id} = ${project.id}
       `)
       const dirtyAt = snap?.dirty_at
       if (!dirtyAt) return null // cleared out from under us before we locked; nothing to do
 
+      // RESOLVE BEFORE EXTRACTING, and refuse the whole project if anything in the
+      // configuration cannot be turned into a pattern. A rule we cannot resolve is a
+      // protection the owner switched on and we are not applying; reporting it and
+      // writing anyway would be observation rather than protection, and what the
+      // invariant forbids is the storage, not the silence.
+      //
+      // Nothing is claimed on this path, so the refusal is a DEFERRAL rather than a
+      // loss: fix the catalogue (or the configuration) and these threads extract on a
+      // later tick. That property is inherited from BUG-0010's decision not to
+      // watermark an empty extraction, and this is the second time it has paid.
+      const { patterns, unresolved } = resolveRedactionRules(snap?.config)
+      if (unresolved.length > 0) {
+        console.warn(
+          `[knowledge] extractor: refusing to write for project ${project.id} - `
+          + `${unresolved.length} redaction rule(s) could not be resolved: `
+          + unresolved.map(u => `${u.reason}(${u.detail})`).join(', '),
+        )
+        return null
+      }
+
       const { written: n, staleConfig } = await extractProject(
-        tx, project.id, snap?.patterns ?? [], snap?.patterns_text ?? 'null',
+        tx, project.id, patterns, snap?.rules_text ?? 'null',
       )
 
       // A settings save landed mid-project. Leave the marker so the next tick redoes the
@@ -193,7 +215,7 @@ async function extractProject(
   tx: DbOrTx,
   projectId: string,
   redactionPatterns: readonly string[],
-  /** The same patterns as Postgres renders them, for the comparison on the claim below.
+  /** The project's rules as Postgres renders them, for the comparison on the claim below.
    *  Taken from the database rather than re-serialised in JS so that the two sides of the
    *  comparison cannot disagree about key order, spacing or escaping. */
   patternsSnapshot: string,
@@ -240,7 +262,7 @@ async function extractProject(
     )
     // NOTHING WORTH KEEPING IS NOT A DECISION. No watermark here, deliberately: this
     // is the current output of a function over inputs that CHANGE - the project's
-    // redactionPatterns are editable and the rule itself changes on deploy - so
+    // redactionRules are editable and the catalogue changes on deploy - so
     // marking it would convert "no lesson found yet" into "never look again", on
     // exactly the threads a corrected pattern would recover. Re-reading them on a
     // later tick is what today already does, and it cannot duplicate anything.
@@ -273,7 +295,7 @@ async function extractProject(
     // deleted since the eligibility query, and an FK violation here would abort the
     // whole project's sweep rather than skipping one thread.
     // THE PATTERN COMPARISON rides on this statement, and it has to be THIS statement
-    // rather than a check before it. The candidate was redacted with `redactionPatterns`;
+    // rather than a check before it. The candidate was redacted with these patterns;
     // if the owner replaced them since, that body is the wrong body and must not be
     // stored. Checking beforehand leaves a gap between the check and the write; checking
     // here means the claim and the comparison commit or fail together, which is the same
@@ -297,7 +319,7 @@ async function extractProject(
          and exists (
                select 1 from ${projects} p
                 where p.id = ${projectId}
-                  and coalesce(p.knowledge_config -> 'redactionPatterns', 'null'::jsonb)
+                  and coalesce(p.knowledge_config -> 'redactionRules', 'null'::jsonb)
                       = ${patternsSnapshot}::jsonb
              )
       on conflict (project_id, thread_id) do nothing
@@ -309,7 +331,7 @@ async function extractProject(
       // thread, or a knowledge row appearing under us are all "skip this thread". Patterns
       // having changed is "stop, and let the next tick redo the remainder".
       const [now] = await tx.execute<{ snapshot: string }>(sql`
-        select coalesce(knowledge_config -> 'redactionPatterns', 'null'::jsonb)::text as snapshot
+        select coalesce(knowledge_config -> 'redactionRules', 'null'::jsonb)::text as snapshot
           from ${projects} where ${projects.id} = ${projectId}
       `)
       if (now && now.snapshot !== patternsSnapshot) return { written, staleConfig: true }

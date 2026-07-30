@@ -23,11 +23,13 @@ afterAll(async () => {
   await rawSql.end()
 })
 
-async function project(redactionPatterns?: string[]): Promise<{ id: string; agentId: string }> {
+async function project(literals?: string[]): Promise<{ id: string; agentId: string }> {
   const sfx = randomBytes(6).toString('hex')
   const [p] = await db.insert(projects).values({
     organizationId: `es-org-${sfx}`, slug: `es-${sfx}`, name: 'Extractor', connectCode: `es-cc-${sfx}`,
-    ...(redactionPatterns ? { knowledgeConfig: { redactionPatterns } } : {}),
+    ...(literals
+      ? { knowledgeConfig: { redactionRules: literals.map(value => ({ kind: 'literal' as const, value })) } }
+      : {}),
   }).returning({ id: projects.id })
   const [a] = await db.insert(agents).values({ projectId: p!.id, part: 'w' }).returning({ id: agents.id })
   return { id: p!.id, agentId: a!.id }
@@ -80,7 +82,9 @@ describe('extractor output', () => {
   })
 
   it('applies redaction before writing the candidate', async () => {
-    const p = await project(['sk-[a-z0-9]+'])
+    // A literal, because an operator can no longer author a regex - the stored shape is
+    // a union and the server escapes literals, so `sk-[a-z0-9]+` is not configurable.
+    const p = await project(['sk-abc123'])
     await thread(p.id, p.agentId, 'closed', [{ body: 'rotate sk-abc123 now' }])
     await markProjectKnowledgeDirty(db, p.id)
     await runExtractorSweep(db, { projectId: p.id })

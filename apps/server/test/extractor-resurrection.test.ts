@@ -157,7 +157,7 @@ describe('extractor resurrection (BUG-0010)', () => {
     const sfx = randomBytes(6).toString('hex')
     const [p] = await db.insert(projects).values({
       organizationId: `rn-org-${sfx}`, slug: `rn-${sfx}`, name: 'Nothing', connectCode: `rn-cc-${sfx}`,
-      knowledgeConfig: { redactionPatterns: ['SECRET-BODY'] },
+      knowledgeConfig: { redactionRules: [{ kind: 'literal', value: 'SECRET-BODY' }] },
     }).returning({ id: projects.id })
     const [a] = await db.insert(agents).values({ projectId: p!.id, part: 'w' }).returning({ id: agents.id })
 
@@ -169,7 +169,7 @@ describe('extractor resurrection (BUG-0010)', () => {
     expect(await watermark(p!.id, t)).toBeNull() // not foreclosed
 
     // The operator fixes the over-broad pattern. The thread must become extractable.
-    await db.update(projects).set({ knowledgeConfig: { redactionPatterns: [] } })
+    await db.update(projects).set({ knowledgeConfig: { redactionRules: [] } })
       .where(eq(projects.id, p!.id))
     await markProjectKnowledgeDirty(db, p!.id)
     const second = await runExtractorSweep(db, { projectId: p!.id })
