@@ -1,5 +1,14 @@
 # @relayroom/server
 
+## 0.5.5
+
+### Patch Changes
+
+- Updated dependencies [fb02878]
+  - @relayroom/shared@0.5.5
+  - @relayroom/db@0.5.5
+  - @relayroom/telemetry@0.5.5
+
 ## 0.5.4
 
 ### Patch Changes
