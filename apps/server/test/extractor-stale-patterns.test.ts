@@ -140,83 +140,84 @@ describe('extractor: redaction patterns are read where the marker is read', () =
 })
 
 /**
- * The window the advisory lock does NOT close, and the row lock does.
+ * A settings save that lands mid-project stops the sweep instead of writing under the old
+ * rule - and does it without any lock, because the comparison rides on the claim.
  *
- * The advisory lock excludes other sweep workers - nothing else in the system takes it -
- * so a settings save can commit between the sweep's read and its candidate insert. The
- * first fix moved the read under the advisory lock; that alone left this second window
- * open, which review loop 7 pointed out before any of it shipped. Both writers touch the
- * project row, so `for update` on it is the serialization point they actually share.
+ * The previous attempt at this took `for update` on the project row. That worked and was
+ * withdrawn: it made the sweep take the project row before the per-thread watermark, while
+ * the close path takes the watermark first, and two paths acquiring the same pair in
+ * opposite orders deadlock. Review loop 8 found it in the window between the code shipping
+ * and the close path being written.
  *
- * This test does not simulate the interleaving with a sleep. It holds the row lock from a
- * SECOND CONNECTION, waits until Postgres reports the sweep is actually blocked on a lock
- * (`pg_stat_activity.wait_event_type = 'Lock'`), and only then commits. The wait check is
- * the point: without it, a sweep that had not yet reached the read would pass for the
- * wrong reason.
+ * What replaced it is a comparison inside the claim: the insert happens only if the
+ * project's patterns are still the ones the candidate was redacted with. The requirement
+ * was never "serialize the two writers", it was "never write under a stale rule".
  *
- * Mutation-checked: dropping `for update` fails this test with the secret stored, because
- * the sweep reads the pre-update config instead of waiting for the new one.
+ * Reaching it deterministically: two threads in ONE project. The first candidate's insert
+ * fires a trigger that changes the patterns, so by the time the second thread is claimed the
+ * comparison fails. No sleeps, no second connection, and no dependence on which order two
+ * transactions happen to commit in.
  */
-describe('extractor: a settings write during the sweep is serialized, not lost', () => {
+describe('extractor: a pattern change mid-project stops the sweep, without a lock', () => {
   const SECRET2 = `SEKRET2-${randomBytes(4).toString('hex')}`
+  const TRIGGER2 = `mid_project_${randomBytes(4).toString('hex')}`
 
-  it('waits on the project row and redacts with the patterns that writer committed', { timeout: 30_000 }, async () => {
+  afterAll(async () => {
+    await db.execute(sql.raw(`drop trigger if exists ${TRIGGER2} on knowledge`))
+    await db.execute(sql.raw(`drop function if exists ${TRIGGER2}_fn()`))
+  })
+
+  it('writes the first thread, refuses the second, and leaves the marker set', async () => {
     const p = await project([])
-    await closedThread(p.id, p.agentId, `deploy key ${SECRET2} do not paste`)
+    // Ordered by insertion: the sweep processes threads in the eligibility query's order,
+    // so the first one written is the one whose trigger fires.
+    await closedThread(p.id, p.agentId, 'the first lesson, ordinary and safe')
+    await closedThread(p.id, p.agentId, `the second lesson mentions ${SECRET2} in passing`)
+
+    await db.execute(sql.raw(`
+      create or replace function ${TRIGGER2}_fn() returns trigger as $$
+      begin
+        if new.project_id = '${p.id}' then
+          update project
+             set knowledge_config = jsonb_build_object('redactionPatterns', jsonb_build_array('${SECRET2}'))
+           where id = '${p.id}';
+        end if;
+        return new;
+      end $$ language plpgsql;
+    `))
+    await db.execute(sql.raw(`
+      create trigger ${TRIGGER2} after insert on knowledge
+      for each row execute function ${TRIGGER2}_fn()
+    `))
+
     await markProjectKnowledgeDirty(db, p.id)
+    const first = await runExtractorSweep(db, { projectId: p.id })
 
-    const writer = makeTestApp()
-    try {
-      // Two gates, so the interleaving is enforced rather than hoped for: the sweep does
-      // not start until the settings update has actually executed (and therefore holds the
-      // row), and the settings transaction does not commit until the sweep is observably
-      // blocked on that row.
-      let updateRan: () => void = () => {}
-      let commitNow: () => void = () => {}
-      const updated = new Promise<void>((r) => { updateRan = r })
-      const release = new Promise<void>((r) => { commitNow = r })
+    // One candidate written; the second thread was NOT claimed under the old patterns.
+    expect(first.candidates).toBe(1)
+    const [claims] = await db.execute<{ n: number }>(sql`
+      select count(*)::int as n from thread_extraction where project_id = ${p.id}
+    `)
+    expect(claims?.n).toBe(1)
 
-      const held = writer.db.$client.begin(async (tx) => {
-        await tx`update project
-                    set knowledge_config = jsonb_build_object('redactionPatterns', jsonb_build_array(${SECRET2}::text))
-                  where id = ${p.id}`
-        updateRan()
-        await release
-      })
+    // And the marker survives, which is the whole mechanism for "the rest gets redone".
+    // Without it the second thread would be stranded: no claim, no candidate, no trigger
+    // to look at it again.
+    const [marker] = await db.execute<{ dirty: string | null }>(sql`
+      select knowledge_dirty_at::text as dirty from project where id = ${p.id}
+    `)
+    expect(marker?.dirty).not.toBeNull()
 
-      await updated
-      const swept = runExtractorSweep(db, { projectId: p.id })
+    // The next tick, with the new patterns in force, finishes the job with the secret gone.
+    await db.execute(sql.raw(`drop trigger if exists ${TRIGGER2} on knowledge`))
+    const second = await runExtractorSweep(db, { projectId: p.id })
+    expect(second.candidates).toBe(1)
 
-      let sweepWasBlocked = false
-      for (let i = 0; i < 100 && !sweepWasBlocked; i++) {
-        const rows = await db.execute<{ q: string }>(sql`
-          select query as q from pg_stat_activity
-           where state = 'active' and wait_event_type = 'Lock'
-        `)
-        // Matched on `redactionPatterns`, which appears ONLY in the snapshot select. The
-        // obvious filter - `knowledge_dirty_at::text` - also matches the marker-clearing
-        // update at the end of the sweep, which blocks on the same row for the same reason
-        // but AFTER the candidate has been written. That detector reported "blocked" on the
-        // broken code too, i.e. it measured the wrong statement and would have made the
-        // precondition meaningless.
-        sweepWasBlocked = rows.some(r => r.q?.includes('redactionPatterns'))
-        if (!sweepWasBlocked) await new Promise(r => setTimeout(r, 50))
-      }
-      commitNow()
-      await held
-      await swept
-
-      // The precondition, asserted rather than assumed: if the sweep never waited, this
-      // test proves nothing about serialization and must fail rather than pass quietly.
-      expect(sweepWasBlocked).toBe(true)
-
-      const body = await storedBody(p.id)
-      expect(body).not.toContain(SECRET2)
-      expect(body).toContain('deploy key')
-    }
-    finally {
-      await writer.bus.close()
-      await writer.db.$client.end()
-    }
+    const bodies = await db.execute<{ body: string }>(sql`
+      select body from knowledge where project_id = ${p.id}
+    `)
+    expect(bodies).toHaveLength(2)
+    expect(bodies.map(b => b.body).join('\n')).not.toContain(SECRET2)
+    expect(bodies.some(b => b.body.includes('the second lesson mentions'))).toBe(true)
   })
 })

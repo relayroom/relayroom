@@ -112,29 +112,52 @@ export async function runExtractorSweep(
       // and then permanently mark the thread as handled. Anything the extraction depends on
       // has to be read where the marker is read.
       //
-      // `for update` is what makes that true against the SETTINGS WRITER, and the advisory
-      // lock above cannot do it. That lock excludes other sweep workers - nothing else in
-      // the system takes it - so without the row lock a settings save could still commit new
-      // patterns between this read and the candidate insert a few lines down, and the sweep
-      // would write with the old ones. Both writers touch THIS project row (the marker and
-      // the config live in it), so locking it is the serialization point the two paths
-      // actually share. It blocks a settings save for the length of one project's sweep,
-      // which is the intended trade.
+      // DELIBERATELY NOT LOCKED, and the history is the reason. A previous fix took
+      // `for update` here so that a settings save could not commit between this read and
+      // the write. It did close the window, and it created a worse problem: the sweep then
+      // takes the project row BEFORE the per-thread watermark, while the close path takes
+      // the watermark before the project marker. Two paths acquiring the same pair in
+      // opposite orders deadlock, and Postgres resolves that by killing one - delivering
+      // an ordinary refusal as a crash.
       //
-      // What this does NOT give: threads already claimed before the edit. Their claims
-      // stand, and a corrected pattern does not reach back. Only threads that produced no
-      // candidate are recoverable, and only because a null extraction writes no watermark -
-      // which is why a pattern edit must also re-dirty the project.
-      const [snap] = await tx.execute<{ dirty_at: string | null; patterns: string[] | null }>(sql`
+      // A global lock order would fix it, and would be a defence every future writer has to
+      // remember. The requirement was never "serialize the settings writer against the
+      // sweep". It is "never write a candidate under a rule that has already been
+      // replaced", and that needs a comparison, not an order: the claim below writes only
+      // if these patterns are still current. See there.
+      //
+      // What no mechanism here gives: threads already claimed before an edit. Their claims
+      // stand and a corrected pattern does not reach back. Only threads that produced no
+      // candidate are recoverable, because a null extraction writes no watermark - which is
+      // why the settings writer must also re-dirty the project, and why that is a stated
+      // requirement on it rather than an implementation detail.
+      const [snap] = await tx.execute<{
+        dirty_at: string | null
+        patterns: string[] | null
+        patterns_text: string
+      }>(sql`
         select knowledge_dirty_at::text as dirty_at,
-               knowledge_config -> 'redactionPatterns' as patterns
+               knowledge_config -> 'redactionPatterns' as patterns,
+               coalesce(knowledge_config -> 'redactionPatterns', 'null'::jsonb)::text as patterns_text
           from ${projects} where ${projects.id} = ${project.id}
-          for update
       `)
       const dirtyAt = snap?.dirty_at
       if (!dirtyAt) return null // cleared out from under us before we locked; nothing to do
 
-      const n = await extractProject(tx, project.id, snap?.patterns ?? [])
+      const { written: n, staleConfig } = await extractProject(
+        tx, project.id, snap?.patterns ?? [], snap?.patterns_text ?? 'null',
+      )
+
+      // A settings save landed mid-project. Leave the marker so the next tick redoes the
+      // remaining threads under the new patterns; what was already written was claimed
+      // atomically against the patterns in force at that moment, so it stays.
+      if (staleConfig) {
+        console.warn(
+          `[knowledge] extractor: redaction patterns changed mid-sweep for project ${project.id};`
+          + ' stopping early and leaving the dirty marker for the next tick',
+        )
+        return n
+      }
 
       // Clear ONLY if the marker still equals the snapshot we took. A thread that
       // closed while we were processing bumped knowledge_dirty_at to a newer instant;
@@ -164,7 +187,11 @@ async function extractProject(
   tx: DbOrTx,
   projectId: string,
   redactionPatterns: readonly string[],
-): Promise<number> {
+  /** The same patterns as Postgres renders them, for the comparison on the claim below.
+   *  Taken from the database rather than re-serialised in JS so that the two sides of the
+   *  comparison cannot disagree about key order, spacing or escaping. */
+  patternsSnapshot: string,
+): Promise<{ written: number; staleConfig: boolean }> {
   // Once per project, not per thread: a pattern that cannot run cannot run for any of
   // them, so this says the same thing at a fraction of the volume. Reported rather than
   // enforced - a broken pattern must not stop the sweep - but never silent, because a
@@ -239,6 +266,16 @@ async function extractProject(
     // The ownership `exists` is not ceremony either: the thread could have been
     // deleted since the eligibility query, and an FK violation here would abort the
     // whole project's sweep rather than skipping one thread.
+    // THE PATTERN COMPARISON rides on this statement, and it has to be THIS statement
+    // rather than a check before it. The candidate was redacted with `redactionPatterns`;
+    // if the owner replaced them since, that body is the wrong body and must not be
+    // stored. Checking beforehand leaves a gap between the check and the write; checking
+    // here means the claim and the comparison commit or fail together, which is the same
+    // property the claim already gives against a competing purge.
+    //
+    // `is not distinct from` rather than `=`: a project with no patterns has SQL NULL
+    // here, and `null = null` is null, which would fail the guard for every project that
+    // never configured anything - i.e. all of them today.
     const claimed = await tx.execute<{ thread_id: string }>(sql`
       insert into ${threadExtractions} (project_id, thread_id, reason)
       select ${projectId}, ${thread.id}, 'extracted'
@@ -251,12 +288,27 @@ async function extractProject(
                 where k.project_id = ${projectId}
                   and k.source_refs @> ${JSON.stringify([{ threadId: thread.id }])}::jsonb
              )
+         and exists (
+               select 1 from ${projects} p
+                where p.id = ${projectId}
+                  and coalesce(p.knowledge_config -> 'redactionPatterns', 'null'::jsonb)
+                      = ${patternsSnapshot}::jsonb
+             )
       on conflict (project_id, thread_id) do nothing
       returning thread_id
     `)
-    // Zero rows: a conflict, a deleted thread, or a knowledge row that appeared under
-    // us. They are indistinguishable from here and all three mean the same thing.
-    if (claimed.length === 0) continue
+    if (claimed.length === 0) {
+      // Zero rows has one more cause than it used to, and only one of them invalidates the
+      // rest of this project's work, so they have to be told apart. A conflict, a deleted
+      // thread, or a knowledge row appearing under us are all "skip this thread". Patterns
+      // having changed is "stop, and let the next tick redo the remainder".
+      const [now] = await tx.execute<{ snapshot: string }>(sql`
+        select coalesce(knowledge_config -> 'redactionPatterns', 'null'::jsonb)::text as snapshot
+          from ${projects} where ${projects.id} = ${projectId}
+      `)
+      if (now && now.snapshot !== patternsSnapshot) return { written, staleConfig: true }
+      continue
+    }
 
     await tx.insert(knowledge).values({
       projectId,
@@ -272,7 +324,7 @@ async function extractProject(
     })
     written++
   }
-  return written
+  return { written, staleConfig: false }
 }
 
 /**
