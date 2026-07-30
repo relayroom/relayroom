@@ -107,15 +107,29 @@ export async function runExtractorSweep(
       // The REDACTION PATTERNS come from this same read, and the reason is a hazard,
       // not tidiness: a candidate is written with whatever patterns this snapshot holds,
       // and the write leaves a durable thread_extraction claim that stops the thread from
-      // ever being reconsidered. So a pattern read from BEFORE the lock can redact with a
-      // rule the owner has already replaced, store the secret the new rule was added to
-      // remove, and then permanently mark the thread as handled. The marker being fresh
-      // does not help - the sweep would see the new marker and still use the old patterns.
-      // Anything the extraction depends on has to be read where the marker is read.
+      // ever being reconsidered. So patterns read from a stale point can redact with a rule
+      // the owner has already replaced, store the secret the new rule was added to remove,
+      // and then permanently mark the thread as handled. Anything the extraction depends on
+      // has to be read where the marker is read.
+      //
+      // `for update` is what makes that true against the SETTINGS WRITER, and the advisory
+      // lock above cannot do it. That lock excludes other sweep workers - nothing else in
+      // the system takes it - so without the row lock a settings save could still commit new
+      // patterns between this read and the candidate insert a few lines down, and the sweep
+      // would write with the old ones. Both writers touch THIS project row (the marker and
+      // the config live in it), so locking it is the serialization point the two paths
+      // actually share. It blocks a settings save for the length of one project's sweep,
+      // which is the intended trade.
+      //
+      // What this does NOT give: threads already claimed before the edit. Their claims
+      // stand, and a corrected pattern does not reach back. Only threads that produced no
+      // candidate are recoverable, and only because a null extraction writes no watermark -
+      // which is why a pattern edit must also re-dirty the project.
       const [snap] = await tx.execute<{ dirty_at: string | null; patterns: string[] | null }>(sql`
         select knowledge_dirty_at::text as dirty_at,
                knowledge_config -> 'redactionPatterns' as patterns
           from ${projects} where ${projects.id} = ${project.id}
+          for update
       `)
       const dirtyAt = snap?.dirty_at
       if (!dirtyAt) return null // cleared out from under us before we locked; nothing to do
