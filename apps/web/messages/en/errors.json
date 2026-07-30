@@ -65,6 +65,7 @@
     "postFailed": "We could not send your message.",
     "messageFailed": "Your message could not be sent.",
     "closeFailed": "We could not change the thread's status.",
+    "statusChangedElsewhere": "Someone else changed this thread's status while you were on this page, so nothing was changed here. Reload to see where it stands - your change would have overwritten theirs.",
     "addTagsFailed": "We could not add the tags.",
     "dismissFailed": "We could not clear the attention flag.",
     "listFailed": "We could not load the threads.",
