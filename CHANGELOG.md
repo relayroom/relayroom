@@ -4,6 +4,35 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.5.4] - 2026-07-30
+
+Patch release, one fix. **No database migrations.** Upgrade if you use channel delivery -
+`rr.sh reconnect`, added yesterday in 0.5.3, could park an agent instead of recovering it.
+
+### Fixed
+
+**Channel mode now launches with `--channels`, not the flag that stops on a prompt.**
+
+The old flag showed a confirmation prompt on **every** launch. It is not suppressed by
+`--dangerously-skip-permissions`, and answering it stores no consent, so the next launch asked
+again. That was merely annoying while a human was attached to press Enter. It became a real
+defect the moment there was an unattended relaunch: the session exists, the process is alive,
+the pane reads `zsh`, and the agent sits on that prompt indefinitely - a state every health
+check we have reads as healthy. `rr.sh reconnect`, whose entire job is to relaunch a session
+with nobody watching, would have reported a successful respawn while parking the part.
+
+The prompt is older than 0.5.3. The unattended path that reaches it is not, which is why this
+is a release rather than a note.
+
+Two things are worth stating plainly, because they are the more useful part of the fix. First,
+**the readiness probe already tested for `--channels` while the launch used the other flag** -
+so the check and the action were about different things, and nothing compared them. 0.5.2's
+"choose channel mode on evidence rather than on a flag's existence" was right and incomplete:
+the evidence concerned a flag we were not using. Second, the prompt we were stalling on
+contained the fix - *"Please use `--channels` to run a list of approved channels."*
+
+Also removes a prompt a human had to answer on every `rr.sh up` in channel mode.
+
 ## [0.5.3] - 2026-07-29
 
 Patch release. **No database migrations** - a drop-in upgrade from 0.5.2.
