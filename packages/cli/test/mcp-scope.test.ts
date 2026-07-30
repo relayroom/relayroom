@@ -188,13 +188,30 @@ exit 0
     expect(stderr).not.toContain(sib)
   })
 
-  it("doctor reports a repo-root local entry even when this worktree is healthy", async () => {
+  /**
+   * The incident's cause state, and an ERR rather than a warning: measured, Claude
+   * resolves LOCAL scope AHEAD of project scope, so a session started here posts as the
+   * local entry's part while every file in this worktree says otherwise. One part wrote to
+   * the board under a sibling's name for three days in exactly this state, and nothing
+   * looked broken - working as someone else looks like working.
+   */
+  it("doctor fails when a local entry naming another part outranks this worktree", async () => {
     await run("bash", [join(wt, "rr.sh"), "claude", "mcp-add"], { cwd: wt, env })
     writeLocalEntry("sibling-part")
     const { stdout } = await run("bash", [join(wt, "rr.sh"), "doctor"], { cwd: wt, env })
-    // Healthy on its own terms, and still one setup away from taking a sibling down.
     expect(stdout).toContain("registered (this worktree's .mcp.json, part=core)")
-    expect(stdout).toContain("repo-root LOCAL scope (part=sibling-part)")
+    expect(stdout).toMatch(/ERR .*LOCAL scope registers part 'sibling-part'/)
+    expect(stdout).toContain("LOCAL outranks")
+    expect(stdout).toContain("./rr.sh reconnect")
+  })
+
+  /** This part's OWN leftover cannot misattribute anything, so it stays a warning. */
+  it("doctor only warns when the local entry names this same part", async () => {
+    await run("bash", [join(wt, "rr.sh"), "claude", "mcp-add"], { cwd: wt, env })
+    writeLocalEntry("core")
+    const { stdout } = await run("bash", [join(wt, "rr.sh"), "doctor"], { cwd: wt, env })
+    expect(stdout).toContain("repo-root LOCAL scope (part=core)")
+    expect(stdout).not.toMatch(/ERR .*LOCAL scope registers/)
   })
 
   /**

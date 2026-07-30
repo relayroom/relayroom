@@ -259,6 +259,17 @@ RRPROFILE
   fi
   [ "$NEW" = "1" ] && echo "session: NEW" >&2 || echo "session: resume last (--new for fresh)" >&2
   echo "wake delivery: $mode$why" >&2
+  # Record WHAT CONFIG this agent is about to read. prepare_launch is the one choke point
+  # every agent start passes through - up creating a session, launch from inside one,
+  # either respawn path - so recording here covers them all, and \`up\` attaching to an
+  # existing session deliberately does not reach it and must not overwrite.
+  #
+  # Content, not a timestamp: doctor is the command people run right AFTER setup, and setup
+  # rewrites .mcp.json whether or not anything changed (\`claude mcp add\` is not ours to
+  # fix). A timestamp comparison would therefore fail in the most common sequence, and a
+  # false ERR is worse than no check - it spends the credibility that made ERR worth
+  # promoting in 0.5.2, and teaches people to skip the line.
+  printf '%s %s\n' "$(config_fp)" "$SESSION" > "$ROOT/.relayroom/session-config.fp" 2>/dev/null || true
 }
 
 # ── pager ────────────────────────────────────────────────────────────────────
@@ -415,6 +426,29 @@ at_hhmm() { date -d "@$1" +%H:%M 2>/dev/null || date -r "$1" +%H:%M 2>/dev/null 
 # It relies on those mtimes being honest, which is why \`installHook\` writes only on
 # change. An unconditional rewrite would make every session look stale forever, since
 # \`up\` runs setup on the way past.
+# Does the RUNNING session hold different config than what is on disk now? Echoes
+# "<verdict> <detail>" where verdict is: diverged | current | unknown.
+#
+# This is the identity question the incident needed and mtime cannot express. A worktree
+# can be wrong with .mcp.json untouched, because Claude resolves LOCAL scope ahead of
+# project scope (measured) - so a shared repo-root entry can hand the session someone
+# else's part while the file was right all along, and no timestamp moves.
+#
+# "unknown" is a real answer, not a failure: a session started by an older CLI left no
+# record. The caller must not turn it into an ERR - see the graded reporting in doctor.
+session_config_drift() {
+  tx_exists || { echo "unknown no-session"; return 0; }
+  local rec recorded_fp recorded_session now
+  rec="$ROOT/.relayroom/session-config.fp"
+  [ -f "$rec" ] || { echo "unknown no-record"; return 0; }
+  read -r recorded_fp recorded_session < "$rec" 2>/dev/null || { echo "unknown unreadable-record"; return 0; }
+  # A record left by a DIFFERENT session name says nothing about this one.
+  [ "\${recorded_session:-}" = "$SESSION" ] || { echo "unknown record-for-other-session"; return 0; }
+  now="$(config_fp)"
+  [ -n "$now" ] && [ -n "\${recorded_fp:-}" ] || { echo "unknown fingerprint-failed"; return 0; }
+  if [ "$now" = "$recorded_fp" ]; then echo "current $now"; else echo "diverged $recorded_fp->$now"; fi
+}
+
 session_stale() {
   tx_exists || return 1
   local created f m
@@ -772,6 +806,27 @@ setup() {
 # worktrees all post as the same part because the MCP server was registered in
 # Claude's repo-root-keyed LOCAL scope instead of the per-worktree project scope.
 # doctor() catches that (and token/server/pager gaps) and prints what to run.
+#
+# ── Which checks live here, and which live in \`up\` ────────────────────────────
+# An explicit split, because the drift between the two caused a three-day incident:
+# \`session_stale\` existed and was wired into \`up\` only, so the one command people
+# actually run when something looks wrong could not see the condition. The instrument
+# existed; nothing called it.
+#
+#   doctor  REPORTS every check. It is the diagnostic, it changes nothing, and a check
+#           it cannot run is still reported (as WARN with its evidence) rather than
+#           omitted. Anything detectable belongs here.
+#   up      ACTS on the subset that blocks a working launch - it refuses, restarts, or
+#           registers. It is not the place to report conditions it will not act on.
+#
+# So the rule when adding a check: it goes in doctor ALWAYS, and additionally in \`up\`
+# only if \`up\` would do something about it. Never in \`up\` alone.
+#
+# The general form behind the identity checks below, worth keeping because the next value
+# with two sources will tempt the same omission: **when one fact has two sources, compare
+# them and fail on divergence.** Uncompared, both sources report success and one of them
+# is wrong - which is exactly how the file said one part and the live connection another,
+# with the status bar counting one mailbox while \`inbox\` opened a different one.
 doctor() {
   # Conventional CLI coloring: green ok / yellow WARN / red ERR, but only when stdout
   # is a terminal (so piping doctor into a file or grep stays clean). tput avoids
@@ -836,12 +891,43 @@ doctor() {
       echo "       no wakes - unable to report it, because reporting needs the channel."
       echo "       Fix: ./rr.sh setup   (writes enabledMcpjsonServers to .claude/settings.json)"
     fi
+    # A repo-root LOCAL entry naming ANOTHER part is an ERR, not a warning: measured,
+    # Claude resolves local scope AHEAD of project scope, so a session started here posts
+    # as that part while every file in this worktree says otherwise. That is how a part
+    # spent three days writing to the board under a sibling's name - and it never looked
+    # broken, because working-as-someone-else looks like working.
     local lp; lp="$(local_scope_part)"
-    if [ -n "$lp" ]; then
+    if [ -n "$lp" ] && [ "$lp" != "$PART" ]; then
+      echo "$ERR repo-root LOCAL scope registers part '$lp', and LOCAL outranks this"
+      echo "       worktree's .mcp.json - so a session started here posts as '$lp', not"
+      echo "       '$PART'. Nothing in this worktree looks wrong; the identity is."
+      echo "       Fix: ./rr.sh setup in the worktree that owns '$lp' (it retires the shared"
+      echo "       entry), then ./rr.sh reconnect here so this session picks up its own."
+    elif [ -n "$lp" ]; then
       echo "$WRN claude relayroom MCP is ALSO registered in repo-root LOCAL scope (part=$lp)."
       echo "       That entry is shared by every worktree of this repo, and the next"
       echo "       './rr.sh setup' run in the worktree that owns part '$lp' will retire it."
-      [ "$lp" = "$PART" ] && echo "       It is this part's own leftover - re-run ./rr.sh setup here to clear it."
+      echo "       It is this part's own leftover - re-run ./rr.sh setup here to clear it."
+    fi
+    # Does the RUNNING session hold the config on disk? Graded by how strong the evidence
+    # is, because a false ERR here costs more than a missed one: it spends the credibility
+    # that made ERR worth promoting in 0.5.2.
+    local drift dverdict ddetail
+    drift="$(session_config_drift)"; dverdict="\${drift%% *}"; ddetail="\${drift#* }"
+    if [ "$dverdict" = "diverged" ]; then
+      echo "$ERR this session is running OLD config - it read .mcp.json at startup and the"
+      echo "       file has changed since ($ddetail). Files on disk are not what the running"
+      echo "       agent is using, which is why every other check here is green."
+      echo "       Fix: ./rr.sh reconnect   (re-registers, then reloads this session)"
+    elif [ "$dverdict" = "unknown" ] && [ -n "$(session_stale || true)" ]; then
+      # No record to compare, so this cannot be promoted: \`claude mcp add\` bumps mtimes on
+      # every setup with identical content, so timestamps alone false-positive right after
+      # the command people most often run before doctor. Report the evidence, not a verdict.
+      set -- $(session_stale)
+      echo "$WRN cannot confirm this session read the current config ($ddetail)."
+      echo "       Evidence: session started $(at_hhmm "$3"), $(basename "$1") written $(at_hhmm "$2")."
+      echo "       A timestamp is not proof - setup rewrites that file even when nothing"
+      echo "       changes. If this part is behaving oddly: ./rr.sh reconnect"
     fi
   fi
   if mcp_online; then echo "$OKM server reachable ($SERVER)"; else echo "$ERR server UNREACHABLE ($SERVER) - is the hub up?"; fi

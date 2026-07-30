@@ -377,6 +377,49 @@ exit 0`,
     expect(second.stdout + second.stderr).not.toContain("FAILED")
   })
 
+  /**
+   * The three-day incident: files correct, session holding what it read at startup, every
+   * other check green. Content, not mtime - `claude mcp add` rewrites .mcp.json on every
+   * setup with identical content, and doctor is the command people run right after setup,
+   * so a timestamp check would fire in the most common sequence. A false ERR costs more
+   * than a missed one: it spends the credibility that made ERR worth promoting.
+   */
+  it("doctor fails when the running session holds different config than disk", async () => {
+    await up()
+    // prepare_launch recorded what this session was launched with; now the file changes.
+    writeFileSync(join(dir, ".mcp.json"), JSON.stringify({ mcpServers: { relayroom: { url: "http://x/mcp/c1?part=core&changed=1" } } }))
+    const { stdout } = await run("bash", [join(dir, "rr.sh"), "doctor"], { cwd: dir, env })
+    expect(stdout).toMatch(/ERR .*running OLD config/)
+    expect(stdout).toContain("./rr.sh reconnect")
+  })
+
+  it("doctor is quiet when the session holds exactly what is on disk", async () => {
+    await up()
+    // Assert the record EXISTS, not just that doctor is quiet: with no fingerprint the
+    // verdict is "unknown" and doctor is also quiet, so silence alone cannot tell a
+    // matching session from an unrecorded one - and the whole check would be decorative.
+    const rec = readFileSync(join(dir, ".relayroom", "session-config.fp"), "utf8").trim()
+    expect(rec.split(" ")[0]).toMatch(/^[0-9a-f]{40}$/)
+    expect(rec.split(" ")[1]).toBe(session)
+    const { stdout } = await run("bash", [join(dir, "rr.sh"), "doctor"], { cwd: dir, env })
+    expect(stdout).not.toContain("running OLD config")
+    expect(stdout).not.toContain("cannot confirm this session read")
+  })
+
+  /**
+   * A session started by an older CLI left no record. That is "unknown", not "diverged",
+   * and must not be promoted to ERR - only the timestamp evidence is available and setup
+   * moves timestamps on its own.
+   */
+  it("doctor warns rather than fails when there is no record to compare", async () => {
+    await makeSession()
+    setMtime(join(dir, ".mcp.json"), 60)
+    const { stdout } = await run("bash", [join(dir, "rr.sh"), "doctor"], { cwd: dir, env })
+    expect(stdout).toMatch(/WARN .*cannot confirm this session read the current config/)
+    expect(stdout).toContain("A timestamp is not proof")
+    expect(stdout).not.toMatch(/ERR .*running OLD config/)
+  })
+
   it("errors rather than silently dropping --bypass on a running session", async () => {
     await makeSession()
     const { code, stderr } = await up("--bypass")
