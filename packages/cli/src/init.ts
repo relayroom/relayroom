@@ -162,6 +162,16 @@ LAUNCH="$PRIMARY"
 # "channel does not work and everything says it does" - heartbeat still green, status
 # bar still painted, nothing delivered. That is why the caller treats anything short of
 # positive evidence as pager rather than branching on a known failure.
+#
+# WHERE THAT PRINCIPLE WAS STILL INCOMPLETE, because it is the next trap of this kind:
+# "choose on evidence" was right, and nobody checked that the evidence was about the
+# same thing as the action. The probe measured \`--channels\`, and the launch then used
+# \`--dangerously-load-development-channels\` - two flags, one question, no comparison. So
+# the readiness verdict was sound and described a launch we were not performing, which is
+# how every channel-mode start ended up sitting on a confirmation prompt.
+#
+# The general form, worth asking out loud the next time anything here says "we choose on
+# evidence": evidence about WHAT, and is it the thing we then do?
 channel_ready() {
   local out=""
   # Layer 1, the observable: \`claude mcp list\` reports the server's real state,
