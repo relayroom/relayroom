@@ -78,6 +78,28 @@ describe("mergeKnowledgeConfig", () => {
     expect(await dirtyAt()).not.toBeNull()
   })
 
+  it("does not tell the extractor to look again when the save itself failed", async () => {
+    // Partial cover for the atomicity requirement, and worth being exact about
+    // which part. A NUL byte is rejected by jsonb, so the config write fails
+    // deterministically, and the marker must not survive it.
+    //
+    // Verified by mutation: writing the marker first and the config second, as two
+    // separate statements, fails here. That is one of the two orders the single
+    // transaction exists to rule out - the one where a sweep could consume a marker
+    // for settings that never landed.
+    //
+    // It does NOT cover the other order, config committed and the marker then
+    // failing, because there is no way to make the marker update fail from a test.
+    // That direction rests on the transaction boundary alone.
+    await db.update(projects).set({ knowledgeDirtyAt: null }).where(eq(projects.id, projectId))
+
+    await expect(
+      mergeKnowledgeConfig(projectId, { redactionRules: ["x" + String.fromCharCode(0) + "y"] }),
+    ).rejects.toThrow()
+
+    expect(await dirtyAt()).toBeNull()
+  })
+
   it("writes an empty patch without disturbing anything", async () => {
     // Turning every detector off is a legitimate save, and it must still ask for a
     // re-look: that IS the correction in the case where redaction was too broad.
