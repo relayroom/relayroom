@@ -46,7 +46,14 @@ export type WakeSuppressReason =
 
 /**
  * What is actually STORED in `wake_event.reason`, and therefore the only thing an
- * audit view can show. Overlaps WakeSuppressReason in exactly one value.
+ * audit view can show. A DIFFERENT set from WakeSuppressReason: each union holds
+ * values the other does not, so neither can stand in for the other. That relation
+ * is pinned by the compile-time witnesses below rather than stated as a count here.
+ * The count is what went wrong: this line read "overlaps in exactly one value"
+ * while the paragraph twenty lines up said four of six are not stored, which makes
+ * the overlap two. Both were written in the same commit, so the count was never
+ * right for a single day. A number in a comment does not save anyone the counting;
+ * it only adds a place for the answer to be wrong.
  *
  * `loop_breaker` and `direct_cooldown` are written by the pipeline, not by
  * shouldWake, which is why they appear here and not above - and why reading the
@@ -69,6 +76,19 @@ export type PersistedWakeReason =
   | 'limited'
   | 'loop_breaker'
   | 'direct_cooldown'
+
+/**
+ * The sentence above, as a check instead of a claim: neither union contains the
+ * other. Each witness names a value that exists in one and not the other, so if a
+ * future edit collapses either direction the annotation stops compiling and the
+ * editor has to decide whether two vocabularies are still warranted - which is the
+ * question a stale count would have hidden.
+ */
+type DisjointWitness<A, B> = Exclude<A, B>
+const _suppressOnly: DisjointWitness<WakeSuppressReason, PersistedWakeReason> = 'banned'
+const _persistedOnly: DisjointWitness<PersistedWakeReason, WakeSuppressReason> = 'loop_breaker'
+void _suppressOnly
+void _persistedOnly
 
 export type WakeDecision =
   | { action: 'issue'; wakeId: string; epoch: number; reason: string }
