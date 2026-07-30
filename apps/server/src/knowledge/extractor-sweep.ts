@@ -126,11 +126,17 @@ export async function runExtractorSweep(
       // replaced", and that needs a comparison, not an order: the claim below writes only
       // if these patterns are still current. See there.
       //
-      // What no mechanism here gives: threads already claimed before an edit. Their claims
-      // stand and a corrected pattern does not reach back. Only threads that produced no
-      // candidate are recoverable, because a null extraction writes no watermark - which is
-      // why the settings writer must also re-dirty the project, and why that is a stated
-      // requirement on it rather than an implementation detail.
+      // RECOVERY IS CONDITIONAL, and the two cases are worth stating because "fix the
+      // pattern and it comes back" is only half true:
+      //   - extraction produced NOTHING -> no watermark was written -> a corrected pattern
+      //     does bring the thread back, once the project goes dirty again. Which is why the
+      //     settings writer has to call markProjectKnowledgeDirty; without that this case
+      //     waits on some unrelated thread closing.
+      //   - extraction produced a CANDIDATE -> it is claimed, and the claim is what the next
+      //     sweep checks. A corrected pattern NEVER reaches it. The operator's remedy for
+      //     that thread is purge, which removes the row and marks the thread purged.
+      // Anyone tempted to make the first case cover the second should notice that the second
+      // is exactly what BUG-0010's watermark exists to make permanent.
       const [snap] = await tx.execute<{
         dirty_at: string | null
         patterns: string[] | null
