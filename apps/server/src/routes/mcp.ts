@@ -63,7 +63,7 @@ import { shouldWake } from '../wake/issuance'
 import { isWakeBudgetEnabled } from '../wake/flag'
 import { CapabilityError, getCapabilities, resolveUrgent } from '../priority/capability'
 import { seedOwnerWakeBudget } from '../budget/seed-owner-budget'
-import { redact } from '../knowledge/redaction'
+import { redact, reportSkippedPatterns } from '../knowledge/redaction'
 import { markProjectKnowledgeDirty, recordKnowledgeSignal } from '@relayroom/db'
 import { tokenScopeAllowsProject } from '../lib/token-scope'
 
@@ -1439,8 +1439,16 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
       const [proj] = await db.select({ config: projects.knowledgeConfig })
         .from(projects).where(eq(projects.id, ctx.projectId)).limit(1)
       const patterns = proj?.config?.redactionPatterns ?? []
-      const title = redact(args.title, patterns).text
-      const body = redact(args.body, patterns).text
+      const titleResult = redact(args.title, patterns)
+      const bodyResult = redact(args.body, patterns)
+      const title = titleResult.text
+      const body = bodyResult.text
+      // A pattern that did not run is a secret the owner believes is being removed and
+      // is not. Skipping is correct - one bad regex must not break every write - but it
+      // has to be visible somewhere, and the only party who can see this is the operator
+      // reading logs. The pattern is the project's own config, so it is safe to print;
+      // the text it would have matched is not, and is not printed.
+      reportSkippedPatterns(ctx.projectId, 'learn', [...titleResult.skipped, ...bodyResult.skipped])
       if (body.trim() === '') {
         return { content: [{ type: 'text' as const,
           text: 'error: the body was empty after redaction; nothing was recorded' }], isError: true }

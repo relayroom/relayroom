@@ -3,7 +3,7 @@
  * skip-bad-pattern behaviour are pinned here.
  */
 import { describe, expect, it } from 'vitest'
-import { hasRedaction, redact } from '../src/knowledge/redaction'
+import { hasRedaction, redact, skippedPatterns } from '../src/knowledge/redaction'
 
 describe('redact', () => {
   it('drops a matched span entirely - it does not mask', () => {
@@ -26,7 +26,7 @@ describe('redact', () => {
   })
 
   it('returns the text unchanged when there are no patterns', () => {
-    expect(redact('nothing to hide', [])).toEqual({ text: 'nothing to hide', redactions: 0 })
+    expect(redact('nothing to hide', [])).toEqual({ text: 'nothing to hide', redactions: 0, skipped: [] })
   })
 
   it('skips an invalid regex rather than throwing', () => {
@@ -34,6 +34,9 @@ describe('redact', () => {
     const r = redact('keep sk-1', ['(unclosed', 'sk-\\d+'])
     expect(r.text).toBe('keep ')
     expect(r.redactions).toBe(1)
+    // Skipping is correct; skipping SILENTLY is not. A pattern that never ran is a
+    // secret the owner believes is being removed and is not, so the skip is reported.
+    expect(r.skipped).toEqual([{ pattern: '(unclosed', reason: 'invalid' }])
   })
 
   it('skips a pattern that matches the empty string', () => {
@@ -41,6 +44,17 @@ describe('redact', () => {
     const r = redact('untouched', ['x*'])
     expect(r.text).toBe('untouched')
     expect(r.redactions).toBe(0)
+    expect(r.skipped).toEqual([{ pattern: 'x*', reason: 'matches_empty' }])
+  })
+
+  it('decides skips from the patterns alone, so they can be reported per project', () => {
+    // The property the sweep relies on to log once per project instead of once per row:
+    // whether a pattern runs never depends on the text it would have been applied to.
+    expect(skippedPatterns(['(unclosed', 'x*', 'sk-\\d+'])).toEqual([
+      { pattern: '(unclosed', reason: 'invalid' },
+      { pattern: 'x*', reason: 'matches_empty' },
+    ])
+    expect(redact('', ['(unclosed']).skipped).toEqual(redact('long text here', ['(unclosed']).skipped)
   })
 
   it('reports whether anything would be dropped without exposing it', () => {

@@ -42,6 +42,7 @@ import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm'
 import type { Db, DbOrTx } from '@relayroom/db'
 import { knowledge, messages, projects, threadExtractions, threads } from '@relayroom/db'
 import { extractCandidateFromThread } from './extract'
+import { reportSkippedPatterns, skippedPatterns } from './redaction'
 
 /** Advisory-lock namespace for the extractor, so its keys cannot collide with
  *  another subsystem's advisory locks on the same hashed project id. */
@@ -72,10 +73,11 @@ export async function runExtractorSweep(
 ): Promise<ExtractorSweepResult> {
   const limit = opts.limit ?? EXTRACTOR_PROJECT_BATCH
 
+  // Ids only. The project's knowledge_config is deliberately NOT read here - see the
+  // re-read under the lock below.
   const dirty = await db
     .select({
       id: projects.id,
-      config: projects.knowledgeConfig,
     })
     .from(projects)
     .where(and(
@@ -88,7 +90,6 @@ export async function runExtractorSweep(
   let processed = 0
   let candidates = 0
   for (const project of dirty) {
-    const redactionPatterns = project.config?.redactionPatterns ?? []
     const written = await db.transaction(async (tx) => {
       // Single writer: if another worker holds this project, skip it this tick. The
       // lock is transaction-scoped, so it releases when this block ends.
@@ -102,13 +103,24 @@ export async function runExtractorSweep(
       // milliseconds, so a Date-valued equality clear below would NEVER match and the
       // marker would never clear. Comparing text to text keeps full precision. This is
       // the "clearing-sweep precision trap" the setter is deliberately built to avoid.
-      const [snap] = await tx.execute<{ dirty_at: string | null }>(sql`
-        select knowledge_dirty_at::text as dirty_at from ${projects} where ${projects.id} = ${project.id}
+      //
+      // The REDACTION PATTERNS come from this same read, and the reason is a hazard,
+      // not tidiness: a candidate is written with whatever patterns this snapshot holds,
+      // and the write leaves a durable thread_extraction claim that stops the thread from
+      // ever being reconsidered. So a pattern read from BEFORE the lock can redact with a
+      // rule the owner has already replaced, store the secret the new rule was added to
+      // remove, and then permanently mark the thread as handled. The marker being fresh
+      // does not help - the sweep would see the new marker and still use the old patterns.
+      // Anything the extraction depends on has to be read where the marker is read.
+      const [snap] = await tx.execute<{ dirty_at: string | null; patterns: string[] | null }>(sql`
+        select knowledge_dirty_at::text as dirty_at,
+               knowledge_config -> 'redactionPatterns' as patterns
+          from ${projects} where ${projects.id} = ${project.id}
       `)
       const dirtyAt = snap?.dirty_at
       if (!dirtyAt) return null // cleared out from under us before we locked; nothing to do
 
-      const n = await extractProject(tx, project.id, redactionPatterns)
+      const n = await extractProject(tx, project.id, snap?.patterns ?? [])
 
       // Clear ONLY if the marker still equals the snapshot we took. A thread that
       // closed while we were processing bumped knowledge_dirty_at to a newer instant;
@@ -139,6 +151,12 @@ async function extractProject(
   projectId: string,
   redactionPatterns: readonly string[],
 ): Promise<number> {
+  // Once per project, not per thread: a pattern that cannot run cannot run for any of
+  // them, so this says the same thing at a fraction of the volume. Reported rather than
+  // enforced - a broken pattern must not stop the sweep - but never silent, because a
+  // skipped pattern and a working denylist look identical from outside.
+  reportSkippedPatterns(projectId, 'extractor', skippedPatterns(redactionPatterns))
+
   // Threads eligible for extraction with no existing candidate citing them. The
   // NOT EXISTS is the once-per-thread dedup: a candidate whose source_refs contain
   // {threadId} means this thread was already extracted.
