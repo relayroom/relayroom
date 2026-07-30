@@ -193,27 +193,52 @@ exit 0`,
     // destroyed the session, and this helper timed out looking for a corpse that could
     // never form. Then verify the option took, because a set that did not apply is the
     // failure being guarded against and it reports success either way.
+    const t0 = Date.now()
     for (let i = 0; ; i++) {
       if ((await tmux(["has-session", "-t", `=${session}`])).code === 0) break
       if (i > 100) throw new Error("session never appeared")
       await new Promise((r) => setTimeout(r, 50))
     }
+    const tSession = Date.now() - t0
     await tmux(["set-window-option", "-t", `=${session}`, "remain-on-exit", "on"])
     const opt = await tmux(["show-window-options", "-t", `=${session}`, "remain-on-exit"])
     if (!/remain-on-exit on/.test(opt.stdout)) throw new Error(`remain-on-exit did not apply: ${opt.stdout}${opt.stderr}`)
     writeFileSync(gate, "")
-    // Wait for the pane to be dead AND for its exit status to be readable. Measured:
-    // `pane_dead` flips to 1 before `pane_dead_status` is populated, in 11 of 20 samples -
-    // so waiting on `pane_dead` alone is waiting on a proxy, and `up` sampling in that
-    // window legitimately reports `status ?` instead of `status 3`. That produced a
-    // roughly 1-in-3 flake, which is exactly the kind of red that gets re-run until green.
-    for (let i = 0; i < 100; i++) {
-      const { stdout } = await tmux(["list-panes", "-t", `=${session}`, "-F", "#{pane_dead} #{pane_dead_status}"])
-      const lines = stdout.trim().split("\n")
-      if (lines.every((l) => /^1 \S/.test(l.trim()))) return
+    // Wait for the pane to be DEAD. Do not also require its exit status: measured over 40
+    // arrangements, `#{pane_dead_status}` is populated 18 times and **permanently empty
+    // the other 22** - re-sampling those for a further 2s never filled them, and
+    // `#{pane_dead_signal}` was empty too, so it is not a late write and not a signal
+    // death. tmux simply does not always record it.
+    //
+    // An earlier version of this helper required the status, on the strength of a probe
+    // showing it arrive late in 11 of 20 samples. That probe was right about "late" and I
+    // read "eventually" into it without measuring - so the requirement could not be met
+    // more than half the time, and the helper spent 5s waiting for something that was
+    // never coming. It turned a wrong-value flake into a timeout flake at a similar rate
+    // (3 of 8 suite runs), and the timeout said less than the wrong value had.
+    //
+    // So: wait for the condition that always arrives (~60ms), and report whether the
+    // status came with it, so the caller can assert on what tmux actually provided.
+    let last = "(never sampled)"
+    for (let i = 0; i < 200; i++) {
+      const { stdout, stderr } = await tmux([
+        "list-panes", "-t", `=${session}`, "-F", "#{pane_dead}|#{pane_dead_status}|#{pane_dead_signal}",
+      ])
+      last = JSON.stringify(stdout.trim() || stderr.trim())
+      const lines = stdout.trim().split("\n").map((l) => l.trim()).filter(Boolean)
+      if (lines.length > 0 && lines.every((l) => l.startsWith("1|"))) {
+        return { statusReported: lines.every((l) => /^1\|\d/.test(l)) }
+      }
       await new Promise((r) => setTimeout(r, 50))
     }
-    throw new Error("pane never became dead with a readable exit status")
+    // Name WHICH condition was missing and what was last seen. The previous message -
+    // "pane never became dead with a readable exit status" - collapsed three different
+    // states into one sentence: still running, dead-without-status, and session gone (an
+    // errored `list-panes` yields empty stdout, which fails the same check).
+    throw new Error(
+      `pane never became dead: last "#{pane_dead}|#{pane_dead_status}|#{pane_dead_signal}" = ${last}` +
+        ` (session appeared in ${tSession}ms; gate exists: ${existsSync(gate)})`,
+    )
   }
 
   it("runs setup on the way past, so a worktree that never had it registers", async () => {
@@ -470,11 +495,16 @@ exit 0`,
    * the flag was turned on to collect.
    */
   it("replaces a dead session kept alive by remain-on-exit, and reports its exit status", async () => {
-    await makeCorpse(3)
+    const { statusReported } = await makeCorpse(3)
     const { stdout } = await up()
+    // Detection is unconditional; the status is only asserted when tmux supplied one.
+    // Measured: `#{pane_dead_status}` is permanently empty in 22 of 40 arrangements, so
+    // requiring "status 3" every time asserts something the environment does not always
+    // offer - and `up` printing `status ?` there is the honest answer, not a defect.
     expect(stdout).toContain("is a corpse")
-    expect(stdout).toContain("status 3")
     expect(stdout).toContain(`restarting session '${session}'`)
+    if (statusReported) expect(stdout).toContain("status 3")
+    else expect(stdout).toContain("status ?")
   })
 
   it("leaves a live session alone rather than treating it as a corpse", async () => {

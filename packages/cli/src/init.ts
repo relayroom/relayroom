@@ -477,10 +477,15 @@ session_dead() {
   local panes; panes="$(tmux list-panes -t "=$SESSION" -F '#{pane_dead} #{pane_dead_status}' 2>/dev/null || true)"
   [ -n "$panes" ] || return 1
   awk '$1 != "1" { alive = 1 } END { exit(alive ? 1 : 0) }' <<<"$panes" || return 1
-  # "?" is a REACHED path, not a defensive one: measured, \`pane_dead\` flips to 1 before
-  # \`pane_dead_status\` is readable in 11 of 20 samples, so a run landing in that window
-  # legitimately has no status to print. Reporting "?" is the honest answer there; do not
-  # "simplify" it away on the assumption that a dead pane always has a status.
+  # "?" is the MAJORITY path, not a defensive one. Measured over 40 dead panes:
+  # \`pane_dead_status\` held a value 18 times and was **permanently empty the other 22** -
+  # re-sampling those for a further 2s never filled them, and \`pane_dead_signal\` was empty
+  # too, so it is neither a late write nor a signal death. tmux just does not always record
+  # it. An earlier note here said "readable in 11 of 20 samples", which measured the delay
+  # and inferred that it always arrives; that inference was wrong.
+  #
+  # So a dead pane usually has NO exit status to report, and "?" is the honest answer more
+  # often than a number is. Do not "simplify" it away.
   awk '$1 == "1" { print ($2 == "" ? "?" : $2); exit }' <<<"$panes"
 }
 
