@@ -156,8 +156,13 @@ export function resolveRedactionRules(config: {
   // is what a hand-edited row can hold. Treating those as "no configuration" would resolve
   // them cleanly - a project whose settings are unreadable would look like a project with
   // no settings, which is the one reading that must never happen quietly.
-  if (config !== null && config !== undefined
-    && (typeof config !== 'object' || Array.isArray(config))) {
+  // `undefined` is "no project row / nothing passed" and resolves clean. An explicit
+  // `null` is not the same thing: `knowledge_config` is NOT NULL, so a JS null here means
+  // the column holds the JSON value `null`, which is a malformed configuration rather than
+  // an absent one. Review loop 12 found this branch exempting it and the comment beside it
+  // claiming the opposite.
+  if (config !== undefined
+    && (config === null || typeof config !== 'object' || Array.isArray(config))) {
     return {
       patterns,
       unresolved: [{ reason: 'malformed_rule', detail: 'knowledge_config is not an object' }],
@@ -213,11 +218,17 @@ export function resolveRedactionRules(config: {
     }
 
     if (rule.kind === 'literal') {
-      if (rule.value!.length < MIN_LITERAL_LENGTH) {
+      // Code POINTS, not code units. `.length` counts UTF-16 units, so two astral
+      // characters clear a floor of four - and the floor exists because a short literal
+      // deletes its text from every body the project stores. A destructive minimum that a
+      // pair of emoji satisfies is not a minimum. The dashboard counts characters, so
+      // counting units here would also make the two disagree about the same literal.
+      const literalLength = [...rule.value!].length
+      if (literalLength < MIN_LITERAL_LENGTH) {
         unresolved.push({ reason: 'literal_too_short', detail: `literal shorter than ${MIN_LITERAL_LENGTH} characters` })
         continue
       }
-      if (rule.value!.length > MAX_LITERAL_LENGTH) {
+      if (literalLength > MAX_LITERAL_LENGTH) {
         unresolved.push({ reason: 'literal_too_long', detail: `literal longer than ${MAX_LITERAL_LENGTH} characters` })
         continue
       }

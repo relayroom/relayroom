@@ -170,3 +170,33 @@ describe('resolveRedactionRules as a runtime boundary', () => {
     }
   })
 })
+
+/**
+ * The two shapes loop 12 found slipping through, kept as their own block because both are
+ * cases where a check existed and did not cover what it claimed.
+ */
+describe('resolveRedactionRules - root and counting', () => {
+  it('treats a JSON null root as malformed, not as an absent configuration', () => {
+    // knowledge_config is NOT NULL, so a null here means the column holds JSON null - a
+    // configuration that cannot be read, which must not look like a project that has none.
+    // `undefined` stays clean: that is "no row", not "unreadable row".
+    expect(resolveRedactionRules(null).unresolved.map(u => u.reason)).toEqual(['malformed_rule'])
+    expect(resolveRedactionRules(undefined)).toEqual({ patterns: [], unresolved: [] })
+  })
+
+  it('rejects a scalar or array root', () => {
+    expect(resolveRedactionRules('nope' as never).unresolved).toHaveLength(1)
+    expect(resolveRedactionRules([] as never).unresolved).toHaveLength(1)
+  })
+
+  it('counts code points, so a pair of emoji does not clear the four-character floor', () => {
+    // `.length` would say 4 for two astral characters. The floor exists because a short
+    // literal deletes its text from every body the project stores; a minimum that two
+    // emoji satisfy is not a minimum.
+    const r = resolveRedactionRules({ redactionRules: [{ kind: 'literal', value: '😀😀' }] })
+    expect(r.unresolved.map(u => u.reason)).toEqual(['literal_too_short'])
+    // And four real characters still pass, so the fix did not just move the bar.
+    expect(resolveRedactionRules({ redactionRules: [{ kind: 'literal', value: '가나다라' }] }).unresolved)
+      .toEqual([])
+  })
+})

@@ -14,13 +14,30 @@
  * adding it here**, and the test that pins the two together is the reason that instruction
  * is not just a hope.
  */
-export const REDACTION_INPUT_SNAPSHOT = `jsonb_build_object(
-  'rules', knowledge_config -> 'redactionRules',
-  'legacy', knowledge_config -> 'redactionPatterns'
-)::text`
+export const REDACTION_INPUT_SNAPSHOT = redactionInputSnapshot('knowledge_config')
 
 /** The same expression, aliased to a table the caller has joined as `p`. */
-export const REDACTION_INPUT_SNAPSHOT_P = `jsonb_build_object(
-  'rules', p.knowledge_config -> 'redactionRules',
-  'legacy', p.knowledge_config -> 'redactionPatterns'
+export const REDACTION_INPUT_SNAPSHOT_P = redactionInputSnapshot('p.knowledge_config')
+
+/**
+ * Everything `resolveRedactionRules` looks at, and the two members that are easy to leave
+ * out are the ones review loop 12 found missing: the resolver branches on **the type of
+ * the root** and on **whether a key is present**, not only on the values. Snapshotting
+ * `-> key` alone made `{}`, a scalar root, `{redactionRules: null}` and
+ * `{redactionPatterns: null}` all look identical, so a configuration could become malformed
+ * - which the resolver refuses - while the guard saw no change at all.
+ *
+ * The general form: **a comparison is only as good as its coverage of the decision's
+ * inputs**, and "the value the function reads" is not the same set as "what the function
+ * decides on".
+ */
+function redactionInputSnapshot(col: string): string {
+  return `jsonb_build_object(
+  'root', jsonb_typeof(${col}),
+  'has_rules', ${col} ? 'redactionRules',
+  'rules', ${col} -> 'redactionRules',
+  'has_legacy', ${col} ? 'redactionPatterns',
+  'legacy', ${col} -> 'redactionPatterns'
 )::text`
+}
+
