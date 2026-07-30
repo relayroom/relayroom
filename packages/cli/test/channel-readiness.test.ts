@@ -49,7 +49,10 @@ describe("generated rr.sh: channel mode requires evidence, not a feature flag", 
     writeFileSync(
       join(bin, "claude"),
       `#!/usr/bin/env bash
-if [ "\${1:-}" = "--channels" ]; then
+echo "claude $@" >> "${join(bin, "calls.log")}"
+# The PROBE is \`--channels\` with no value; a real launch passes one. Distinguishing them
+# is what lets a test see which flag the launch actually used.
+if [ "\${1:-}" = "--channels" ] && [ -z "\${2:-}" ]; then
   ${channels ? `echo "error: option '--channels <servers...>' argument missing" >&2` : `echo "error: unknown option '--channels'" >&2`}
   exit 1
 fi
@@ -103,6 +106,20 @@ exit 0
     expect(out).toContain("wake delivery: channel")
     // Which layer decided, so a silently dead layer 1 is visible rather than covered for.
     expect(out).toContain("via observed")
+  })
+
+  /**
+   * The flag matters, not just the mode. Measured: `--dangerously-load-development-channels`
+   * stops on a confirmation prompt on EVERY launch, is not suppressed by
+   * `--dangerously-skip-permissions`, and stores no consent - so an unattended relaunch
+   * parks on it forever while the session looks healthy. `--channels` starts clean.
+   */
+  it("launches channel mode with --channels, never the prompting dangerous form", async () => {
+    stubClaude({ list: "relayroom-channel: node ... - ✔ Connected" })
+    await decide()
+    const invoked = readFileSync(join(bin, "calls.log"), "utf8")
+    expect(invoked).toMatch(/claude --channels server:relayroom-channel/)
+    expect(invoked).not.toMatch(/--dangerously-load-development-channels/)
   })
 
   /** The exact fleet-wide case: the flag exists, the server is pending approval. */

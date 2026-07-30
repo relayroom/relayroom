@@ -6,8 +6,8 @@
  * PUSH events that Claude queues and processes at a TURN BOUNDARY, so they never
  * interleave with the user's typing — the clean version of what the pager's
  * `send-keys` deferral approximates. This is a per-session stdio MCP subprocess
- * that Claude spawns (via `.mcp.json` + `--dangerously-load-development-channels
- * server:relayroom-channel`). It subscribes to the RelayRoom stream for THIS
+ * that Claude spawns (via `.mcp.json` + `--channels server:relayroom-channel`).
+ * It subscribes to the RelayRoom stream for THIS
  * worktree's part and, on a new wake, pushes `notifications/claude/channel`.
  *
  * STDOUT IS THE MCP TRANSPORT (newline-delimited JSON-RPC). All logging MUST go to
