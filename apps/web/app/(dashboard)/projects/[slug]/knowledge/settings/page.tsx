@@ -8,9 +8,11 @@ import { getProjectBySlug } from "@/modules/project/queries"
 import { listKnowledge } from "@/modules/knowledge/queries"
 import { getAttestStatus, listCheckMappings } from "@/modules/knowledge/attest-queries"
 import { listPurgeableThreads } from "@/modules/knowledge/purge-queries"
+import { getRedactionSettings } from "@/modules/knowledge/redaction-queries"
 import { getDateFormatters } from "@/lib/date-format.server"
 import { AttestSecretCard } from "./attest-secret-card"
 import { CheckMapManager, type ClaimOption, type MappingRow } from "./check-map-manager"
+import { RedactionCard } from "./redaction-card"
 import { ThreadPurgeManager } from "./thread-purge-manager"
 
 export const dynamic = "force-dynamic"
@@ -66,13 +68,14 @@ export default async function KnowledgeSettingsPage({ params }: Props) {
     )
   }
 
-  const [status, mappings, claimsResult, purgeableThreads] = await Promise.all([
+  const [status, mappings, claimsResult, purgeableThreads, redaction] = await Promise.all([
     getAttestStatus(project.id),
     listCheckMappings(project.id),
     // Candidate + trusted claims are the plausible mapping targets; a paged list
     // is enough for the picker (very large projects would want search, noted).
     listKnowledge(project.id, { limit: 100 }),
     listPurgeableThreads(project.id),
+    getRedactionSettings(project.id),
   ])
 
   const claims: ClaimOption[] = (claimsResult.result ? claimsResult.items : [])
@@ -122,6 +125,18 @@ export default async function KnowledgeSettingsPage({ params }: Props) {
           claimsError={claimsResult.result ? undefined : claimsResult.message}
         />
       )}
+
+      {/* Redaction and purge are the two halves of one question, so they sit
+          together: this one decides what future distillations may not keep, purge
+          removes what past ones already stored. Neither substitutes for the other,
+          and an owner who only found one of them would believe otherwise. */}
+      <RedactionCard
+        projectId={project.id}
+        rules={redaction.rules}
+        unresolved={redaction.unresolved}
+        outdatedDetectorIds={redaction.outdatedDetectorIds}
+        catalogueEmpty={redaction.catalogueEmpty}
+      />
 
       {/* Purge is independent of attestation - it is about removing what a thread
           produced, regardless of how anything gets promoted. */}

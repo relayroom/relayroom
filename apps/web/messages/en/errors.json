@@ -79,7 +79,9 @@
     "notFound": "This entry does not exist or you do not have access to it.",
     "invalidTarget": "That is not a valid entry.",
     "promoteFailed": "We could not confirm this entry.",
-    "purgeFailed": "We could not purge the derived knowledge."
+    "purgeFailed": "We could not purge the derived knowledge.",
+    "redactionUnresolved": "Some of those settings cannot be applied, so nothing was saved - saving them would stop this project distilling anything at all.",
+    "redactionSaveFailed": "We could not save the redaction settings."
   },
   "attest": {
     "checkNameRequired": "Enter the CI check name.",
