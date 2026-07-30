@@ -19,6 +19,10 @@ export * from './oauth'
 // the server compiles it, and two copies of that rule is two rules.
 export * from './redaction-rules'
 
+// Applying the denylist. In shared because FOUR writers need it, one of them in
+// packages/db - see the file header.
+export * from './redaction'
+
 // ── Attention signal ─────────────────────────────────────────────────────────
 
 /**

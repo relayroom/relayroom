@@ -63,9 +63,9 @@ import { shouldWake } from '../wake/issuance'
 import { isWakeBudgetEnabled } from '../wake/flag'
 import { CapabilityError, getCapabilities, resolveUrgent } from '../priority/capability'
 import { seedOwnerWakeBudget } from '../budget/seed-owner-budget'
-import { resolveRedactionRules } from '@relayroom/shared'
+import { redact, reportSkippedPatterns, resolveRedactionRules } from '@relayroom/shared'
 import { REDACTION_INPUT_SNAPSHOT, REDACTION_INPUT_SNAPSHOT_P } from '../knowledge/redaction-snapshot'
-import { redact, reportSkippedPatterns } from '../knowledge/redaction'
+
 import { markProjectKnowledgeDirty, recordKnowledgeSignal } from '@relayroom/db'
 import { tokenScopeAllowsProject } from '../lib/token-scope'
 

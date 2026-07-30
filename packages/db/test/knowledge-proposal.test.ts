@@ -80,6 +80,46 @@ describe('proposeKnowledgeDiff', () => {
 })
 
 describe('decideProposal', () => {
+  it('applies the project redaction rules to an approved proposal', async () => {
+    // The fourth knowledge writer, and the one that had no redaction for two releases.
+    // It was invisible while the denylist lived in the server slice: this path is in
+    // packages/db and could not have called it. Found by review loop 12 walking the
+    // contract's "three writers" against the code and finding four.
+    const p = await project()
+    await db.update(projects)
+      .set({ knowledgeConfig: { redactionRules: [{ kind: 'literal', value: 'sk-proposal-secret' }] } })
+      .where(eq(projects.id, p))
+    const proposal = await knowledgeProposal(p, {
+      change: { title: 'rotate sk-proposal-secret', body: 'the key sk-proposal-secret leaked', kind: 'pitfall' },
+    })
+    const result = await decideProposal(db, { projectId: p, proposalId: proposal!.id, decision: 'approved', userId: USER })
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('unreachable')
+
+    const [k] = await db.select().from(knowledge).where(eq(knowledge.id, result.knowledgeId!))
+    expect(k!.title).not.toContain('sk-proposal-secret')
+    expect(k!.body).not.toContain('sk-proposal-secret')
+    expect(k!.body).toContain('leaked')
+  })
+
+  it('refuses to approve when a redaction rule cannot be resolved', async () => {
+    // Same rule as every other writer: a protection the owner switched on and we cannot
+    // evaluate means the write does not happen. Nothing is written and the proposal stays
+    // pending, so fixing the configuration makes the decision available again.
+    const p = await project()
+    await db.update(projects)
+      .set({ knowledgeConfig: { redactionRules: [{ kind: 'detector', id: 'no-such-detector', v: 1 }] } })
+      .where(eq(projects.id, p))
+    const proposal = await knowledgeProposal(p)
+    const result = await decideProposal(db, { projectId: p, proposalId: proposal!.id, decision: 'approved', userId: USER })
+    expect(result).toMatchObject({ ok: false, reason: 'redaction_unresolvable' })
+
+    const rows = await db.select().from(knowledge).where(eq(knowledge.projectId, p))
+    expect(rows).toHaveLength(0)
+    const [still] = await db.select().from(knowledgeProposals).where(eq(knowledgeProposals.id, proposal!.id))
+    expect(still!.status).toBe('pending')
+  })
+
   it('approves a knowledge proposal as a CANDIDATE, never trusted', async () => {
     // The trust boundary. A human approving the proposal is intake, not promotion:
     // the fact still has to earn trusted through K independent issuers.

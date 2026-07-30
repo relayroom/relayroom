@@ -22,6 +22,7 @@
  */
 import { createHash } from 'node:crypto'
 import { and, desc, eq, gt, inArray, sql } from 'drizzle-orm'
+import { redact, reportSkippedPatterns, resolveRedactionRules, skippedPatterns } from '@relayroom/shared'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 import type { PgDatabase } from 'drizzle-orm/pg-core'
 import {
@@ -647,6 +648,13 @@ export interface DecideProposalInput {
 
 export type DecideProposalResult =
   | { ok: false; reason: 'not_found' }
+  /** The project has a redaction rule that cannot be turned into a pattern, so the
+   *  proposal's text cannot be stored under it. Nothing is written and the proposal stays
+   *  pending: fix the configuration and decide again. */
+  | { ok: false; reason: 'redaction_unresolvable'; unresolved: string[] }
+  /** The rules changed between resolving them and writing the row. Nothing is written;
+   *  retry. */
+  | { ok: false; reason: 'redaction_rules_changed' }
   /** Already decided; nothing was written. `status` is the terminal state it holds. */
   | { ok: false; reason: 'not_pending'; status: ProposalStatus }
   | {
@@ -699,18 +707,56 @@ export async function decideProposal(
     if (approved && target === 'knowledge') {
       // Intake, not promotion: a candidate, with the proposer as its source.
       const change = proposal.change as { title?: string; body?: string; kind?: string }
-      const [row] = await tx
-        .insert(knowledge)
-        .values({
-          projectId: input.projectId,
-          kind: change.kind ?? 'pitfall',
-          title: change.title ?? proposal.hypothesis,
-          body: change.body ?? '',
-          sourceKind: 'proposer',
-          validationState: 'candidate',
-        })
-        .returning({ id: knowledge.id })
-      knowledgeId = row!.id
+
+      // REDACTION APPLIES HERE TOO, and did not until review loop 12 found this path.
+      // It is the FOURTH knowledge writer, and it was invisible to three rounds of work on
+      // the other three because it lives in this package while the denylist lived in the
+      // server slice - it could not have called it. A proposal body quotes thread text, so
+      // a project's rules have exactly as much reason to apply here as on any other write.
+      //
+      // Same three parts as every other writer: resolve rather than compile, refuse
+      // anything unresolvable rather than storing under a rule that is not applied, and
+      // carry the snapshot onto the insert so the rules cannot change between reading them
+      // and writing the row.
+      const [proj] = await tx.execute<{
+        config: { redactionRules?: unknown; redactionPatterns?: unknown } | null
+        snapshot: string
+      }>(sql`
+        select knowledge_config as config,
+               jsonb_build_object(
+                 'rules', knowledge_config -> 'redactionRules',
+                 'legacy', knowledge_config -> 'redactionPatterns'
+               )::text as snapshot
+          from ${projects} where ${projects.id} = ${input.projectId}
+      `)
+      const { patterns, unresolved } = resolveRedactionRules(proj?.config)
+      if (unresolved.length > 0) {
+        return { ok: false, reason: 'redaction_unresolvable', unresolved: unresolved.map(u => u.reason) }
+      }
+      const title = redact(change.title ?? proposal.hypothesis, patterns).text
+      const body = redact(change.body ?? '', patterns).text
+      reportSkippedPatterns(input.projectId, 'proposer', skippedPatterns(patterns))
+
+      const [row] = await tx.execute<{ id: string }>(sql`
+        insert into ${knowledge} (project_id, kind, title, body, source_kind, validation_state)
+        select ${input.projectId}, ${change.kind ?? 'pitfall'}, ${title}, ${body},
+               'proposer', 'candidate'
+         where exists (
+                 select 1 from ${projects} p
+                  where p.id = ${input.projectId}
+                    and jsonb_build_object(
+                          'rules', p.knowledge_config -> 'redactionRules',
+                          'legacy', p.knowledge_config -> 'redactionPatterns'
+                        )::text = ${proj?.snapshot ?? ''}
+               )
+        returning id
+      `)
+      if (!row) {
+        // The rules changed between the read above and this insert. Nothing is written and
+        // the proposal stays pending, so the decision can be retried under the new rules.
+        return { ok: false, reason: 'redaction_rules_changed' }
+      }
+      knowledgeId = row.id
     }
     else if (approved && target === 'playbook') {
       version = await appendPlaybookVersion(tx, {

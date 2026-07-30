@@ -43,8 +43,8 @@ import type { Db, DbOrTx } from '@relayroom/db'
 import { knowledge, messages, projects, threadExtractions, threads } from '@relayroom/db'
 import { extractCandidateFromThread } from './extract'
 import type { RedactionRule } from '@relayroom/shared'
-import { resolveRedactionRules } from '@relayroom/shared'
-import { reportSkippedPatterns, skippedPatterns } from './redaction'
+import { reportSkippedPatterns, resolveRedactionRules, skippedPatterns } from '@relayroom/shared'
+
 import { REDACTION_INPUT_SNAPSHOT, REDACTION_INPUT_SNAPSHOT_P } from './redaction-snapshot'
 
 /**

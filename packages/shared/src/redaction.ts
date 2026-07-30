@@ -1,6 +1,14 @@
 /**
  * Redaction denylist for knowledge writes (FEAT-0004 L3).
  *
+ * IN `shared` RATHER THAN THE SERVER SLICE, since review loop 12. It sat in
+ * `apps/server` on the reasonable-looking grounds that the two write paths that applied
+ * it were both there - and that turned out to be a fact about where the callers happened
+ * to be, not about what the rule belongs to. A FOURTH writer exists in `packages/db`
+ * (`decideProposal`, the proposal-approval path) which could not import from the server
+ * slice and therefore wrote knowledge rows with no redaction at all. Placement by current
+ * callers is how a rule ends up unavailable to the caller that appears next.
+ *
  * A project configures regexes for secrets and PII; any span they match is DROPPED
  * from the text before it is stored - removed, not masked. Design 02 is explicit:
  * "a matched span is dropped, not stored." Masking (replacing with ****) would still
@@ -127,7 +135,10 @@ export function skippedPatterns(patterns: readonly string[]): SkippedPattern[] {
  */
 export function reportSkippedPatterns(
   projectId: string,
-  path: 'learn' | 'extractor',
+  /** Every path that writes knowledge. Adding a writer means adding it here, and the
+   *  compiler is what enforces that - `decideProposal` was a writer for two releases
+   *  without appearing in any list like this one. */
+  path: 'learn' | 'extractor' | 'proposer' | 'close',
   skipped: readonly SkippedPattern[],
 ): void {
   if (skipped.length === 0) return

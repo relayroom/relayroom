@@ -22,7 +22,7 @@
  * kind from content; until then everything reads as 'decision', and that is a chosen
  * placeholder, not a bug.
  */
-import { redact } from './redaction'
+import { redact } from '@relayroom/shared'
 
 /** A knowledge kind the extractor may assign. See KIND_HEURISTIC below. */
 export type KnowledgeKind = 'fact' | 'convention' | 'pitfall' | 'decision'
