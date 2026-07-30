@@ -151,6 +151,19 @@ export function resolveRedactionRules(config: {
   const patterns: string[] = []
   const unresolved: UnresolvedRule[] = []
 
+  // The ROOT is validated too, for the same reason the members are: this comes out of a
+  // JSONB column, so `{}` is what the product writes and a scalar, an array or a JSON null
+  // is what a hand-edited row can hold. Treating those as "no configuration" would resolve
+  // them cleanly - a project whose settings are unreadable would look like a project with
+  // no settings, which is the one reading that must never happen quietly.
+  if (config !== null && config !== undefined
+    && (typeof config !== 'object' || Array.isArray(config))) {
+    return {
+      patterns,
+      unresolved: [{ reason: 'malformed_rule', detail: 'knowledge_config is not an object' }],
+    }
+  }
+
   if (config?.redactionPatterns !== undefined) {
     unresolved.push({
       reason: 'legacy_patterns',

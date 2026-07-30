@@ -343,3 +343,57 @@ describe('extractor: the guard is on the write that stores the text', () => {
     expect(marker?.dirty).not.toBeNull()
   })
 })
+
+/**
+ * The comparison covers every input the resolver reads, not just the active key.
+ *
+ * Review loop 11: the first version of the guard compared `redactionRules` alone, while
+ * `resolveRedactionRules` also treats a stored legacy `redactionPatterns` key as decisive
+ * and fails the write closed. So adding that key concurrently passed the guard while
+ * changing the answer - the guard and the resolver disagreed about what "the inputs" are.
+ *
+ * That is why the snapshot expression is a single exported constant rather than SQL
+ * written at each site: two copies are two definitions, and this is the defect class the
+ * release keeps finding one layer down.
+ */
+describe('extractor: the guard covers every input the resolver reads', () => {
+  const TRIGGER4 = `legacy_gap_${randomBytes(4).toString('hex')}`
+
+  afterAll(async () => {
+    await db.execute(sql.raw(`drop trigger if exists ${TRIGGER4} on thread_extraction`))
+    await db.execute(sql.raw(`drop function if exists ${TRIGGER4}_fn()`))
+  })
+
+  it('refuses when a legacy key appears after the snapshot, though the rules key is untouched', async () => {
+    const p = await project([])
+    await closedThread(p.id, p.agentId, 'a lesson written while the rules key never changed')
+
+    // Adds ONLY the legacy key. `redactionRules` stays exactly as snapshotted, so a guard
+    // that watches that key alone sees no change and writes the row.
+    await db.execute(sql.raw(`
+      create or replace function ${TRIGGER4}_fn() returns trigger as $$
+      begin
+        if new.project_id = '${p.id}' then
+          update project
+             set knowledge_config = knowledge_config
+                   || jsonb_build_object('redactionPatterns', jsonb_build_array('SECRET'))
+           where id = '${p.id}';
+        end if;
+        return new;
+      end $$ language plpgsql;
+    `))
+    await db.execute(sql.raw(`
+      create trigger ${TRIGGER4} after insert on thread_extraction
+      for each row execute function ${TRIGGER4}_fn()
+    `))
+
+    await markProjectKnowledgeDirty(db, p.id)
+    const r = await runExtractorSweep(db, { projectId: p.id })
+    expect(r.candidates).toBe(0)
+    expect(await storedBody(p.id)).toBe('')
+    const [claim] = await db.execute<{ n: number }>(sql`
+      select count(*)::int as n from thread_extraction where project_id = ${p.id}
+    `)
+    expect(claim?.n).toBe(0)
+  })
+})

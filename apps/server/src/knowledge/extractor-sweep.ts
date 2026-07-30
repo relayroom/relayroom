@@ -45,6 +45,7 @@ import { extractCandidateFromThread } from './extract'
 import type { RedactionRule } from '@relayroom/shared'
 import { resolveRedactionRules } from '@relayroom/shared'
 import { reportSkippedPatterns, skippedPatterns } from './redaction'
+import { REDACTION_INPUT_SNAPSHOT, REDACTION_INPUT_SNAPSHOT_P } from './redaction-snapshot'
 
 /**
  * Thrown when a project's redaction rules change while its sweep is mid-flight.
@@ -181,7 +182,7 @@ async function runProjectTick(db: Db, projectId: string): Promise<number | null>
       }>(sql`
         select knowledge_dirty_at::text as dirty_at,
                knowledge_config as config,
-               coalesce(knowledge_config -> 'redactionRules', 'null'::jsonb)::text as rules_text
+               ${sql.raw(REDACTION_INPUT_SNAPSHOT)} as rules_text
           from ${projects} where ${projects.id} = ${project.id}
       `)
       const dirtyAt = snap?.dirty_at
@@ -355,8 +356,7 @@ async function extractProject(
          and exists (
                select 1 from ${projects} p
                 where p.id = ${projectId}
-                  and coalesce(p.knowledge_config -> 'redactionRules', 'null'::jsonb)
-                      = ${patternsSnapshot}::jsonb
+                  and ${sql.raw(REDACTION_INPUT_SNAPSHOT_P)} = ${patternsSnapshot}
              )
       on conflict (project_id, thread_id) do nothing
       returning thread_id
@@ -367,7 +367,7 @@ async function extractProject(
       // thread, or a knowledge row appearing under us are all "skip this thread". Patterns
       // having changed is "stop, and let the next tick redo the remainder".
       const [now] = await tx.execute<{ snapshot: string }>(sql`
-        select coalesce(knowledge_config -> 'redactionRules', 'null'::jsonb)::text as snapshot
+        select ${sql.raw(REDACTION_INPUT_SNAPSHOT)} as snapshot
           from ${projects} where ${projects.id} = ${projectId}
       `)
       if (now && now.snapshot !== patternsSnapshot) return { written, staleConfig: true }
@@ -396,8 +396,7 @@ async function extractProject(
        where exists (
                select 1 from ${projects} p
                 where p.id = ${projectId}
-                  and coalesce(p.knowledge_config -> 'redactionRules', 'null'::jsonb)
-                      = ${patternsSnapshot}::jsonb
+                  and ${sql.raw(REDACTION_INPUT_SNAPSHOT_P)} = ${patternsSnapshot}
              )
       returning id
     `)

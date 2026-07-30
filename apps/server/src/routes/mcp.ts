@@ -64,6 +64,7 @@ import { isWakeBudgetEnabled } from '../wake/flag'
 import { CapabilityError, getCapabilities, resolveUrgent } from '../priority/capability'
 import { seedOwnerWakeBudget } from '../budget/seed-owner-budget'
 import { resolveRedactionRules } from '@relayroom/shared'
+import { REDACTION_INPUT_SNAPSHOT, REDACTION_INPUT_SNAPSHOT_P } from '../knowledge/redaction-snapshot'
 import { redact, reportSkippedPatterns } from '../knowledge/redaction'
 import { markProjectKnowledgeDirty, recordKnowledgeSignal } from '@relayroom/db'
 import { tokenScopeAllowsProject } from '../lib/token-scope'
@@ -1444,7 +1445,7 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
         rules_text: string
       }>(sql`
         select knowledge_config as config,
-               coalesce(knowledge_config -> 'redactionRules', 'null'::jsonb)::text as rules_text
+               ${sql.raw(REDACTION_INPUT_SNAPSHOT)} as rules_text
           from ${projects} where ${projects.id} = ${ctx.projectId} limit 1
       `)
       // Same rule as the extractor: if any configured redaction rule cannot be
@@ -1504,8 +1505,7 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
          where exists (
                  select 1 from ${projects} p
                   where p.id = ${ctx.projectId}
-                    and coalesce(p.knowledge_config -> 'redactionRules', 'null'::jsonb)
-                        = ${proj?.rules_text ?? 'null'}::jsonb
+                    and ${sql.raw(REDACTION_INPUT_SNAPSHOT_P)} = ${proj?.rules_text ?? ''}
                )
         returning id, validation_state
       `)
