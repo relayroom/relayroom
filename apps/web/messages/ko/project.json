@@ -293,7 +293,7 @@
   },
   "knowledgePurge": {
     "title": "thread에서 파생된 지식 삭제",
-    "description": "thread를 삭제해도 거기서 증류된 지식은 지워지지 않습니다 - 별도 사본이기 때문입니다. 이 기능이 그걸 명시적으로 지웁니다. 출처가 이 thread뿐인 항목은 삭제되고, 이 thread와 다른 출처를 함께 인용하는 항목은 이 thread의 출처만 벗겨낸 채 남습니다.",
+    "description": "thread를 삭제해도 거기서 증류된 지식은 지워지지 않습니다 - 별도 사본이기 때문입니다. 이 기능이 그걸 명시적으로 지우고, 이 thread를 다시 증류하지 않도록 기록합니다. 출처가 이 thread뿐인 항목은 삭제됩니다. 다른 thread에서도 나온 항목은 삭제하지 않고 알려드립니다 - 본문을 출처별로 갈라낼 수 없으므로 이 thread의 몫만 지우려면 다른 thread가 기여한 부분까지 지워야 하기 때문입니다.",
     "empty": "아직 지식을 만든 thread가 없습니다.",
     "colThread": "thread",
     "colEntries": "항목",

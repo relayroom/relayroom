@@ -6,7 +6,7 @@ export interface PurgeableThread {
   threadId: string
   subject: string | null
   /** How many knowledge entries cite this thread. A rough size for the list only -
-   *  the authoritative deleted/detached split comes from the purge dry-run. */
+   *  what a purge would actually do to each of them comes from the dry-run. */
   entryCount: number
 }
 
@@ -16,10 +16,11 @@ export interface PurgeableThread {
  * This is the picker for the purge action: only threads that actually produced
  * knowledge are worth offering, and the owner chooses from their subjects rather
  * than pasting a thread id. The count here is just "how many entries cite this
- * thread" for the row; it deliberately does NOT try to pre-split deleted vs
- * detached - that split is the purge function's, and reproducing it here is
- * exactly the two-implementations drift we are avoiding. The real numbers arrive
- * from a dry-run when a thread is selected.
+ * thread" for the row; it deliberately does NOT work out which of them a purge
+ * could actually remove. That decision belongs to the purge function, and a second
+ * implementation of it here would be free to disagree with the first - which is the
+ * drift being avoided, whatever the outcomes happen to be called. The real answer
+ * arrives from a dry-run when a thread is selected.
  */
 export async function listPurgeableThreads(projectId: string): Promise<PurgeableThread[]> {
   // Unnest each entry's source_refs array, keep elements naming a thread, and

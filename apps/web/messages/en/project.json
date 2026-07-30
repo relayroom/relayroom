@@ -293,7 +293,7 @@
   },
   "knowledgePurge": {
     "title": "Purge knowledge from a thread",
-    "description": "Deleting a thread does not remove the knowledge distilled from it - that is a separate copy. This removes it explicitly. Entries whose only source is the thread are deleted; entries citing it and others keep, with just this thread's provenance stripped.",
+    "description": "Deleting a thread does not remove the knowledge distilled from it - that is a separate copy. This removes it explicitly, and records that the thread must not be distilled again. Entries whose only source is the thread are deleted. An entry that other threads also produced is reported instead: its text cannot be separated by source, so removing this thread's part of it would mean deleting what the other threads contributed.",
     "empty": "No thread has produced knowledge yet.",
     "colThread": "Thread",
     "colEntries": "Entries",
