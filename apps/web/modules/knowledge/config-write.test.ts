@@ -50,21 +50,21 @@ describe("mergeKnowledgeConfig", () => {
       .set({ knowledgeConfig: { kDistinctIssuers: 3, retentionDays: 90 } })
       .where(eq(projects.id, projectId))
 
-    await mergeKnowledgeConfig(projectId, { redactionPatterns: ["abc"] })
+    await mergeKnowledgeConfig(projectId, { redactionRules: ["abc"] })
 
     const c = await config()
     expect(c.kDistinctIssuers).toBe(3)
     expect(c.retentionDays).toBe(90)
-    expect(c.redactionPatterns).toEqual(["abc"])
+    expect(c.redactionRules).toEqual(["abc"])
   })
 
   it("replaces the value of a key it does write", async () => {
     // Merging must not turn into appending: the operator's new selection is the
     // whole selection, so a removed pattern has to actually go.
-    await mergeKnowledgeConfig(projectId, { redactionPatterns: ["one", "two"] })
-    await mergeKnowledgeConfig(projectId, { redactionPatterns: ["one"] })
+    await mergeKnowledgeConfig(projectId, { redactionRules: ["one", "two"] })
+    await mergeKnowledgeConfig(projectId, { redactionRules: ["one"] })
 
-    expect((await config()).redactionPatterns).toEqual(["one"])
+    expect((await config()).redactionRules).toEqual(["one"])
   })
 
   it("marks the project dirty, which is what makes a corrected pattern take effect", async () => {
@@ -73,7 +73,7 @@ describe("mergeKnowledgeConfig", () => {
     // unrelated thread happens to close.
     await db.update(projects).set({ knowledgeDirtyAt: null }).where(eq(projects.id, projectId))
 
-    await mergeKnowledgeConfig(projectId, { redactionPatterns: [] })
+    await mergeKnowledgeConfig(projectId, { redactionRules: [] })
 
     expect(await dirtyAt()).not.toBeNull()
   })
