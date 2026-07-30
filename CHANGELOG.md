@@ -52,13 +52,29 @@ an instruction pointing a future author back at the shape the function was chang
 
 The full cross-package suite on the assembled result had **one failure**, in a `packages/cli`
 session test this release does not touch: it waits for a tmux pane to die with a readable exit
-status, and under whole-suite load it exceeded its five-second bound. The same file passes 22/22
-in isolation, and it passed CI on the commit that added it.
+status and exhausted its five-second bound. The same file passes 22/22 in isolation, and it
+passed CI here.
 
-We are recording that rather than describing the run as clean. It is a load-sensitive test bound,
-not a defect in anything released here - the release contains no `packages/cli` commits - but a
-release note that says "all green" when one test failed is the kind of statement this project has
-spent three releases removing from its own code. The bound is being fixed separately.
+**We first described that as a load-sensitive bound. Measurement refuted it, after this release
+was published.** Instrumenting the helper gives 59ms for the pane to die with a readable status -
+in isolation, during three whole-suite runs, and with all twenty cores saturated. That is 85x
+inside the bound and **completely unresponsive to load**. So exhausting five seconds does not mean
+"slow", it means the condition could not be reached; raising the bound would only make the same
+failure take fifty seconds.
+
+The helper also could not tell three cases apart. `tmux list-panes` writes nothing to stdout when
+it errors, and the check parsed that empty output into a value that always fails - so **a session
+that had vanished and a pane that had not died yet produced the identical five-second timeout and
+the identical message.** Given the 59ms figure, the vanished session is the likeliest of the three,
+because the other two are time problems and time is not the problem.
+
+The fix is diagnosis rather than a larger bound: the failure now names which of the three it was,
+and records how long the session took to appear. **Reproduction is 0 of 4 so far**, so what
+remains is a rare condition we cannot yet name - and the next occurrence will say what it was.
+
+We are leaving the wrong explanation visible above rather than replacing it. This release contains
+no `packages/cli` commits either way, and a release note that quietly swaps a refuted diagnosis
+for a better one is the same defect as one that says "all green" when a test failed.
 
 ## [0.5.4] - 2026-07-30
 
