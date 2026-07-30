@@ -1,5 +1,26 @@
 # @relayroom/web
 
+## 0.5.5
+
+### Patch Changes
+
+- c486298: Stop the dashboard overwriting a thread status an agent changed a moment earlier.
+
+  Changing a status from the dashboard resolved the thread and then wrote unconditionally, so anything that landed in between was simply replaced. The write that mattered was `close`: an agent closing a thread marks the project for distillation, and a dashboard action arriving just after would move the status back while both callers were told they had succeeded - leaving a lesson taken from a thread that is not closed.
+
+  The write is now conditional on the status the page actually saw. Losing that race is reported rather than passed off as success, with a message that says to reload instead of retry, since retrying would re-apply the overwrite.
+
+- 02e0e83: Correct the purge description, which still promised the behaviour 0.5.3 removed.
+
+  The panel told owners that an entry citing this thread and others would be kept with just this thread's provenance stripped. Purge stopped doing that in 0.5.3 - such an entry is now reported rather than partly cleared, because its text cannot be separated by source, so removing this thread's share would mean deleting what the other threads contributed. The first half of the sentence was right and the second described the previous release.
+
+  It says what happens now, and why, since the reason is the part an owner needs in order to decide what to do next.
+
+- Updated dependencies [fb02878]
+  - @relayroom/shared@0.5.5
+  - @relayroom/db@0.5.5
+  - @relayroom/telemetry@0.5.5
+
 ## 0.5.4
 
 ### Patch Changes

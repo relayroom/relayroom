@@ -86,20 +86,29 @@ export type PurgeResult =
  * can cite several threads. So purging thread A is not a blanket delete of anything
  * that mentions A:
  *   - an entry whose ONLY source was A is deleted;
- *   - an entry citing A and something else survives, with A stripped from its
- *     sourceRefs (detached).
- * Deleting on any-match would lose knowledge another thread contributed; detaching
- * only would leave a sourceRef pointing at a purged thread, so provenance would
- * lie. Doing both is the only outcome that leaves no reference to A anywhere and
- * loses no multi-source knowledge.
+ *   - an entry citing A and something else is REFUSED - left untouched and named in
+ *     the result, because its text derived from A cannot be removed without deleting
+ *     knowledge another thread contributed, and nothing records which sentence came
+ *     from where. See the refusal branch below for why that is out loud rather than
+ *     silent.
  *
- * The two counts are returned separately because the action is irreversible and the
- * dashboard preview must say exactly "N deleted, M detached" - collapsing them
- * would mislead the person confirming. `dryRun` computes those counts and writes
- * nothing, so the preview and the delete are the SAME function and cannot diverge
- * on what "derived from thread X" means. It is one transaction: a partial purge
- * would leave some entries detached and some not, and a retry would report
- * different numbers.
+ * That second case is unreachable today: no writer produces an entry citing two
+ * threads. **This paragraph describes what fires the day one does**, not what
+ * happens now - if you are here because you added such a writer, the branch below
+ * is the thing to read.
+ *
+ * `dryRun` computes the same outcome and writes nothing, so the preview and the
+ * delete are the SAME function and cannot diverge on what "derived from thread X"
+ * means. One transaction: a partial commit would leave a retry reporting different
+ * numbers.
+ *
+ * WHAT THIS HEADER DELIBERATELY NO LONGER DOES: it used to specify the dashboard's
+ * wording - "the preview must say exactly N deleted, M detached". That outlived the
+ * field it named, so it became an instruction to render something that does not
+ * exist, pointing a future author back at the shape this function was changed to
+ * get rid of. A function that dictates UI copy makes its own comment false the day
+ * the UI changes; the return type is the contract, and how a screen phrases it is
+ * the screen's business.
  *
  * This lives beside recordKnowledgeSignal for the same reason: the dashboard's
  * purge action calls it directly (its sibling `promoteKnowledge` already calls
@@ -198,12 +207,16 @@ export async function purgeKnowledgeFromThread(
     // array element that includes {threadId}; the sole-vs-multi split is then decided
     // per row in JS, where the array semantics are clearest.
     //
-    // `for update`, ordered by id: the split below is a read-modify-write, so two
-    // concurrent purges could otherwise each compute `remaining` from a stale
-    // snapshot and the later write would drop the earlier one's edit. INSURANCE, not
-    // a fix - that outcome needs a row citing two threads, and no writer produces
-    // one (see the detach branch below). It costs nothing here and it gives
-    // concurrent purges a deterministic acquisition order.
+    // `for update`, ordered by id. THE HAZARD: these rows are read here and deleted
+    // a few lines down, so anything that changes them in between - another purge, a
+    // promotion, retention - would be acted on with a stale view of what it was.
+    // Locking closes that window; ordering by id keeps two concurrent purges from
+    // deadlocking on the same set.
+    //
+    // This comment is on its third rewrite, which is the tell: the first two
+    // described the mechanism of the day (a read-modify-write that no longer
+    // happens, since the multi-source path stopped writing anything) and went stale
+    // with it. Written as a hazard instead, because the hazard outlives the shape.
     const rows = await tx
       .select({ id: knowledge.id, sourceRefs: knowledge.sourceRefs })
       .from(knowledge)

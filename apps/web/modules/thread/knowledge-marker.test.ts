@@ -22,6 +22,7 @@ import { db } from "@/lib/db"
 import { projects, projectAccess, threads } from "@relayroom/db/schema"
 import { better_auth_user, better_auth_organization, better_auth_member } from "@relayroom/db/auth-schema"
 import { closeThread } from "./actions"
+import { setThreadStatusIfUnchanged } from "./status-write"
 
 const ORG = "org-km"
 const USER = "km-user"
@@ -93,5 +94,76 @@ describe("closeThread sets the extractor marker", () => {
     const res = await closeThread({ threadId, status: "canceled" })
     expect(res.result).toBe(true)
     expect(await dirtyAt()).toBeNull()
+  })
+})
+
+/**
+ * The dashboard's status write races every other closer - the MCP `close` tool and
+ * autoclose write the same column.
+ *
+ * Before this was conditional the later writer simply won: an agent could close a
+ * thread (marking the project for extraction) and a dashboard action a moment later
+ * would move the status back, with BOTH callers told they succeeded, leaving a
+ * lesson distilled from a thread that is not closed.
+ *
+ * These test the compare-and-set directly rather than through `closeThread`. The
+ * interleaving cannot be reproduced from a test that calls the action - anything
+ * written beforehand is simply what the action then reads, so the condition would
+ * match and the test would pass while proving nothing. Driving the mechanism with a
+ * stale expectation is the same comparison the race performs.
+ */
+describe("setThreadStatusIfUnchanged", () => {
+  it("refuses when the row no longer holds the status the caller saw", async () => {
+    const threadId = await makeThread() // 'open'
+    // Stand in for the MCP close that landed after the action read 'open'.
+    await db.update(threads).set({ status: "closed" }).where(eq(threads.id, threadId))
+
+    const changed = await setThreadStatusIfUnchanged({
+      threadId,
+      orgId: ORG,
+      expected: "open",
+      next: "open",
+    })
+
+    expect(changed).toBe(false)
+    // The assertion that matters is not the return value - it is that the other
+    // writer's close is still there. A test checking only the boolean would pass
+    // against an implementation that reported false and overwrote anyway.
+    const [row] = await db.select({ status: threads.status }).from(threads).where(eq(threads.id, threadId))
+    expect(row!.status).toBe("closed")
+  })
+
+  it("applies the change when the expectation still holds", async () => {
+    // Negative control. Without it a condition that refused everything would look
+    // correct on the test above, and the dashboard would silently stop working.
+    const threadId = await makeThread()
+
+    const changed = await setThreadStatusIfUnchanged({
+      threadId,
+      orgId: ORG,
+      expected: "open",
+      next: "closed",
+    })
+
+    expect(changed).toBe(true)
+    const [row] = await db.select({ status: threads.status }).from(threads).where(eq(threads.id, threadId))
+    expect(row!.status).toBe("closed")
+  })
+
+  it("refuses a thread in another org even when the status matches", async () => {
+    // The org check and the status check are both in one predicate; this pins that
+    // adding the status condition did not displace the IDOR guard.
+    const threadId = await makeThread()
+
+    const changed = await setThreadStatusIfUnchanged({
+      threadId,
+      orgId: "some-other-org",
+      expected: "open",
+      next: "closed",
+    })
+
+    expect(changed).toBe(false)
+    const [row] = await db.select({ status: threads.status }).from(threads).where(eq(threads.id, threadId))
+    expect(row!.status).toBe("open")
   })
 })

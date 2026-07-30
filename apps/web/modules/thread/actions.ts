@@ -1,6 +1,7 @@
 "use server"
 
 import { and, eq, isNull, ne, sql } from "drizzle-orm"
+import { setThreadStatusIfUnchanged } from "@/modules/thread/status-write"
 import type { ApiResult, ApiResultWithItem } from "@relayroom/shared"
 import { NEEDS_HUMAN_TAG } from "@relayroom/shared"
 import {
@@ -307,6 +308,7 @@ export async function createThread(
 
 // ── closeThread ───────────────────────────────────────────────────────────────
 
+
 export async function closeThread(input: CloseThreadInput): Promise<ApiResult> {
   const t = await getErrorTranslations()
   try {
@@ -328,21 +330,33 @@ export async function closeThread(input: CloseThreadInput): Promise<ApiResult> {
       return { result: false, message: t("project.banned") }
     }
 
-    // IDOR guard: join threads -> projects -> org check
-    const [row] = await db
-      .update(threads)
-      .set({ status, updatedAt: new Date() })
-      .from(projects)
-      .where(
-        and(
-          eq(threads.id, threadId),
-          eq(threads.projectId, projects.id),
-          eq(projects.organizationId, orgId),
-        ),
-      )
-      .returning({ id: threads.id })
+    // IDOR guard: join threads -> projects -> org check.
+    //
+    // CONDITIONAL ON THE STATUS WE READ. The check above and this write are two
+    // statements, and an agent's `close` can land between them. Unconditionally
+    // setting the status meant the later writer won with no one noticing: the MCP
+    // close would mark the thread for extraction and this update would move the
+    // status back, so a lesson got distilled from a thread that is not closed,
+    // while BOTH callers were told they succeeded.
+    //
+    // Losing the race is not "not found" and it is not success - it is a distinct
+    // outcome with its own message, because the two failures need opposite
+    // responses. Whoever hits it should re-read the thread rather than retry
+    // blindly, since retrying would re-apply exactly the overwrite this prevents.
+    const changed = await setThreadStatusIfUnchanged({
+      threadId,
+      orgId,
+      expected: threadCheck.thread.status,
+      next: status,
+    })
 
-    if (!row) return { result: false, message: t("thread.notFound") }
+    if (!changed) {
+      // The thread was resolved a moment ago, so a miss here is the status having
+      // moved, not the row having vanished. Re-reading to tell the two apart would
+      // be a third statement racing the same writers; the message covers both by
+      // pointing at the state rather than guessing which one it was.
+      return { result: false, message: t("thread.statusChangedElsewhere") }
+    }
 
     // Mirror the MCP `close` tool: a closed/canceled thread's unread must be cleared
     // so no wake path keeps pinging its participants for a resolved conversation.

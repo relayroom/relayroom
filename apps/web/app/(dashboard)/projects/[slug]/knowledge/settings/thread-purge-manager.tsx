@@ -25,11 +25,17 @@ interface Props {
 /**
  * Owner surface for purging a thread's derived knowledge.
  *
- * The flow makes the irreversibility legible: clicking a row's Purge first runs
- * the action in dry-run to get the exact {deleted, detached} the real purge will
- * produce, then shows those two numbers in the confirm. Because the preview and
- * the purge are the same server function with a flag flipped, the confirm cannot
- * promise one thing and the purge do another.
+ * The flow makes the irreversibility legible: clicking Purge first runs the action
+ * in dry-run to get the outcome the real purge will produce, then states it in the
+ * confirm. Because the preview and the purge are the same server function with a
+ * flag flipped, the confirm cannot promise one thing and the purge do another.
+ *
+ * The result is a discriminated union, so this component cannot read a count
+ * without first deciding whether the purge covered everything. Do not flatten it
+ * back into a set of fields to read: the previous shape returned a `detached`
+ * count that this component rendered correctly and users still misread, because a
+ * number beside "deleted" looks like another kind of removal. A branch has to be
+ * taken; a field only has to be remembered.
  */
 export function ThreadPurgeManager({ projectId, threads }: Props) {
   const t = useTranslations("project")

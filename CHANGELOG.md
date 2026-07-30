@@ -4,6 +4,62 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.5.5] - 2026-07-30
+
+Patch release. **No database migrations.** Three fixes and a set of comment corrections that
+had been waiting for a cut.
+
+### Fixed
+
+**`doctor` now fails when a part's configured identity and its live identity disagree.**
+
+A worktree can be configured correctly and still be connected as somebody else: `.mcp.json` is
+read once at startup, so a session that began before a registration was fixed keeps the old one
+indefinitely. That happened here for three days - a part's board writes were recorded under
+another part's name, its `inbox` showed the other part's mailbox, and it could not acknowledge
+messages addressed to it. Every file on disk was correct, so nothing looked wrong.
+
+`doctor` now compares what the files say against what a local-scope entry actually resolves to,
+and errors rather than warns, because a part in this state does its work under another part's
+name. The playbook also tells agents to compare `whoami` against their own config, since the
+live connection's identity is the one thing no shell command can read. Where the check cannot
+tell - a session started by an older CLI left no record - it reports **unknown** rather than an
+error, deliberately: an absence is not a fault, and turning it into one would fire on every
+existing session at once.
+
+**A dashboard status change no longer overwrites a close it never saw.**
+
+Resolving a thread and writing its new status were two statements, and the dashboard is not the
+only writer - the MCP `close` tool and autoclose write it too. Anything landing in between was
+replaced with no trace, and both callers were told they succeeded. The case that matters is
+close: an agent closing a thread also marks the project for distillation, so a dashboard action
+arriving just after would move the status back, and a lesson could be distilled from a thread
+that is not closed. The write is now conditional on the status that was read.
+
+**The purge description no longer promises an outcome that cannot occur.** It said entries citing
+this thread and others are kept with just this thread's provenance stripped. 0.5.3 removed that
+behaviour - such an entry is refused rather than silently unlinked - so the sentence described a
+branch that no longer exists.
+
+### Changed
+
+Several comments that described behaviour their code had stopped performing are corrected, in
+`packages/db` and `apps/server`. The largest was a function header that still specified the old
+purge contract *and* instructed the dashboard to render a field the return type no longer has -
+an instruction pointing a future author back at the shape the function was changed to remove.
+
+### A note on our own verification
+
+The full cross-package suite on the assembled result had **one failure**, in a `packages/cli`
+session test this release does not touch: it waits for a tmux pane to die with a readable exit
+status, and under whole-suite load it exceeded its five-second bound. The same file passes 22/22
+in isolation, and it passed CI on the commit that added it.
+
+We are recording that rather than describing the run as clean. It is a load-sensitive test bound,
+not a defect in anything released here - the release contains no `packages/cli` commits - but a
+release note that says "all green" when one test failed is the kind of statement this project has
+spent three releases removing from its own code. The bound is being fixed separately.
+
 ## [0.5.4] - 2026-07-30
 
 Patch release, one fix. **No database migrations.** Upgrade if you use channel delivery -

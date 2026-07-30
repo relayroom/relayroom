@@ -2222,7 +2222,12 @@ export function createMcpRoute(db: Db, bus: Bus) {
 
   // ── Pager lease + fencing + catch-up (07) ──────────────────────────────────
   // Server-authoritative per-part lease replacing the pager's machine-local lock.
-  // All three endpoints use the connect-code trust model (same as /heartbeat).
+  // Every route below this header is authenticated by connect code, not by a user
+  // session (same trust model as /heartbeat) - so anything added here inherits that
+  // and must be safe for a caller who proves only "I hold this project's code".
+  // Stated as the rule rather than as a count of the endpoints: this comment said
+  // "all three" and there are four. A rule covers the route added tomorrow; a count
+  // is only ever right for the routes that existed when someone last counted.
 
   /** Resolve the agent row for a connect-code + part, or null. Does NOT create. */
   async function resolveAgentByCode(connectCode: string, part: string) {
