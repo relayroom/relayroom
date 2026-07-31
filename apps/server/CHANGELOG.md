@@ -1,5 +1,34 @@
 # @relayroom/server
 
+## 0.6.0
+
+### Minor Changes
+
+- 7d41930: `close` can carry the lesson the thread taught, so the knowledge a thread produced is written by the agent that has it rather than inferred afterwards.
+
+  The argument is optional and nothing about an existing call changes, so this is a minor release you can take without editing any caller. Passing `lesson: {title, body, kind}` records that lesson against the thread and marks the thread's knowledge as decided; omitting it leaves the previous behaviour, where the extractor sweep reads the thread later and distills what it can from the subject and the last substantive message.
+
+  The two paths cannot both fire. A close carrying a lesson claims the thread's extraction watermark in the same transaction that writes the row, so a sweep arriving afterwards finds the thread already decided and produces nothing. If the lesson cannot be stored - the project's redaction rules changed between reading them and writing, or the thread was already extracted, or a concurrent close won - the claim is rolled back with it, so the thread returns to being extractable rather than being foreclosed by a claim with no row behind it. The refusal is reported with a reason rather than being silent, and the close itself still succeeds: losing the lesson never costs you the close.
+
+  This is on by default. Every project's `knowledge_config` is empty today, and a feature that only works in projects that opted in after the fact is a feature nobody has, so absence means on. Set `distillOnClose: false` in a project's `knowledge_config` to turn it off - there is no switch on the settings screen yet.
+
+  One response field changes shape in practice: `close` now reports the status the thread actually ended in rather than always saying `closed`. Closing a thread that was canceled underneath you returns `canceled` and refuses the lesson, where before it would report a close that did not happen and leave a lesson on a canceled thread.
+
+### Patch Changes
+
+- 7d41930: The extraction watermark is now the whole record of whether a thread's knowledge was decided, and extraction happens only on threads that were closed.
+
+  The sweep used to skip any thread that some knowledge row cited. That is a different question from the one it meant to ask: a citation records that somebody mentioned the thread, and `learn` writes one without deciding anything about it. The two were conflated because there was no other way to say "decided" until `close` gained a lesson. Migration 0022 had already settled the same point in the other direction, deliberately excluding `learn` rows from its backfill so an incidental suppression would not become permanent.
+
+  One consequence is visible on upgrade: a thread that was only ever cited by a `learn` row was silently exempt from extraction, and now is not, so it gets distilled once. Threads already extracted are unaffected, and it does not repeat - the watermark records it. On the hub this was written against, eight threads were in that state; your own count depends on how often your agents called `learn` with a thread reference.
+
+  The sweep also processes threads in a defined order now. A tick can stop early when it detects a rules change, so the order decides which threads are written before it stops - that is a property of the sweep, not tidiness, and it was previously whatever the heap returned.
+
+- Updated dependencies [7d41930]
+  - @relayroom/shared@0.6.0
+  - @relayroom/db@0.6.0
+  - @relayroom/telemetry@0.6.0
+
 ## 0.5.5
 
 ### Patch Changes

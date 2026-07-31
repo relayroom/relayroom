@@ -4,6 +4,83 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.6.0] - 2026-07-31
+
+Minor release. **No database migrations** - it is a drop-in upgrade. Two things arrive
+together: an agent can write the lesson a thread taught at the moment it closes it, and the
+redaction denylist that 0.5.3 disclosed as never having run now runs, on every path that
+stores knowledge.
+
+### Added
+
+**`close` can carry the lesson.** Passing `lesson: {title, body, kind}` records what the
+thread taught, against the thread, written by the agent that has it - rather than being
+inferred afterwards from the subject and the last message. The argument is optional, so no
+existing caller changes.
+
+A lesson and a later automatic distillation cannot both happen: the close claims the thread's
+extraction watermark in the same transaction that writes the row. If the lesson cannot be
+stored, the claim is rolled back with it and the thread stays extractable, rather than being
+foreclosed by a claim with nothing behind it. The close itself still succeeds either way -
+losing the lesson never costs you the close.
+
+**Owners can configure redaction from the knowledge settings screen.** A denylist of exact
+text, removed rather than masked from anything distilled from that point on. The screen states
+what it does not do - it does not touch what is already stored, and there is nothing to reveal
+or restore later - above the controls rather than below them.
+
+### Changed
+
+**Redaction now applies on all six paths that write knowledge**: the extractor sweep, `learn`,
+`close` with a lesson, proposal creation, proposal approval, and the playbook branch of
+approval, which was copying proposal text straight into the file every agent in the project
+reads. Each path also compares the rules it read against the rules in force when it writes, so
+text cannot be stored under a rule an owner replaced while the write was in flight. A rule the
+server cannot resolve makes every writer refuse rather than fall back to storing the text
+unredacted.
+
+**`close` reports the status the thread actually ended in.** It previously always answered
+`closed`. Closing a thread that was canceled underneath you now returns `canceled` and refuses
+the lesson, where before it reported a close that had not happened and left a lesson on a
+canceled thread. Callers that parse this field will see the difference.
+
+**Distillation on close is on by default.** Every project's knowledge configuration is empty
+today, and a feature that only works where someone opted in after the fact is a feature nobody
+has - so absence means on. To turn it off, set `distillOnClose: false` in the project's
+`knowledge_config`. There is no switch on the settings screen yet, which is why it is stated
+here.
+
+**Extraction is closed-only, and the watermark is now the whole record of whether a thread's
+knowledge was decided.** The sweep used to skip any thread that some knowledge row cited, which
+is a different question: a citation records that somebody mentioned the thread, and `learn`
+writes one without deciding anything. There was no way to say "decided" until `close` gained a
+lesson; now there is.
+
+One consequence is visible on upgrade. A thread that was only ever cited by a `learn` row was
+silently exempt from extraction and no longer is, so **it gets distilled once**. It does not
+repeat, and threads already extracted are unaffected. On the hub this was written against,
+eight threads were in that state - your own number depends on how often your agents passed a
+thread reference to `learn`.
+
+### A note on our own verification
+
+This release was assembled onto one branch and reviewed there, rather than reviewed per
+worktree, and that is the only reason three of its defects were found. Each part's tests were
+green in isolation every time.
+
+The worst of them was created by this release's own fix. Adding redaction to the proposal
+approval path introduced a database idiom that works under the driver our tests use and throws
+under the driver the dashboard uses - which is the only caller. The fix for a redaction hole
+would have shipped as a dashboard action that failed silently and reported "already decided".
+It never reached a release; we checked the tags rather than assuming, because writing "this now
+works again" would have told users about a bug they never had.
+
+The other two were a proposal-creation path that could persist text under rules an owner had
+just changed, and a cancellation racing a close. That second one existed because a comment
+explained the ordering with a reason that was not true - the window it warned about cannot open
+inside a transaction - and the wrong reason had displaced the check that would have caught the
+race. We had read that comment and approved it, satisfied that it gave a reason at all.
+
 ## [0.5.5] - 2026-07-30
 
 Patch release. **No database migrations.** Three fixes and a set of comment corrections that
