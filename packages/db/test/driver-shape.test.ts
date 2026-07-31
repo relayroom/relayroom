@@ -141,10 +141,22 @@ describe('no raw execute() result is destructured in packages/db', () => {
         // form on purpose, and a scan that cannot tell those apart gets deleted.
         const code = line.trim()
         if (code.startsWith('*') || code.startsWith('//') || code.startsWith('/*')) return
-        // `const [x] = await ...execute(` and `const x = (await ...execute(...))[0]`.
-        if (/(const|let)\s*\[[^\]]*\]\s*=\s*await\s+[\w.]*\bexecute\b/.test(line)
-          || /await\s+[\w.]*\bexecute\b[^\n]*\)\s*\[\s*0\s*\]/.test(line)) {
-          offenders.push(`${name}:${i + 1}: ${line.trim()}`)
+        // Three ways to read an execute() result as if it were an array:
+        //   const [x] = await tx.execute(...)      destructure
+        //   (await tx.execute(...))[0]             index
+        //   const rows = await tx.execute(...)     assign, then .length/.map later
+        // The third is the one this scan nearly missed. It is not what shipped, but a
+        // scan that only knows the shape of the bug it was written for stops working the
+        // first time someone writes the same mistake differently - and the assignment
+        // form is the natural way to write "give me all the rows".
+        //
+        // The wrapped form the fix uses reads `firstRow<T>(await db.execute(...))`, so
+        // the `=` is followed by the helper, never by `await`. That is what makes the
+        // assignment rule safe to state this bluntly.
+        if (/(const|let)\s*\[[^\]]*\]\s*=\s*await\s+[\w.]*\bexecute\b/.test(code)
+          || /await\s+[\w.]*\bexecute\b[^\n]*\)\s*\[\s*0\s*\]/.test(code)
+          || /=\s*await\s+[\w.]*\bexecute\s*\(/.test(code)) {
+          offenders.push(`${name}:${i + 1}: ${code}`)
         }
       })
     }
