@@ -34,9 +34,23 @@
  * hard delete, and purge. So the sweep re-extracted and wrote the candidate back. For
  * purge, the operator's remedy for a leaked secret, the remedy silently undid itself.
  *
- * The old source_refs predicate is STILL CHECKED alongside the watermark, but it is
- * NOT what protects against resurrection - the claim in extractProject is. See there
- * for what the predicate is actually still doing and what removing it would cost.
+ * THE WATERMARK IS NOW THE WHOLE GUARD. The old `source_refs` predicate - "skip a
+ * thread that any knowledge row cites" - is gone, and the reason it could go is that
+ * the two were never asking the same question. The watermark records that this thread's
+ * knowledge was DECIDED. A citation records only that someone mentioned the thread, and
+ * `learn` writes one without deciding anything.
+ *
+ * So a `learn` row citing a thread no longer stops that thread from being extracted, and
+ * both rows existing is correct rather than a duplicate: they are different acts with
+ * different content. Two places had already settled this before the predicate went -
+ * migration 0022's backfill deliberately excludes `learn` rows ("backfilling them would
+ * make an incidental suppression permanent"), and the release contract's acceptance net
+ * says `learn` rows citing an extracted thread are allowed. The act that DOES mean "this
+ * thread is decided" is `close` carrying a lesson, which takes the watermark.
+ *
+ * One-time effect on an existing installation: a thread that only a pre-0022 `learn` row
+ * cited becomes extractable and gets one candidate, once. Measured on the production hub
+ * before the change: 8 threads.
  */
 import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm'
 import type { Db, DbOrTx } from '@relayroom/db'
@@ -278,20 +292,16 @@ async function extractProject(
   // skipped pattern and a working denylist look identical from outside.
   reportSkippedPatterns(projectId, 'extractor', skippedPatterns(redactionPatterns))
 
-  // Threads eligible for extraction with no existing candidate citing them. The
-  // NOT EXISTS is the once-per-thread dedup: a candidate whose source_refs contain
-  // {threadId} means this thread was already extracted.
+  // Threads eligible for extraction that nothing has decided yet. ONE PREDICATE, not
+  // two: "already decided" is the watermark and nothing else. It used to also skip a
+  // thread that any knowledge row cited, which is a different question - see the file
+  // header for why those two came apart.
   const eligible = await tx
     .select({ id: threads.id, subject: threads.subject })
     .from(threads)
     .where(and(
       eq(threads.projectId, projectId),
       inArray(threads.status, EXTRACTABLE_STATUSES as unknown as string[]),
-      sql`not exists (
-        select 1 from ${knowledge} k
-        where k.project_id = ${projectId}
-          and k.source_refs @> ${sql`jsonb_build_array(jsonb_build_object('threadId', ${threads.id}))`}
-      )`,
       // The watermark (BUG-0010). A knowledge row is EVIDENCE of extraction; this is
       // the RECORD of it, and it outlives the row that purge or retention deletes.
       sql`not exists (
@@ -363,11 +373,6 @@ async function extractProject(
                select 1 from ${threads} t
                 where t.id = ${thread.id} and t.project_id = ${projectId}
              )
-         and not exists (
-               select 1 from ${knowledge} k
-                where k.project_id = ${projectId}
-                  and k.source_refs @> ${JSON.stringify([{ threadId: thread.id }])}::jsonb
-             )
          and exists (
                select 1 from ${projects} p
                 where p.id = ${projectId}
@@ -377,10 +382,11 @@ async function extractProject(
       returning thread_id
     `)
     if (claimed.length === 0) {
-      // Zero rows has one more cause than it used to, and only one of them invalidates the
-      // rest of this project's work, so they have to be told apart. A conflict, a deleted
-      // thread, or a knowledge row appearing under us are all "skip this thread". Patterns
-      // having changed is "stop, and let the next tick redo the remainder".
+      // Zero rows has several causes and only one of them invalidates the rest of this
+      // project's work, so they have to be told apart. A conflict - another sweep, a
+      // purge, or a `close` that carried a lesson - and a deleted thread are both "skip
+      // this thread". Patterns having changed is "stop, and let the next tick redo the
+      // remainder".
       const [now] = await tx.execute<{ snapshot: string }>(sql`
         select ${sql.raw(REDACTION_INPUT_SNAPSHOT)} as snapshot
           from ${projects} where ${projects.id} = ${projectId}

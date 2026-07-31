@@ -177,17 +177,24 @@ describe('extractor resurrection (BUG-0010)', () => {
     expect(await citesThread(p!.id, t)).toHaveLength(1)
   })
 
-  it('the backfill covered rows that existed before the watermark table', async () => {
-    // Simulates the pre-0022 shape: a knowledge row citing a thread with NO watermark,
-    // which is exactly what every installation had at upgrade time. The guard must
-    // still suppress it, or the fix protects only threads extracted after the
-    // migration - which for a P0 filed over existing data is close to worthless.
+  it('the watermark is the whole guard - remove it and the same thread is extracted again', async () => {
+    // REWRITTEN when the `source_refs` predicate was removed, and the flip is the point
+    // rather than a detail. This case used to delete the watermark, assert the thread was
+    // still suppressed, and call that "the backfill covered pre-existing rows" - but what
+    // suppressed it was the predicate, not the backfill, and deleting the watermark is the
+    // inverse of the state the backfill produces. It was passing for a reason it did not
+    // name.
+    //
+    // What it asserts now is what actually holds: the watermark is the only record of a
+    // decision, so removing it makes the thread extractable again. That the backfill puts
+    // one there for every pre-0022 extractor row is a property of migration 0022 and is
+    // tested against the migration's own SQL in packages/db - not here, and not by this.
     const { id: p, agentId } = await project()
     const t = await closedThread(p, agentId)
     await markProjectKnowledgeDirty(db, p)
     await runExtractorSweep(db, { projectId: p })
+    expect(await citesThread(p, t)).toHaveLength(1)
 
-    // Remove the watermark, keeping the knowledge row: the pre-migration state.
     await db.delete(threadExtractions)
       .where(and(eq(threadExtractions.projectId, p), eq(threadExtractions.threadId, t)))
     expect(await watermark(p, t)).toBeNull()
@@ -195,42 +202,46 @@ describe('extractor resurrection (BUG-0010)', () => {
     await reDirty(p, agentId)
     const r = await runExtractorSweep(db, { projectId: p })
     expect(r.projects).toBe(1)
-    // Still one - the surviving source_refs predicate covers it, which is why that
-    // predicate is kept rather than replaced in this release.
-    expect(await citesThread(p, t)).toHaveLength(1)
+    // Two now: the original candidate and a second one. Nothing else was holding it.
+    expect(await citesThread(p, t)).toHaveLength(2)
   })
 })
 
 /**
- * WHAT THE `source_refs` PREDICATE STILL DOES, pinned before item 4 removes it.
+ * A CITATION IS NOT A DECISION, which is what removing the `source_refs` predicate
+ * settled.
  *
- * The predicate is not what stops resurrection - the watermark claim is, and the tests
- * above are what showed that. Its one remaining job is the `learn` race: `learn` writes
- * a row citing a thread WITHOUT taking a watermark and without the sweep's advisory
- * lock, so a `learn` that commits between the eligibility query and the claim is skipped
- * only because of this line. Delete it with nothing in its place and both rows appear,
- * silently - two candidates for one thread is not an error anywhere.
+ * The predicate skipped any thread that a knowledge row cited. That covered two very
+ * different things: rows the extractor wrote (already decided) and rows `learn` wrote
+ * (someone mentioned the thread). Only the first is a decision, and the watermark
+ * records exactly that - so the predicate went, and a `learn` row citing a thread no
+ * longer stops it being extracted. Both rows existing is correct: different acts,
+ * different content.
  *
- * The state is reproduced rather than the interleaving. A row citing the thread with no
- * watermark IS what `learn` leaves behind, and the predicate reads the row, not how it
- * got there - so a test that inserts that state reaches the same branch a real race
- * would, deterministically. Written and confirmed RED against a tree with the predicate
- * deleted BEFORE any deletion, so what it defends is known rather than assumed.
+ * Two places had already settled this before the predicate went: migration 0022's
+ * backfill deliberately excludes `learn` rows, and the release contract's acceptance net
+ * allows `learn` rows citing an extracted thread.
+ *
+ * The pair below is the flipped claim AND its support. The first says a citation does
+ * not suppress; the second says the watermark does. Written together on purpose - after
+ * a rewrite that changes WHAT a test leans on, the new support has to be shown to hold,
+ * or "we rewrote it green" and "we found what actually guards it" look identical.
  */
-describe('the source_refs predicate and the learn race', () => {
-  it('does not extract a thread that a learn row already cites', async () => {
+describe('a citation is not a decision', () => {
+  /** What `learn` with a sourceThreadId writes: source_kind 'learn', citing the thread,
+   *  and NO watermark. Migration 0022's backfill deliberately leaves these alone. */
+  async function learnRow(projectId: string, threadId: string) {
+    await db.insert(knowledge).values({
+      projectId, kind: 'pitfall', title: 'what an agent recorded',
+      body: 'a lesson an agent wrote while the thread was still open',
+      sourceKind: 'learn', sourceRefs: [{ threadId }], validationState: 'candidate',
+    })
+  }
+
+  it('extracts a thread that only a learn row cites', async () => {
     const { id: p, agentId } = await project()
     const t = await closedThread(p, agentId)
-
-    // Exactly what `learn` with a sourceThreadId writes: source_kind 'learn', citing
-    // the thread, and NO watermark. Migration 0022's backfill deliberately excludes
-    // these rows - see its comment - so this is also the shape that survived the
-    // migration untouched.
-    await db.insert(knowledge).values({
-      projectId: p, kind: 'pitfall', title: 'what an agent recorded',
-      body: 'a lesson an agent wrote while the thread was still open',
-      sourceKind: 'learn', sourceRefs: [{ threadId: t }], validationState: 'candidate',
-    })
+    await learnRow(p, t)
     expect(await watermark(p, t)).toBeNull()
 
     await markProjectKnowledgeDirty(db, p)
@@ -238,7 +249,31 @@ describe('the source_refs predicate and the learn race', () => {
     // The project WAS processed - without this the assertion below is satisfied by a
     // sweep that did nothing at all.
     expect(r.projects).toBe(1)
+    // Two rows, and that is the intended outcome: the agent's lesson and the extractor's
+    // candidate. One-time effect on an existing installation - 8 threads on the
+    // production hub when this shipped.
+    expect(await citesThread(p, t)).toHaveLength(2)
+    expect(await watermark(p, t)).toBe('extracted')
+  })
+
+  it('and does not once the watermark is there, learn row or not', async () => {
+    // THE SUPPORT the test above now leans on, and the negative control for the rewrite:
+    // delete the claim in extractProject and this goes red, which is what says the
+    // watermark is carrying the weight the predicate used to.
+    const { id: p, agentId } = await project()
+    const t = await closedThread(p, agentId)
+    await markProjectKnowledgeDirty(db, p)
+    await runExtractorSweep(db, { projectId: p })
+    expect(await watermark(p, t)).toBe('extracted')
     expect(await citesThread(p, t)).toHaveLength(1)
+
+    // A learn row arriving afterwards changes nothing either way.
+    await learnRow(p, t)
+    await reDirty(p, agentId)
+    const r = await runExtractorSweep(db, { projectId: p })
+    expect(r.projects).toBe(1)
+    // Two: the original candidate and the learn row. A third would be the resurrection.
+    expect(await citesThread(p, t)).toHaveLength(2)
   })
 })
 
