@@ -256,6 +256,102 @@ describe('rollbackPlaybook', () => {
   })
 })
 
+/**
+ * The PLAYBOOK target, which the redaction cases below never touched.
+ *
+ * Review loop 14: creation redacted `change.title` and `change.body` - the knowledge
+ * shape - while a playbook proposal's shape is `{ content }`, so its text went in
+ * untouched. Approval then copied that content into `playbook_version.content` and into
+ * `project.relayroom_md`, the file every agent in the project reads, with no rules
+ * applied at any point.
+ *
+ * The existing playbook test asserted byte-for-byte preservation of the content, which is
+ * the right assertion for a project with no rules and is exactly why the hole was
+ * invisible: it was green, and it was measuring something else.
+ */
+describe('playbook proposals carry the denylist too', () => {
+  const RULE = { kind: 'literal' as const, value: 'sk-playbook-secret' }
+  const BODY = '# RELAYROOM.md\n\nDeploy with sk-playbook-secret before rebasing.\n'
+
+  it('redacts the content at creation, not just title and body', async () => {
+    const p = await project()
+    await db.update(projects).set({ knowledgeConfig: { redactionRules: [RULE] } })
+      .where(eq(projects.id, p))
+
+    const proposal = await proposeKnowledgeDiff(db, {
+      projectId: p, target: 'playbook',
+      hypothesis: 'the deploy step should be written down',
+      change: { content: BODY, patch: '+ Deploy with sk-playbook-secret' },
+      triggerSignature: `sig-pb-${randomBytes(3).toString('hex')}`,
+    })
+    expect(proposal).not.toBeNull()
+    // Every string in `change`, not a named pair - `patch` is redacted for the same
+    // reason `content` is, and neither is in the knowledge shape.
+    expect(JSON.stringify(proposal!.change)).not.toContain('sk-playbook-secret')
+    expect(JSON.stringify(proposal!.change)).toContain('before rebasing')
+  })
+
+  it('redacts at approval under a rule saved AFTER the proposal was created', async () => {
+    // The case creation-time redaction cannot cover: the proposal was clean when it was
+    // written because there was no rule yet. Approval is a second durable write and has
+    // to apply what is configured NOW, which is the same thing the knowledge branch does.
+    const p = await project()
+    const proposal = await proposeKnowledgeDiff(db, {
+      projectId: p, target: 'playbook',
+      hypothesis: 'the deploy step should be written down',
+      change: { content: BODY },
+      triggerSignature: `sig-pb-${randomBytes(3).toString('hex')}`,
+    })
+    expect(proposal!.change).toMatchObject({ content: BODY }) // clean at creation, no rule yet
+
+    await db.update(projects).set({ knowledgeConfig: { redactionRules: [RULE] } })
+      .where(eq(projects.id, p))
+    const result = await decideProposal(db, {
+      projectId: p, proposalId: proposal!.id, decision: 'approved', userId: USER,
+    })
+    expect(result).toMatchObject({ ok: true, version: 1 })
+
+    const [v] = await db.select().from(playbookVersions)
+      .where(and(eq(playbookVersions.projectId, p), eq(playbookVersions.version, 1)))
+    expect(v!.content).not.toContain('sk-playbook-secret')
+    expect(v!.content).toContain('before rebasing')
+    // The hash follows the stored content, or the version's own integrity check fails.
+    expect(v!.contentHash).toBe(createHash('sha256').update(v!.content).digest('hex'))
+    // And the LIVE copy - the one agents read - carries the same text.
+    const [proj] = await db.select().from(projects).where(eq(projects.id, p))
+    expect(proj!.relayroomMd).toBe(v!.content)
+  })
+
+  it('refuses the approval when a rule cannot be resolved', async () => {
+    // Fail closed, like every other writer: an unresolvable rule means the owner switched
+    // on a protection we cannot apply, and the playbook is the most widely read text in
+    // the project.
+    const p = await project()
+    const proposal = await proposeKnowledgeDiff(db, {
+      projectId: p, target: 'playbook',
+      hypothesis: 'the deploy step should be written down',
+      change: { content: BODY },
+      triggerSignature: `sig-pb-${randomBytes(3).toString('hex')}`,
+    })
+    await db.update(projects)
+      .set({ knowledgeConfig: { redactionRules: [{ kind: 'detector', id: 'no-such', v: 1 }] } })
+      .where(eq(projects.id, p))
+
+    const result = await decideProposal(db, {
+      projectId: p, proposalId: proposal!.id, decision: 'approved', userId: USER,
+    })
+    expect(result).toMatchObject({ ok: false, reason: 'redaction_unresolvable' })
+    // Nothing written and the proposal stays pending, so it can be decided again once
+    // the configuration is fixed.
+    const versions = await db.select().from(playbookVersions)
+      .where(eq(playbookVersions.projectId, p))
+    expect(versions).toHaveLength(0)
+    const [still] = await db.select().from(knowledgeProposals)
+      .where(eq(knowledgeProposals.id, proposal!.id))
+    expect(still!.status).toBe('pending')
+  })
+})
+
 describe('proposeKnowledgeDiff redaction', () => {
   it('redacts at creation, so the staging row never holds the raw text', async () => {
     // knowledge_proposal is durable and a human reads it to decide, so it is a display

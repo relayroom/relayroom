@@ -632,8 +632,11 @@ export async function proposeKnowledgeDiff(
   // still inside the window.
   const proj = firstRow<{
     config: { redactionRules?: unknown; redactionPatterns?: unknown } | null
+    snapshot: string
   }>(await db.execute(sql`
-    select knowledge_config as config from ${projects} where ${projects.id} = ${input.projectId}
+    select knowledge_config as config,
+           ${sql.raw(REDACTION_INPUT_SNAPSHOT)} as snapshot
+      from ${projects} where ${projects.id} = ${input.projectId}
   `))
   const { patterns, unresolved } = resolveRedactionRules(proj?.config)
   if (unresolved.length > 0) {
@@ -646,30 +649,58 @@ export async function proposeKnowledgeDiff(
   }
   reportSkippedPatterns(input.projectId, 'proposer_create', skippedPatterns(patterns))
 
+  // EVERY STRING IN `change`, not a named pair. It used to redact `title` and `body`,
+  // which are the knowledge shape; a playbook proposal's shape is `{ content }`, so its
+  // text went in untouched - and approval copies that content into `playbook_version` and
+  // into `project.relayroom_md`, the file every agent in the project reads. A denylist
+  // that covers the field names one target happens to use is a denylist with a hole in
+  // the other target. Review loop 14 found it.
+  //
+  // Walked rather than listed, because a list is what failed: the next target adds its
+  // own field name and nobody remembers this line.
   const change = input.change as Record<string, unknown>
-  const redactedChange: Record<string, unknown> = { ...change }
-  for (const key of ['title', 'body'] as const) {
-    if (typeof change[key] === 'string') redactedChange[key] = redact(change[key] as string, patterns).text
+  const redactedChange: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(change)) {
+    redactedChange[key] = typeof value === 'string' ? redact(value, patterns).text : value
   }
 
-  const inserted = await db
-    .insert(knowledgeProposals)
-    .values({
-      projectId: input.projectId,
-      target: input.target,
-      evidence: input.evidence ?? {},
-      hypothesis: redact(input.hypothesis, patterns).text,
-      disconfirming: input.disconfirming ? redact(input.disconfirming, patterns).text : null,
-      change: redactedChange,
-      triggerSignature: input.triggerSignature ?? null,
-      ...(input.createdByJob ? { createdByJob: input.createdByJob } : {}),
-    })
-    .onConflictDoNothing({
-      target: [knowledgeProposals.projectId, knowledgeProposals.triggerSignature],
-      where: sql`status = 'pending'`,
-    })
-    .returning()
-  return inserted[0] ?? null
+  // THE SNAPSHOT COMPARISON, ON THE WRITE THAT STORES THE TEXT - the same guard the sweep,
+  // `learn`, `close` and the approval path carry, and the reason it is not optional here:
+  // the config was read in the statement above, Read Committed gives this one its own
+  // snapshot, and an owner saving a new rule in between leaves this row permanently
+  // holding text the current configuration exists to remove. `knowledge_proposal` is a
+  // display surface a human reads, so it is durable in every sense that matters.
+  //
+  // Raw SQL rather than the query builder because the guard has to be a predicate ON the
+  // insert; a check before it is the gap, not the fix.
+  // `returning id` and then a typed re-select, NOT `returning *`: raw SQL comes back with
+  // the database's own column names, so a `returning *` row has `trigger_signature` where
+  // every caller reads `triggerSignature` - undefined fields rather than an error. The
+  // guard has already done its work by the time this second statement runs.
+  const inserted = firstRow<{ id: string }>(await db.execute(sql`
+    insert into ${knowledgeProposals} (project_id, target, evidence, hypothesis, disconfirming,
+                                       change, trigger_signature, created_by_job)
+    select ${input.projectId}, ${input.target}, ${JSON.stringify(input.evidence ?? {})}::jsonb,
+           ${redact(input.hypothesis, patterns).text},
+           ${input.disconfirming ? redact(input.disconfirming, patterns).text : null},
+           ${JSON.stringify(redactedChange)}::jsonb,
+           ${input.triggerSignature ?? null},
+           ${input.createdByJob ?? 'proposer'}
+     where exists (
+             select 1 from ${projects} p
+              where p.id = ${input.projectId}
+                and ${sql.raw(REDACTION_INPUT_SNAPSHOT_P)} = ${proj?.snapshot ?? ''}
+           )
+    on conflict (project_id, trigger_signature) where status = 'pending' do nothing
+    returning id
+  `))
+  if (!inserted) return null
+  const [row] = await db.select().from(knowledgeProposals).where(eq(knowledgeProposals.id, inserted.id))
+  // Null has two causes now and both are "no proposal this time": a pending proposal
+  // already holds this signature, or the rules moved under us. The proposer re-clusters a
+  // rolling window every sweep, so either way this signature comes back on the next tick,
+  // under whatever configuration is current then.
+  return row ?? null
 }
 
 export interface DecideProposalInput {
@@ -788,9 +819,38 @@ export async function decideProposal(
       knowledgeId = row.id
     }
     else if (approved && target === 'playbook') {
+      // THE PLAYBOOK IS A TEXT-STORING STAGE TOO, and it was the one nobody counted.
+      // Creation redacted the change (`content` included, since loop 14), but approval
+      // copied that text forward with no rules applied at all - into `playbook_version`
+      // and into `project.relayroom_md`, the file every agent in the project reads. A
+      // rule saved between creation and approval was simply not applied to it.
+      //
+      // The lock, not a comparison, and only because this path already has one:
+      // appendPlaybookVersion takes the project row `for update` to serialize version
+      // numbers, so acquiring the same lock here adds no ordering that did not exist -
+      // and past a locked row a settings save cannot commit, which makes the config read
+      // below authoritative for the rest of this transaction. The knowledge branch above
+      // uses a comparison instead because it has no lock to reuse; inventing one there
+      // would have been a new ordering between close, sweep and this path.
+      await tx.select({ id: projects.id }).from(projects).where(eq(projects.id, input.projectId)).for('update')
+      const locked = firstRow<{
+        config: { redactionRules?: unknown; redactionPatterns?: unknown } | null
+      }>(await tx.execute(sql`
+        select knowledge_config as config from ${projects} where ${projects.id} = ${input.projectId}
+      `))
+      const playbookRules = resolveRedactionRules(locked?.config)
+      if (playbookRules.unresolved.length > 0) {
+        return {
+          ok: false,
+          reason: 'redaction_unresolvable',
+          unresolved: playbookRules.unresolved.map(u => u.reason),
+        }
+      }
+      const content = redact(playbookContentFrom(proposal.change), playbookRules.patterns).text
+      reportSkippedPatterns(input.projectId, 'proposer', skippedPatterns(playbookRules.patterns))
       version = await appendPlaybookVersion(tx, {
         projectId: input.projectId,
-        content: playbookContentFrom(proposal.change),
+        content,
         note: input.note ?? `proposal ${proposal.id}`,
         proposalId: proposal.id,
         userId: input.userId,
