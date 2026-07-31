@@ -24,6 +24,11 @@ export * from './redaction-rules'
 export * from './redaction'
 export * from './redaction-snapshot'
 
+// The outcome of a lesson carried by `close` - a union so a refusal can never be read
+// as a success. See the file header for why all eight refusals leave the close itself
+// successful.
+export * from './lesson-outcome'
+
 // ── Attention signal ─────────────────────────────────────────────────────────
 
 /**

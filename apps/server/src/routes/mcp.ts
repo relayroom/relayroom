@@ -37,6 +37,7 @@ import {
   projectAccess,
   projects,
   recallLogs,
+  threadExtractions,
   threads,
   touchAgent,
   authSchema,
@@ -63,6 +64,7 @@ import { shouldWake } from '../wake/issuance'
 import { isWakeBudgetEnabled } from '../wake/flag'
 import { CapabilityError, getCapabilities, resolveUrgent } from '../priority/capability'
 import { seedOwnerWakeBudget } from '../budget/seed-owner-budget'
+import type { LessonOutcome, LessonRefusalCode } from '@relayroom/shared'
 import { redact, REDACTION_INPUT_SNAPSHOT, REDACTION_INPUT_SNAPSHOT_P, reportSkippedPatterns, resolveRedactionRules } from '@relayroom/shared'
 
 import { markProjectKnowledgeDirty, recordKnowledgeSignal } from '@relayroom/db'
@@ -454,6 +456,44 @@ const LEARN_PER_AGENT_HOURLY = 20
 const LEARN_WINDOW_MS = 60 * 60_000
 const learnCalls = new Map<string, number[]>()
 
+/**
+ * Ceiling on close-carried lessons per agent per hour, separate from `learn`'s.
+ *
+ * Separate because the two are bounded by different things: `learn` is bounded by an
+ * agent's willingness to call it, which a loop removes, while a close-carried lesson is
+ * bounded by closes - an agent cannot close more threads than exist. Sharing the ceiling
+ * would mean a busy day of closing silently costs us knowledge, which is the failure this
+ * whole feature exists to fix.
+ *
+ * The number is a starting guess like `learn`'s, not a measured one. It is higher because
+ * closing thirty threads in an hour is ordinary work while calling `learn` thirty times is
+ * usually a loop.
+ */
+const CLOSE_LESSON_PER_AGENT_HOURLY = 60
+
+/**
+ * A lesson refusal raised from inside the savepoint, so that throwing it both rolls the
+ * claim back and carries the code out. A returned value could not do the first, and a
+ * flag checked after the savepoint could not do it atomically.
+ */
+class LessonRefused extends Error {
+  constructor(readonly code: LessonRefusalCode, readonly reason: string) {
+    super(reason)
+  }
+}
+const closeLessonCalls = new Map<string, number[]>()
+
+function allowCloseLesson(agentId: string, now = Date.now()): boolean {
+  const seen = (closeLessonCalls.get(agentId) ?? []).filter(t => t > now - LEARN_WINDOW_MS)
+  if (seen.length >= CLOSE_LESSON_PER_AGENT_HOURLY) {
+    closeLessonCalls.set(agentId, seen)
+    return false
+  }
+  seen.push(now)
+  closeLessonCalls.set(agentId, seen)
+  return true
+}
+
 /** Records this call and reports whether it is within the ceiling. */
 function allowLearn(agentId: string, now = Date.now()): boolean {
   const seen = (learnCalls.get(agentId) ?? []).filter(t => t > now - LEARN_WINDOW_MS)
@@ -468,6 +508,7 @@ function allowLearn(agentId: string, now = Date.now()): boolean {
 
 /** Test-only: clear the per-agent windows so cases do not bleed into each other. */
 export function resetLearnRateLimit(): void {
+  closeLessonCalls.clear()
   learnCalls.clear()
 }
 
@@ -1152,9 +1193,20 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
     'Close a thread once it is resolved (a question answered, a task acknowledged). A closed thread '
       + 'leaves every inbox and NEVER wakes its participants again - this is how you end a conversation. '
       + 'Close early and often; an open thread keeps pinging. If there is genuinely new work, open a new '
-      + 'thread with send instead of reopening.',
+      + 'thread with send instead of reopening. If the thread taught something durable, pass `lesson` and '
+      + 'it is recorded as a candidate citing this thread - closing is the one moment when what the thread '
+      + 'was for is still in front of you. Do NOT call learn afterwards for the same thread; the lesson is '
+      + 'already claimed and a second write would duplicate it. The response reports whether it was stored.',
     {
       threadId: z.string().describe('UUID of the thread to close'),
+      lesson: z.object({
+        title: z.string().min(1).max(200).describe('One line naming what was learned'),
+        body: z.string().min(1).max(4000).describe('The lesson itself - what to do or avoid next time'),
+        kind: z.enum(['fact', 'convention', 'pitfall', 'decision']),
+      }).optional().describe(
+        'What this thread taught, if anything durable. Recorded as a candidate citing this thread. '
+        + 'Write the LESSON, not the evidence: what someone should do differently, not a transcript.',
+      ),
     },
     async (args) => {
       if (!isUuid(args.threadId)) {
@@ -1165,16 +1217,152 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
       if (!thread || thread.projectId !== ctx.projectId) {
         return { content: [{ type: 'text' as const, text: 'error: thread not found' }], isError: true }
       }
-      if (thread.status !== 'closed' && thread.status !== 'canceled') {
+      // EVERY EXPECTED REFUSAL IS DECIDED BEFORE THE TRANSACTION, so a refusal never leaves
+      // a claim behind. Each one returns a code; none of them fails the close, because
+      // closing is what the caller asked for and refusing it would be worse.
+      let lessonOutcome: LessonOutcome | null = null
+      let lessonText: { title: string; body: string } | null = null
+      let ruleSnapshot = ''
+      if (args.lesson) {
+        lessonOutcome = await (async (): Promise<LessonOutcome | null> => {
+          if (thread.status === 'canceled') {
+            return { recorded: false, code: 'thread_canceled', reason: 'a cancellation is not a resolution to learn from' }
+          }
+          if (!await canWriteKnowledge(db, ctx)) {
+            return { recorded: false, code: 'unauthorized', reason: 'this token may close threads but not write knowledge' }
+          }
+          const [proj] = await db.execute<{
+            config: { redactionRules?: unknown; redactionPatterns?: unknown; distillOnClose?: boolean } | null
+            snapshot: string
+          }>(sql`
+            select knowledge_config as config, ${sql.raw(REDACTION_INPUT_SNAPSHOT)} as snapshot
+              from ${projects} where ${projects.id} = ${ctx.projectId} limit 1
+          `)
+          if (proj?.config?.distillOnClose === false) {
+            return { recorded: false, code: 'distill_disabled', reason: 'this project does not store lessons at close' }
+          }
+          const { patterns, unresolved } = resolveRedactionRules(proj?.config)
+          if (unresolved.length > 0) {
+            return {
+              recorded: false,
+              code: 'redaction_unresolvable',
+              reason: `${unresolved.length} redaction rule(s) cannot be applied (${unresolved.map(u => u.reason).join(', ')})`,
+            }
+          }
+          const agent = await touchAgent(db, ctx.projectId, ctx.part)
+          if (!agent || !allowCloseLesson(agent.id)) {
+            return {
+              recorded: false,
+              code: 'rate_limited',
+              reason: `ceiling of ${CLOSE_LESSON_PER_AGENT_HOURLY} close-carried lessons per hour reached`,
+            }
+          }
+          const titleResult = redact(args.lesson!.title, patterns)
+          const bodyResult = redact(args.lesson!.body, patterns)
+          reportSkippedPatterns(ctx.projectId, 'close', [...titleResult.skipped, ...bodyResult.skipped])
+          const body = bodyResult.text.trim()
+          if (body === '') {
+            return { recorded: false, code: 'empty_after_redaction', reason: 'nothing was left of the body after redaction' }
+          }
+          // A title emptied by redaction falls back rather than refusing: a title is a
+          // label and the body is what makes it a lesson. The column has no non-empty
+          // check, so without this a titleless row is storable.
+          //
+          // DIVERGENCE FROM THE CONTRACT, reported rather than quietly matched: §4 lists
+          // the refusal codes and says nothing about the title, so an implementer either
+          // invents this or stores an empty string. The extractor already answers it the
+          // same way, which is why this follows the extractor rather than the document.
+          ruleSnapshot = proj?.snapshot ?? ''
+          lessonText = { title: titleResult.text.trim() === '' ? '(redacted)' : titleResult.text.trim(), body }
+          return null
+        })()
+      }
+
+      const needsClose = thread.status !== 'closed' && thread.status !== 'canceled'
+      let closed = false
+      if (needsClose || lessonText) {
         // Close and raise the extractor marker in ONE transaction: a closed thread is
         // extractor input, so a close that committed without the marker would leave a
         // thread that never becomes a candidate and never errors. markProjectKnowledgeDirty
         // is the single cross-package setter (@relayroom/db); it writes now() as the
         // transaction clock, so the two commit together or not at all. (FEAT-0004 L3.)
         await db.transaction(async (tx) => {
-          await tx.update(threads).set({ status: 'closed' }).where(eq(threads.id, args.threadId))
-          await markProjectKnowledgeDirty(tx, ctx.projectId)
+          if (lessonText) {
+            // THE LESSON GOES FIRST, INSIDE A SAVEPOINT. First because it takes the
+            // watermark, and the watermark is what tells the sweep this thread is spoken
+            // for - taking it after the close would leave a window where the thread is
+            // closed, unclaimed, and extractable by a tick that runs in between. Inside a
+            // savepoint because a lesson that cannot be stored must not cost the caller
+            // their close: the close is what they asked for, the lesson is what they
+            // offered, and losing the first to save the second is backwards.
+            try {
+              await tx.transaction(async (sp) => {
+                const claimed = await sp.execute<{ thread_id: string }>(sql`
+                  insert into ${threadExtractions} (project_id, thread_id, reason)
+                  values (${ctx.projectId}, ${thread.id}, 'extracted')
+                  on conflict (project_id, thread_id) do nothing
+                  returning thread_id
+                `)
+                if (claimed.length === 0) {
+                  // Someone else got here: a sweep tick extracted it, or a purge marked it.
+                  // Either way this thread's knowledge is already decided and a second row
+                  // citing it would be the duplicate the watermark exists to prevent.
+                  throw new LessonRefused('already_decided',
+                    'this thread was already extracted or purged, so its lesson is already decided')
+                }
+                // 'extracted' rather than a third reason, because the column's check
+                // constraint admits two values and the sweep reads it as "decided, do not
+                // revisit" - which is exactly what a close-carried lesson makes true. A
+                // distinct reason would be a schema change whose only reader is a human.
+
+                // THE SAME COMPARISON THE SWEEP PUTS ON ITS CANDIDATE INSERT, for the same
+                // reason: the rules were read in a different statement, Read Committed gave
+                // that statement its own snapshot, and a settings save committing in between
+                // would leave this row redacted under rules the owner had already replaced.
+                // The guard rides on the write that stores the text, never on one beside it.
+                const stored = await sp.execute<{ id: string }>(sql`
+                  insert into ${knowledge} (project_id, kind, title, body, source_kind, source_refs, validation_state)
+                  select ${ctx.projectId}, ${args.lesson!.kind}, ${lessonText!.title}, ${lessonText!.body},
+                         'thread', ${JSON.stringify([{ threadId: thread.id }])}::jsonb, 'candidate'
+                   where exists (
+                           select 1 from ${projects} p
+                            where p.id = ${ctx.projectId}
+                              and ${sql.raw(REDACTION_INPUT_SNAPSHOT_P)} = ${ruleSnapshot}
+                         )
+                  returning id
+                `)
+                if (stored.length === 0) {
+                  throw new LessonRefused('storage_failed',
+                    'the project\'s redaction rules changed while this lesson was being written; nothing was stored')
+                }
+                lessonOutcome = { recorded: true, knowledgeId: stored[0]!.id }
+              })
+            }
+            catch (err) {
+              // The savepoint is already rolled back here, which is what makes the claim
+              // safe to take first: a refusal releases it, so the sweep can still extract
+              // this thread later. Only OUR refusals are swallowed - anything else is a
+              // real failure and must not be reported as a successful close.
+              if (!(err instanceof LessonRefused)) throw err
+              lessonOutcome = { recorded: false, code: err.code, reason: err.reason }
+            }
+          }
+          if (needsClose) {
+            // CONDITIONAL on the status we read. Another writer may have closed or
+            // canceled this thread while we were preparing the lesson, and an
+            // unconditional update would turn their cancellation into a close.
+            const changed = await tx.update(threads).set({ status: 'closed' })
+              .where(and(eq(threads.id, args.threadId), eq(threads.status, thread.status)))
+              .returning({ id: threads.id })
+            closed = changed.length > 0
+            // The marker only when the close is ours. If someone else closed it, they
+            // raised it; raising it again would be harmless but claiming it here would
+            // make the marker look like a consequence of this statement, which it is not.
+            if (closed) await markProjectKnowledgeDirty(tx, ctx.projectId)
+          }
         })
+      }
+      if (closed) {
         // Recipients who still had unread in this thread - they may now be caught up.
         const affected = await db.selectDistinct({ agentId: messageRecipients.agentId })
           .from(messageRecipients)
@@ -1196,7 +1384,20 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
           if (await openUnreadCount(db, a.agentId) === 0) await settleCaughtUp(db, a.agentId)
         }
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, threadId: thread.id, status: 'closed' }) }] }
+      return {
+        content: [{
+          type: 'text' as const,
+          text: JSON.stringify({
+            ok: true,
+            threadId: thread.id,
+            status: 'closed',
+            // Present whenever a lesson was offered, absent when none was. A refusal is
+            // reported here rather than as an error because the close succeeded - see
+            // LessonOutcome for why those two must not be collapsed.
+            ...(lessonOutcome ? { lesson: lessonOutcome } : {}),
+          }),
+        }],
+      }
     },
   )
 

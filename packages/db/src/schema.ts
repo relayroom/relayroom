@@ -69,7 +69,11 @@ export const projects = pgTable('project', {
   // (hand-edited SQL), the resolver reports it as unresolvable and the write fails
   // closed; it is not silently ignored, because a protection that stops applying
   // without saying so is the failure this shape exists to prevent.
-  knowledgeConfig: jsonb('knowledge_config').$type<{ kDistinctIssuers?: number; windowDays?: number; dynamicFactsBlock?: boolean; retentionDays?: number; redactionRules?: RedactionRule[] }>()
+  // `distillOnClose` is ABSENT-MEANS-ON: every project today has `{}`, and a feature
+  // that only works for projects that opted in after the fact is a feature nobody has.
+  // Stored only when an owner turns it off, which is also why the read tests `=== false`
+  // rather than truthiness - `undefined` and `false` must not mean the same thing.
+  knowledgeConfig: jsonb('knowledge_config').$type<{ kDistinctIssuers?: number; windowDays?: number; dynamicFactsBlock?: boolean; retentionDays?: number; redactionRules?: RedactionRule[]; distillOnClose?: boolean }>()
     .notNull().default(sql`'{}'::jsonb`),
   // Durable trigger for the extractor. A thread going closed/answered sets this to
   // now(); the leased sweep claims projects where it is not null, snapshots the
