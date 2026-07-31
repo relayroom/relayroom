@@ -14,7 +14,7 @@
  * action calls the shared resolver instead of checking rules itself.
  */
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest"
-import { eq } from "drizzle-orm"
+import { eq, sql } from "drizzle-orm"
 
 let actingUserId = "rd-owner"
 
@@ -23,6 +23,7 @@ vi.mock("@/lib/auth-session", async (importOriginal) => {
   return { ...actual, getServerSession: vi.fn(async () => ({ user: { id: actingUserId } })) }
 })
 
+import { resolveRedactionRules } from "@relayroom/shared"
 import { db } from "@/lib/db"
 import { projects, projectAccess } from "@relayroom/db/schema"
 import { better_auth_user, better_auth_organization, better_auth_member } from "@relayroom/db/auth-schema"
@@ -39,9 +40,13 @@ async function seedMember(id: string) {
   await db.insert(better_auth_member).values({ id: `m-${id}`, organizationId: ORG, userId: id, role: "member", createdAt: new Date() }).onConflictDoNothing()
 }
 
-async function storedRules(): Promise<unknown> {
+async function storedConfig(): Promise<Record<string, unknown>> {
   const [p] = await db.select({ c: projects.knowledgeConfig }).from(projects).where(eq(projects.id, projectId))
-  return (p?.c as { redactionRules?: unknown } | null)?.redactionRules
+  return (p?.c ?? {}) as Record<string, unknown>
+}
+
+async function storedRules(): Promise<unknown> {
+  return (await storedConfig()).redactionRules
 }
 
 beforeEach(async () => {
@@ -99,6 +104,42 @@ describe("saveRedactionRules", () => {
     // The previous configuration is still the one in force. A refused save must not
     // leave the project with neither the old rules nor the new ones.
     expect(await storedRules()).toEqual([{ kind: "literal", value: "acme-internal" }])
+  })
+
+  it("frees a project whose config still holds the legacy key", async () => {
+    // The recovery path, and the reason it is a release blocker rather than tidiness.
+    // The resolver refuses any project whose config carries `redactionPatterns`, and
+    // refusing means every knowledge write for that project fails closed. This save is
+    // the only remedy the product offers, and the card tells the owner it replaces
+    // those settings - so the assertion is that the resolver actually passes
+    // afterwards, not that the key is gone. Gone-from-the-column is the mechanism; the
+    // thing that was broken is that writers stayed blocked.
+    // Seeded through raw SQL because the typed setter will not accept it: the key was
+    // deleted from the column's TypeScript shape when the rule union replaced it. That
+    // is the situation being tested rather than an obstacle to it - the rows that carry
+    // this key predate the type, and a type is a claim about what should be in a JSONB
+    // column, never a check of what is.
+    await db
+      .update(projects)
+      .set({
+        knowledgeConfig: sql`'{"redactionPatterns":["ACME"],"distillOnClose":true}'::jsonb`,
+      })
+      .where(eq(projects.id, projectId))
+
+    // Precondition, stated as a check rather than assumed. Without it a resolver that
+    // stopped refusing the legacy key for any other reason would leave this test green
+    // while proving nothing.
+    expect(resolveRedactionRules(await storedConfig()).unresolved).not.toEqual([])
+
+    const res = await saveRedactionRules(projectId, [{ kind: "literal", value: "acme-internal" }])
+
+    expect(res.result).toBe(true)
+    expect(resolveRedactionRules(await storedConfig()).unresolved).toEqual([])
+
+    // The removal is scoped to the legacy key. `distillOnClose` gains a write path in
+    // this release, so a save that cleared the column wholesale would silently undo a
+    // setting the owner made on another screen.
+    expect((await storedConfig()).distillOnClose).toBe(true)
   })
 
   it("accepts an empty denylist, which is how redaction gets turned off", async () => {

@@ -54,11 +54,31 @@ import { markProjectKnowledgeDirty } from "@relayroom/db/knowledge"
 export async function mergeKnowledgeConfig(
   projectId: string,
   patch: Record<string, unknown>,
+  options?: {
+    /**
+     * Keys to DELETE from the column before the patch is merged in.
+     *
+     * Merging cannot express removal - `||` only ever adds or overwrites - so a key
+     * that must stop existing needs this. Overwriting it with null would not do: the
+     * key would still be present, and a resolver that refuses on presence would go on
+     * refusing.
+     *
+     * Removed before the merge, so a key named in both is set by the patch rather than
+     * deleted by this.
+     */
+    removeKeys?: string[]
+  },
 ): Promise<void> {
+  const removeKeys = options?.removeKeys ?? []
+
   await db.transaction(async (tx) => {
+    let config = sql`${projects.knowledgeConfig}`
+    for (const key of removeKeys) config = sql`${config} - ${key}::text`
+    config = sql`${config} || ${JSON.stringify(patch)}::jsonb`
+
     await tx
       .update(projects)
-      .set({ knowledgeConfig: sql`${projects.knowledgeConfig} || ${JSON.stringify(patch)}::jsonb` })
+      .set({ knowledgeConfig: config })
       .where(eq(projects.id, projectId))
 
     await markProjectKnowledgeDirty(tx, projectId)

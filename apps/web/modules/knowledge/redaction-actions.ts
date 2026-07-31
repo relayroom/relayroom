@@ -55,7 +55,25 @@ export async function saveRedactionRules(
     // Merged, not written whole: this is one key of a JSONB column that carries other
     // settings. Marks the project for re-distillation in the same transaction - see
     // mergeKnowledgeConfig for why both properties are load-bearing.
-    await mergeKnowledgeConfig(projectId, { redactionRules: rules })
+    //
+    // AND DELETES THE LEGACY KEY, which is what makes this save a way out rather than a
+    // dead end. The resolver refuses a project whose config still holds
+    // `redactionPatterns`, and refusing means every knowledge write for that project
+    // fails closed. This screen is the only thing that offers a fix, and it tells the
+    // owner that saving replaces those settings. Merge alone cannot replace anything -
+    // `||` adds and overwrites, so the legacy key would survive the save, the resolver
+    // would go on refusing, and the owner would have done exactly what they were told
+    // and seen a success toast with nothing changed.
+    //
+    // Deleting is right rather than migrating the old values across: the old shape was
+    // raw patterns, and turning those into the current rule union would mean this code
+    // deciding what an operator's regex was meant to match. The screen asks for the
+    // rules again instead, which is why its copy promises a replacement.
+    await mergeKnowledgeConfig(
+      projectId,
+      { redactionRules: rules },
+      { removeKeys: ["redactionPatterns"] },
+    )
 
     return { result: true }
   } catch (err) {
