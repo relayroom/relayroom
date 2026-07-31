@@ -1280,6 +1280,8 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
 
       const needsClose = thread.status !== 'closed' && thread.status !== 'canceled'
       let closed = false
+      /** The status this thread actually ends up in - reported, never assumed. */
+      let finalStatus = needsClose ? 'closed' : thread.status
       if (needsClose || lessonText) {
         // Close and raise the extractor marker in ONE transaction: a closed thread is
         // extractor input, so a close that committed without the marker would leave a
@@ -1287,14 +1289,58 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
         // is the single cross-package setter (@relayroom/db); it writes now() as the
         // transaction clock, so the two commit together or not at all. (FEAT-0004 L3.)
         await db.transaction(async (tx) => {
-          if (lessonText) {
-            // THE LESSON GOES FIRST, INSIDE A SAVEPOINT. First because it takes the
-            // watermark, and the watermark is what tells the sweep this thread is spoken
-            // for - taking it after the close would leave a window where the thread is
-            // closed, unclaimed, and extractable by a tick that runs in between. Inside a
-            // savepoint because a lesson that cannot be stored must not cost the caller
-            // their close: the close is what they asked for, the lesson is what they
-            // offered, and losing the first to save the second is backwards.
+          // THE STATUS CHANGE GOES FIRST, and the reason the old order was wrong is worth
+          // keeping. It used to write the lesson first, arguing that taking the watermark
+          // after the close "leaves a window where the thread is closed, unclaimed, and
+          // extractable". That window does not exist: both statements are in ONE
+          // transaction, so nothing outside sees either of them until commit, and at
+          // commit both are there. The ordering never bought what its comment claimed.
+          //
+          // What the order DOES decide is which facts this transaction gets to act on.
+          // Deciding `thread_canceled` from the pre-transaction read left a real hole:
+          // a cancellation committing in between meant the lesson and its watermark were
+          // already durable by the time the conditional update found zero rows, so a
+          // canceled thread ended up carrying a lesson - the one thing the refusal exists
+          // to prevent - and the response still said "closed". Review loop 14 found it.
+          // Doing the update first makes its own result the authority.
+          if (needsClose) {
+            // CONDITIONAL on the status we read. Another writer may have closed or
+            // canceled this thread since, and an unconditional update would turn their
+            // cancellation into a close.
+            const changed = await tx.update(threads).set({ status: 'closed' })
+              .where(and(eq(threads.id, args.threadId), eq(threads.status, thread.status)))
+              .returning({ id: threads.id })
+            closed = changed.length > 0
+            if (closed) {
+              finalStatus = 'closed'
+              // The marker only when the close is ours. If someone else closed it, they
+              // raised it; raising it again would be harmless but claiming it here would
+              // make the marker look like a consequence of this statement, which it is not.
+              await markProjectKnowledgeDirty(tx, ctx.projectId)
+            }
+            else {
+              // Zero rows means the status moved under us. Read what it moved TO, because
+              // that decides both the lesson and what we report - guessing "closed" here
+              // is what made the old response a lie.
+              const [now] = await tx.select({ status: threads.status })
+                .from(threads).where(eq(threads.id, args.threadId))
+              finalStatus = now?.status ?? thread.status
+            }
+          }
+          if (lessonText && finalStatus === 'canceled') {
+            // The refusal decided before the transaction, re-decided on the fact rather
+            // than on the stale read. Nothing has been claimed at this point, so the
+            // sweep is unaffected.
+            lessonOutcome = {
+              recorded: false,
+              code: 'thread_canceled',
+              reason: 'the thread was canceled while this close was being prepared; a cancellation is not a resolution to learn from',
+            }
+          }
+          else if (lessonText) {
+            // INSIDE A SAVEPOINT, because a lesson that cannot be stored must not cost the
+            // caller their close: the close is what they asked for, the lesson is what
+            // they offered, and losing the first to save the second is backwards.
             try {
               await tx.transaction(async (sp) => {
                 const claimed = await sp.execute<{ thread_id: string }>(sql`
@@ -1347,19 +1393,6 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
               lessonOutcome = { recorded: false, code: err.code, reason: err.reason }
             }
           }
-          if (needsClose) {
-            // CONDITIONAL on the status we read. Another writer may have closed or
-            // canceled this thread while we were preparing the lesson, and an
-            // unconditional update would turn their cancellation into a close.
-            const changed = await tx.update(threads).set({ status: 'closed' })
-              .where(and(eq(threads.id, args.threadId), eq(threads.status, thread.status)))
-              .returning({ id: threads.id })
-            closed = changed.length > 0
-            // The marker only when the close is ours. If someone else closed it, they
-            // raised it; raising it again would be harmless but claiming it here would
-            // make the marker look like a consequence of this statement, which it is not.
-            if (closed) await markProjectKnowledgeDirty(tx, ctx.projectId)
-          }
         })
       }
       if (closed) {
@@ -1390,7 +1423,10 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
           text: JSON.stringify({
             ok: true,
             threadId: thread.id,
-            status: 'closed',
+            // The status the thread IS IN, not the one this call asked for. It was
+            // hard-coded to 'closed', which was a lie for a thread another writer had
+            // canceled first - and the caller has no other way to find out.
+            status: finalStatus,
             // Present whenever a lesson was offered, absent when none was. A refusal is
             // reported here rather than as an error because the close succeeded - see
             // LessonOutcome for why those two must not be collapsed.

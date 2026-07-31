@@ -340,9 +340,16 @@ describe('close with a lesson - every refusal still closes the thread', () => {
  */
 describe('close with a lesson - the rules changing under the write', () => {
   async function withTrigger(body: string, fn: () => Promise<void>) {
+    // SCOPED TO THIS FILE'S PROJECT, and that is not tidiness. A trigger is database-wide
+    // and vitest runs files in parallel over one database, so an unguarded body fires on
+    // every other file's watermark inserts too - which is exactly what happened:
+    // extractor-stale-patterns failed in the full run and passed alone, because this
+    // trigger was rewriting ITS project's redaction rules mid-sweep.
     await rawSql.unsafe(`
       create or replace function cl_mutate() returns trigger as $$
-      begin ${body} return new; end $$ language plpgsql`)
+      begin
+        if new.project_id <> '${projectId}' then return new; end if;
+        ${body} return new; end $$ language plpgsql`)
     await rawSql.unsafe(`
       create trigger cl_mutate_trg after insert on thread_extraction
       for each row execute function cl_mutate()`)
@@ -377,13 +384,72 @@ describe('close with a lesson - the rules changing under the write', () => {
     expect(await rowsCiting(threadId)).toHaveLength(1)
   })
 
-  it('does not overwrite a status that changed while the lesson was being written', async () => {
-    // The conditional on the status update, reached the only way it can be from outside
-    // the process: the trigger cancels the thread AFTER this close read it as open, so
-    // the update finds a row that no longer matches and changes nothing. An
-    // unconditional update turns someone else's cancellation into a close, and this is
-    // the assertion that would notice.
-    const threadId = await openThread('a thread canceled mid-close')
+  it('refuses the lesson when a cancellation lands between the read and the transaction', async () => {
+    // THE WINDOW REVIEW LOOP 14 FOUND, reached the only way it can be from outside the
+    // process. `close` decides `thread_canceled` from a read taken before its transaction
+    // opens; a cancellation committing in that gap used to leave the lesson and its
+    // watermark durable, the conditional update finding zero rows, and the response
+    // reporting "closed" over a canceled thread.
+    //
+    // The hook is `touchAgent`, which UPDATEs the agent row inside the pre-transaction
+    // refusal block. THE COUNTER IS NOT DECORATION: the auth path calls touchAgent too,
+    // BEFORE the tool handler reads the thread, so a trigger that fires on the first
+    // update cancels the thread before the read and the close then refuses through the
+    // ordinary pre-transaction branch. The test passes either way and proves nothing -
+    // which the mutation control caught, and which is the same "the name says it reached
+    // the window" failure this round has now produced four times. Firing on the SECOND
+    // update puts the cancellation after the read and before the transaction.
+    const threadId = await openThread('a thread canceled between the read and the write')
+    await rawSql.unsafe('drop sequence if exists cl_touch_seq')
+    await rawSql.unsafe('create sequence cl_touch_seq')
+    await rawSql.unsafe(`
+      create or replace function cl_cancel() returns trigger as $$
+      begin
+        -- Same scoping rule as cl_mutate: this fires on every agent row in the database,
+        -- so anything it does has to be keyed to this file's own project.
+        if new.project_id <> '${projectId}' then return new; end if;
+        if nextval('cl_touch_seq') >= 2 then
+          update thread set status = 'canceled'
+           where id = '${threadId}' and status <> 'canceled';
+        end if;
+        return new;
+      end $$ language plpgsql`)
+    await rawSql.unsafe(`
+      create trigger cl_cancel_trg after update on agent
+      for each row execute function cl_cancel()`)
+    try {
+      const res = await closeWith(threadId, LESSON)
+      expect(res.lesson).toMatchObject({ recorded: false, code: 'thread_canceled' })
+      // The reason distinguishes this from the pre-transaction refusal, so a test that
+      // reached the wrong window cannot pass by landing on the other branch.
+      expect((res.lesson as { reason: string }).reason).toMatch(/while this close was being prepared/)
+      // And the response says what the thread IS, not what the call asked for.
+      expect(res.status).toBe('canceled')
+    }
+    finally {
+      await rawSql.unsafe('drop trigger if exists cl_cancel_trg on agent')
+      await rawSql.unsafe('drop function if exists cl_cancel()')
+      await rawSql.unsafe('drop sequence if exists cl_touch_seq')
+    }
+
+    expect(await statusOf(threadId)).toBe('canceled')
+    expect(await rowsCiting(threadId)).toHaveLength(0)
+    // Nothing was claimed, so the thread is not foreclosed - though a canceled thread is
+    // not extractable either, which is the point of refusing rather than storing.
+    const marks = await db.select().from(threadExtractions)
+      .where(eq(threadExtractions.threadId, threadId))
+    expect(marks).toHaveLength(0)
+  })
+
+  it('keeps a lesson when the cancellation lands after the close committed its status', async () => {
+    // The other side of the same boundary, and the reason the test above is not just
+    // "cancellation always wins": once this close has changed the status, the thread WAS
+    // resolved and the lesson is legitimate. A later cancellation is a different writer's
+    // decision about a closed thread, not a refusal of ours.
+    //
+    // The trigger fires on the watermark insert, which the reorder put AFTER the status
+    // update - so this reaches the second half of the window rather than the first.
+    const threadId = await openThread('a thread canceled after it was closed')
     await withTrigger(
       `update thread set status = 'canceled' where id = new.thread_id;`,
       async () => {
@@ -392,6 +458,7 @@ describe('close with a lesson - the rules changing under the write', () => {
       },
     )
     expect(await statusOf(threadId)).toBe('canceled')
+    expect(await rowsCiting(threadId)).toHaveLength(1)
   })
 
   it('is not disturbed by a project update that changes no redaction rule', async () => {
