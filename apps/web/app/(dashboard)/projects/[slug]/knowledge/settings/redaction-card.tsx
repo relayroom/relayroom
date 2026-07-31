@@ -111,7 +111,13 @@ export function RedactionCard({
     }
   }
 
-  const tooShort = literals.filter((l) => l.length < MIN_LITERAL_LENGTH)
+  // Code POINTS, matching the resolver, which counts them deliberately: `.length` is
+  // UTF-16 units, so two astral characters clear a floor of four. Counting units here
+  // would not loosen the floor - the resolver still refuses - it would move the refusal
+  // to the server, after the owner had been shown the literal as acceptable, with a
+  // rejection they have no way to explain. The screen is allowed to be stricter than
+  // the boundary; it must never look more permissive than it.
+  const tooShort = literals.filter((l) => [...l].length < MIN_LITERAL_LENGTH)
 
   return (
     <section className="space-y-4 rounded-lg border border-border p-4">
