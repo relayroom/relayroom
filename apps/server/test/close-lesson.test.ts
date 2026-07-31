@@ -292,6 +292,22 @@ describe('close with a lesson - every refusal still closes the thread', () => {
     expect(await rowsCiting(threadId)).toHaveLength(1)
   })
 
+  it('gives one of two concurrent closes the lesson and the other a refusal', async () => {
+    // The contended case, run concurrently rather than reasoned about: the watermark's
+    // primary key is what decides it, so one insert waits for the other to commit and
+    // then finds a conflict. Both closes succeed; exactly one lesson exists.
+    const threadId = await openThread('a thread two agents closed at once')
+    const [a, b] = await Promise.all([
+      closeWith(threadId, LESSON),
+      closeWith(threadId, { ...LESSON, title: 'the other agent\'s version' }),
+    ])
+    const outcomes = [a.lesson, b.lesson]
+    expect(outcomes.filter(o => o?.recorded === true)).toHaveLength(1)
+    expect(outcomes.filter(o => o?.recorded === false)).toMatchObject([{ code: 'already_decided' }])
+    expect(await rowsCiting(threadId)).toHaveLength(1)
+    expect(await statusOf(threadId)).toBe('closed')
+  })
+
   it('does not share the learn ceiling', async () => {
     // Separate limiters, because the two are bounded by different things: `learn` is
     // bounded by an agent's willingness to call it, which a loop removes, while a
