@@ -231,9 +231,15 @@ importers:
         specifier: ^3.4.9
         version: 3.4.9
     devDependencies:
+      '@types/pg':
+        specifier: ^8.20.0
+        version: 8.20.0
       drizzle-kit:
         specifier: ^0.31.10
         version: 0.31.10
+      pg:
+        specifier: ^8.21.0
+        version: 8.21.0
       tsx:
         specifier: ^4.22.4
         version: 4.22.4

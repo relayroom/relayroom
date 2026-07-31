@@ -25,6 +25,7 @@ import { and, desc, eq, gt, inArray, sql } from 'drizzle-orm'
 import { redact, REDACTION_INPUT_SNAPSHOT, REDACTION_INPUT_SNAPSHOT_P, reportSkippedPatterns, resolveRedactionRules, skippedPatterns } from '@relayroom/shared'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 import type { PgDatabase } from 'drizzle-orm/pg-core'
+import { firstRow } from './execute'
 import {
   knowledge,
   knowledgeAudits,
@@ -629,11 +630,11 @@ export async function proposeKnowledgeDiff(
   // and is idempotent only on a PENDING signature - so a proposal skipped now is proposed
   // again from the same events once the configuration resolves, as long as the events are
   // still inside the window.
-  const [proj] = await db.execute<{
+  const proj = firstRow<{
     config: { redactionRules?: unknown; redactionPatterns?: unknown } | null
-  }>(sql`
+  }>(await db.execute(sql`
     select knowledge_config as config from ${projects} where ${projects.id} = ${input.projectId}
-  `)
+  `))
   const { patterns, unresolved } = resolveRedactionRules(proj?.config)
   if (unresolved.length > 0) {
     console.warn(
@@ -752,14 +753,14 @@ export async function decideProposal(
       // anything unresolvable rather than storing under a rule that is not applied, and
       // carry the snapshot onto the insert so the rules cannot change between reading them
       // and writing the row.
-      const [proj] = await tx.execute<{
+      const proj = firstRow<{
         config: { redactionRules?: unknown; redactionPatterns?: unknown } | null
         snapshot: string
-      }>(sql`
+      }>(await tx.execute(sql`
         select knowledge_config as config,
                ${sql.raw(REDACTION_INPUT_SNAPSHOT)} as snapshot
           from ${projects} where ${projects.id} = ${input.projectId}
-      `)
+      `))
       const { patterns, unresolved } = resolveRedactionRules(proj?.config)
       if (unresolved.length > 0) {
         return { ok: false, reason: 'redaction_unresolvable', unresolved: unresolved.map(u => u.reason) }
@@ -768,7 +769,7 @@ export async function decideProposal(
       const body = redact(change.body ?? '', patterns).text
       reportSkippedPatterns(input.projectId, 'proposer', skippedPatterns(patterns))
 
-      const [row] = await tx.execute<{ id: string }>(sql`
+      const row = firstRow<{ id: string }>(await tx.execute(sql`
         insert into ${knowledge} (project_id, kind, title, body, source_kind, validation_state)
         select ${input.projectId}, ${change.kind ?? 'pitfall'}, ${title}, ${body},
                'proposer', 'candidate'
@@ -778,7 +779,7 @@ export async function decideProposal(
                     and ${sql.raw(REDACTION_INPUT_SNAPSHOT_P)} = ${proj?.snapshot ?? ''}
                )
         returning id
-      `)
+      `))
       if (!row) {
         // The rules changed between the read above and this insert. Nothing is written and
         // the proposal stays pending, so the decision can be retried under the new rules.
