@@ -318,6 +318,15 @@ async function extractProject(
         where te.project_id = ${projectId} and te.thread_id = ${threads.id}
       )`,
     ))
+    // OLDEST FIRST, and this is a property rather than tidiness. A tick can stop
+    // part-way - a rule change caught at the claim leaves the remaining threads for the
+    // next one - so this order decides WHICH threads get written before the stop. Without
+    // it that was whatever order the heap happened to return, which also means a test can
+    // depend on insertion order and be right most of the time; review loop 9 flagged
+    // exactly that assumption in extractor-stale-patterns and it was left standing.
+    // `id` breaks ties: uuidv7 is time-ordered, so it agrees with created_at rather than
+    // fighting it.
+    .orderBy(threads.createdAt, threads.id)
 
   let written = 0
   for (const thread of eligible) {
