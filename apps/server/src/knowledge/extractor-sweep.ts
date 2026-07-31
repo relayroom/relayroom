@@ -349,18 +349,21 @@ async function extractProject(
     //   we claim first      -> purge waits, then its scan finds and removes our row
     // `do nothing` also means we can never revert a `purged` mark back to `extracted`.
     //
-    // The `not exists` on knowledge is CARRIED OVER from the check this replaces, and
-    // what it is actually for was settled by mutation-testing rather than by argument.
-    // Disabling it alone changes nothing; disabling the claim alone changes nothing;
-    // only disabling BOTH resurrects a purged candidate. So:
-    //   - THE CLAIM is the resurrection protection. This clause is not.
-    //   - This clause's one independent job is the `learn` race: `learn` inserts a row
-    //     citing this thread WITHOUT taking our advisory lock (mcp.ts learn tool), so a
-    //     `learn` committing between the eligibility query and here is skipped only
-    //     because of this. Nothing else covers that.
-    // Which means removing it - as the extraction-quality design will, moving to
-    // watermark-only - costs exactly the `learn` race guard and nothing else. Solve
-    // that race in the same change; do not just delete the line.
+    // The `not exists` on knowledge that used to sit here IS GONE (0.6.0), and this
+    // paragraph is kept because the argument for restoring it is persuasive and wrong.
+    // It read: the clause's one independent job is the `learn` race - a `learn` committing
+    // between the eligibility query and this claim is skipped only because of it - so
+    // removing it costs that guard and nothing else, solve the race in the same change.
+    //
+    // Every sentence of that is true except the last. Both rows appearing is not a defect:
+    // a `learn` row is a CITATION, and this claim records a DECISION. Migration 0022's
+    // backfill already excluded `learn` rows for that reason, and the release contract
+    // allows a `learn` row and an extracted candidate to cite one thread. Restoring the
+    // clause as a "race fix" re-suppresses extraction for any thread an agent happened to
+    // mention, which is the behaviour 0.6.0 removed on purpose.
+    //
+    // See the file header for the whole account, including what it cost on an existing
+    // installation (8 threads, counted).
     //
     // The ownership `exists` is not ceremony either: the thread could have been
     // deleted since the eligibility query, and an FK violation here would abort the

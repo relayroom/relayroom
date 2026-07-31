@@ -56,9 +56,11 @@ export const projects = pgTable('project', {
   // dynamicFactsBlock gates the served-playbook block. Empty object = every default
   // applies.
   //
-  // redactionRules is the secret/PII denylist the extractor and `learn` apply BEFORE
-  // writing a row - a matched span is dropped, never stored. It is a UNION, not a list
-  // of regexes, and that is the point: a `literal` is escaped by the server and a
+  // redactionRules is the secret/PII denylist every durable text write applies BEFORE
+  // writing a row - a matched span is dropped, never stored. (The writers are enumerated
+  // in packages/shared/src/redaction.ts; this line named two of them for two releases
+  // while the set grew to six, which is why it now points at the list instead of
+  // repeating it.) It is a UNION, not a list of regexes, and that is the point: a `literal` is escaped by the server and a
   // `detector` is resolved from our own catalogue, so **no operator-authored regex is
   // ever compiled**. `RedactionRule` and the resolver live in @relayroom/shared, where
   // the dashboard that writes this and the server that compiles it read the same rule.

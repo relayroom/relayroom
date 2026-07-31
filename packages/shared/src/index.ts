@@ -19,8 +19,10 @@ export * from './oauth'
 // the server compiles it, and two copies of that rule is two rules.
 export * from './redaction-rules'
 
-// Applying the denylist. In shared because FOUR writers need it, one of them in
-// packages/db - see the file header.
+// Applying the denylist. In shared because writers in three packages need it - see the
+// file header for the count, which is kept in ONE place on purpose: this line said FOUR
+// while the path union had five, and a cardinality repeated in three files is three
+// chances to be stale.
 export * from './redaction'
 export * from './redaction-snapshot'
 

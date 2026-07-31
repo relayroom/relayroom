@@ -15,10 +15,22 @@
  * record the shape and position of the secret and, worse, imply the redaction was
  * lossless when the point is that the sensitive bytes never touch the table.
  *
- * Applied by BOTH the extractor and the `learn` tool before any row is written -
- * the extractor because it reads raw thread text, `learn` because a human pasting a
- * lesson can paste a secret with it. A denylist on only one of the two write paths
- * is a denylist with a hole.
+ * THE WRITERS, and this list is the one place the count is stated - it said "BOTH the
+ * extractor and `learn`" for two releases while the set kept growing, and each stale copy
+ * elsewhere was a reader's reason to stop enumerating. Every durable text stage:
+ *
+ *   1. the extractor sweep        - reads raw thread text
+ *   2. `learn`                    - a human pasting a lesson can paste a secret with it
+ *   3. `close` with a `lesson`    - same text, offered at the moment the thread resolves
+ *   4. proposal creation          - `knowledge_proposal` is a display surface a human reads
+ *   5. proposal approval          - writes `knowledge`, and re-applies current rules
+ *   6. playbook approval          - `playbook_version` and `project.relayroom_md`, the
+ *                                   file every agent in the project reads
+ *
+ * Six, not four, and the sixth was found by review loop 14 storing text no rule had ever
+ * touched. If you are adding a seventh, add it here and to `reportSkippedPatterns`'s
+ * `path` union - and read that union's comment before assuming the compiler will remind
+ * you.
  *
  * Pure and config-driven: the patterns come from the project's knowledgeConfig; this
  * only applies them. Invalid patterns are skipped, not thrown - one malformed regex
@@ -135,9 +147,16 @@ export function skippedPatterns(patterns: readonly string[]): SkippedPattern[] {
  */
 export function reportSkippedPatterns(
   projectId: string,
-  /** Every path that writes knowledge. Adding a writer means adding it here, and the
-   *  compiler is what enforces that - `decideProposal` was a writer for two releases
-   *  without appearing in any list like this one. */
+  /**
+   * Which writer is reporting. NOT A COMPLETE WRITER LIST AND NOT COMPILER-ENFORCED,
+   * which an earlier version of this comment claimed: the union constrains callers that
+   * already call this function, so a new writer that never calls it compiles perfectly.
+   * `decideProposal` was a writer for two releases without appearing in any list like
+   * this one, and it would still not appear if it had simply not called here.
+   *
+   * The enumeration that IS meant to be complete is in this file's header. This union is
+   * a label for the log line.
+   */
   path: 'learn' | 'extractor' | 'proposer_create' | 'proposer' | 'close',
   skipped: readonly SkippedPattern[],
 ): void {
