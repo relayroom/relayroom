@@ -14,6 +14,23 @@ export * from './agent-colors'
 // enforcer (server), which must not disagree on it.
 export * from './oauth'
 
+// Redaction rules: the stored shape, the detector catalogue, and the one function
+// that turns configuration into patterns. Shared because the dashboard writes it and
+// the server compiles it, and two copies of that rule is two rules.
+export * from './redaction-rules'
+
+// Applying the denylist. In shared because writers in three packages need it - see the
+// file header for the count, which is kept in ONE place on purpose: this line said FOUR
+// while the path union had five, and a cardinality repeated in three files is three
+// chances to be stale.
+export * from './redaction'
+export * from './redaction-snapshot'
+
+// The outcome of a lesson carried by `close` - a union so a refusal can never be read
+// as a success. See the file header for why all eight refusals leave the close itself
+// successful.
+export * from './lesson-outcome'
+
 // ── Attention signal ─────────────────────────────────────────────────────────
 
 /**

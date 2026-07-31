@@ -1,3 +1,4 @@
+import type { RedactionRule } from '@relayroom/shared'
 import { eq, isNotNull, sql } from 'drizzle-orm'
 import { afterAll, describe, expect, it } from 'vitest'
 import { createDb } from '../src/client'
@@ -106,18 +107,30 @@ describe('extractor marker (project.knowledge_dirty_at)', () => {
     expect(await dirtyAt(project.id)).not.toBeNull() // the re-dirty survives for the next sweep
   })
 
-  it('round-trips a redaction denylist through knowledge_config', async () => {
+  it('round-trips redaction rules through knowledge_config', async () => {
     // The field the extractor/learn redaction reads. It is jsonb, so this is a
-    // type-only addition - the migration adds no column for it - and regex
-    // metacharacters must survive the round trip intact.
+    // type-only addition - the migration adds no column for it - and the union's
+    // discriminant plus a detector version must survive the round trip intact.
+    //
+    // This test used to store `redactionPatterns: string[]`. That key is gone: it
+    // never had a write path, so nothing could be holding a value, and a bare string
+    // array meant the server compiled whatever was in the column. The union is what
+    // makes "no operator regex reaches the engine" a property of the data.
     const project = await getOrCreateProject(db, 'ext-denylist')
-    const patterns = ['sk-[A-Za-z0-9]{20,}', '\\d{3}-\\d{2}-\\d{4}']
+    const rules: RedactionRule[] = [
+      { kind: 'literal', value: 'ACME-INTERNAL-TOKEN' },
+      { kind: 'detector', id: 'aws-access-key', v: 2 },
+    ]
     await db.update(projects)
-      .set({ knowledgeConfig: { retentionDays: 14, redactionPatterns: patterns } })
+      .set({ knowledgeConfig: { retentionDays: 14, redactionRules: rules } })
       .where(eq(projects.id, project.id))
     const [row] = await db.select({ c: projects.knowledgeConfig }).from(projects).where(eq(projects.id, project.id))
-    expect(row!.c.redactionPatterns).toEqual(patterns)
+    expect(row!.c.redactionRules).toEqual(rules)
     expect(row!.c.retentionDays).toBe(14)
+    // The version is a number after the round trip, not a string. A detector pinned to
+    // "2" would miss the catalogue entry keyed by 2 and fail closed, which is a loud
+    // failure for a silent cause - worth pinning here rather than discovering there.
+    expect(typeof (row!.c.redactionRules![1] as { v: number }).v).toBe('number')
   })
 
   it('lets a sweep claim exactly the dirty projects', async () => {

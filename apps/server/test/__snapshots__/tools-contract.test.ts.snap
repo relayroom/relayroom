@@ -22,12 +22,44 @@ exports[`MCP tool contract > advertises stable descriptions and input schemas 1`
     "name": "ack",
   },
   {
-    "description": "Close a thread once it is resolved (a question answered, a task acknowledged). A closed thread leaves every inbox and NEVER wakes its participants again - this is how you end a conversation. Close early and often; an open thread keeps pinging. If there is genuinely new work, open a new thread with send instead of reopening.",
+    "description": "Close a thread once it is resolved (a question answered, a task acknowledged). A closed thread leaves every inbox and NEVER wakes its participants again - this is how you end a conversation. Close early and often; an open thread keeps pinging. If there is genuinely new work, open a new thread with send instead of reopening. If the thread taught something durable, pass \`lesson\` and it is recorded as a candidate citing this thread - closing is the one moment when what the thread was for is still in front of you. Do NOT call learn afterwards for the same thread; the lesson is already claimed and a second write would duplicate it. The response reports whether it was stored.",
     "execution": {
       "taskSupport": "forbidden",
     },
     "inputSchema": {
       "properties": {
+        "lesson": {
+          "description": "What this thread taught, if anything durable. Recorded as a candidate citing this thread. Write the LESSON, not the evidence: what someone should do differently, not a transcript.",
+          "properties": {
+            "body": {
+              "description": "The lesson itself - what to do or avoid next time",
+              "maxLength": 4000,
+              "minLength": 1,
+              "type": "string",
+            },
+            "kind": {
+              "enum": [
+                "fact",
+                "convention",
+                "pitfall",
+                "decision",
+              ],
+              "type": "string",
+            },
+            "title": {
+              "description": "One line naming what was learned",
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string",
+            },
+          },
+          "required": [
+            "title",
+            "body",
+            "kind",
+          ],
+          "type": "object",
+        },
         "threadId": {
           "description": "UUID of the thread to close",
           "type": "string",

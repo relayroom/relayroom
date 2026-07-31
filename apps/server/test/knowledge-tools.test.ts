@@ -10,7 +10,7 @@
  */
 import { randomBytes } from 'node:crypto'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { agents, knowledge, projectAccess, projects, recallLogs, threads } from '@relayroom/db'
 import { INTERNAL_AGENT_CLIENT_ID, projectScope } from '@relayroom/shared'
 import postgres from 'postgres'
@@ -209,7 +209,9 @@ describe('learn', () => {
     // The learn path is not exempt from the denylist - a human can paste a secret.
     // Set a project denylist, then confirm the stored candidate has the span dropped.
     await db.update(projects)
-      .set({ knowledgeConfig: { redactionPatterns: ['sk-[a-z0-9]+'] } })
+      // A literal rule, not a regex: the operator can no longer author one, so the
+      // test configures what the product can actually store.
+      .set({ knowledgeConfig: { redactionRules: [{ kind: 'literal', value: 'sk-deadbeef' }] } })
       .where(eq(projects.id, projectId))
     try {
       const r = await learn({
@@ -229,7 +231,7 @@ describe('learn', () => {
 
   it('rejects a learn whose body redacts away to nothing', async () => {
     await db.update(projects)
-      .set({ knowledgeConfig: { redactionPatterns: ['sk-\\w+'] } })
+      .set({ knowledgeConfig: { redactionRules: [{ kind: 'literal', value: 'sk-onlysecret' }] } })
       .where(eq(projects.id, projectId))
     try {
       const r = await learn({ title: 't', body: 'sk-onlysecret', kind: 'fact' })

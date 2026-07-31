@@ -37,6 +37,7 @@ import {
   projectAccess,
   projects,
   recallLogs,
+  threadExtractions,
   threads,
   touchAgent,
   authSchema,
@@ -63,7 +64,9 @@ import { shouldWake } from '../wake/issuance'
 import { isWakeBudgetEnabled } from '../wake/flag'
 import { CapabilityError, getCapabilities, resolveUrgent } from '../priority/capability'
 import { seedOwnerWakeBudget } from '../budget/seed-owner-budget'
-import { redact } from '../knowledge/redaction'
+import type { LessonOutcome, LessonRefusalCode } from '@relayroom/shared'
+import { redact, REDACTION_INPUT_SNAPSHOT, REDACTION_INPUT_SNAPSHOT_P, reportSkippedPatterns, resolveRedactionRules } from '@relayroom/shared'
+
 import { markProjectKnowledgeDirty, recordKnowledgeSignal } from '@relayroom/db'
 import { tokenScopeAllowsProject } from '../lib/token-scope'
 
@@ -453,6 +456,44 @@ const LEARN_PER_AGENT_HOURLY = 20
 const LEARN_WINDOW_MS = 60 * 60_000
 const learnCalls = new Map<string, number[]>()
 
+/**
+ * Ceiling on close-carried lessons per agent per hour, separate from `learn`'s.
+ *
+ * Separate because the two are bounded by different things: `learn` is bounded by an
+ * agent's willingness to call it, which a loop removes, while a close-carried lesson is
+ * bounded by closes - an agent cannot close more threads than exist. Sharing the ceiling
+ * would mean a busy day of closing silently costs us knowledge, which is the failure this
+ * whole feature exists to fix.
+ *
+ * The number is a starting guess like `learn`'s, not a measured one. It is higher because
+ * closing thirty threads in an hour is ordinary work while calling `learn` thirty times is
+ * usually a loop.
+ */
+const CLOSE_LESSON_PER_AGENT_HOURLY = 60
+
+/**
+ * A lesson refusal raised from inside the savepoint, so that throwing it both rolls the
+ * claim back and carries the code out. A returned value could not do the first, and a
+ * flag checked after the savepoint could not do it atomically.
+ */
+class LessonRefused extends Error {
+  constructor(readonly code: LessonRefusalCode, readonly reason: string) {
+    super(reason)
+  }
+}
+const closeLessonCalls = new Map<string, number[]>()
+
+function allowCloseLesson(agentId: string, now = Date.now()): boolean {
+  const seen = (closeLessonCalls.get(agentId) ?? []).filter(t => t > now - LEARN_WINDOW_MS)
+  if (seen.length >= CLOSE_LESSON_PER_AGENT_HOURLY) {
+    closeLessonCalls.set(agentId, seen)
+    return false
+  }
+  seen.push(now)
+  closeLessonCalls.set(agentId, seen)
+  return true
+}
+
 /** Records this call and reports whether it is within the ceiling. */
 function allowLearn(agentId: string, now = Date.now()): boolean {
   const seen = (learnCalls.get(agentId) ?? []).filter(t => t > now - LEARN_WINDOW_MS)
@@ -467,6 +508,7 @@ function allowLearn(agentId: string, now = Date.now()): boolean {
 
 /** Test-only: clear the per-agent windows so cases do not bleed into each other. */
 export function resetLearnRateLimit(): void {
+  closeLessonCalls.clear()
   learnCalls.clear()
 }
 
@@ -1151,9 +1193,20 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
     'Close a thread once it is resolved (a question answered, a task acknowledged). A closed thread '
       + 'leaves every inbox and NEVER wakes its participants again - this is how you end a conversation. '
       + 'Close early and often; an open thread keeps pinging. If there is genuinely new work, open a new '
-      + 'thread with send instead of reopening.',
+      + 'thread with send instead of reopening. If the thread taught something durable, pass `lesson` and '
+      + 'it is recorded as a candidate citing this thread - closing is the one moment when what the thread '
+      + 'was for is still in front of you. Do NOT call learn afterwards for the same thread; the lesson is '
+      + 'already claimed and a second write would duplicate it. The response reports whether it was stored.',
     {
       threadId: z.string().describe('UUID of the thread to close'),
+      lesson: z.object({
+        title: z.string().min(1).max(200).describe('One line naming what was learned'),
+        body: z.string().min(1).max(4000).describe('The lesson itself - what to do or avoid next time'),
+        kind: z.enum(['fact', 'convention', 'pitfall', 'decision']),
+      }).optional().describe(
+        'What this thread taught, if anything durable. Recorded as a candidate citing this thread. '
+        + 'Write the LESSON, not the evidence: what someone should do differently, not a transcript.',
+      ),
     },
     async (args) => {
       if (!isUuid(args.threadId)) {
@@ -1164,16 +1217,185 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
       if (!thread || thread.projectId !== ctx.projectId) {
         return { content: [{ type: 'text' as const, text: 'error: thread not found' }], isError: true }
       }
-      if (thread.status !== 'closed' && thread.status !== 'canceled') {
+      // EVERY EXPECTED REFUSAL IS DECIDED BEFORE THE TRANSACTION, so a refusal never leaves
+      // a claim behind. Each one returns a code; none of them fails the close, because
+      // closing is what the caller asked for and refusing it would be worse.
+      let lessonOutcome: LessonOutcome | null = null
+      let lessonText: { title: string; body: string } | null = null
+      let ruleSnapshot = ''
+      if (args.lesson) {
+        lessonOutcome = await (async (): Promise<LessonOutcome | null> => {
+          if (thread.status === 'canceled') {
+            return { recorded: false, code: 'thread_canceled', reason: 'a cancellation is not a resolution to learn from' }
+          }
+          if (!await canWriteKnowledge(db, ctx)) {
+            return { recorded: false, code: 'unauthorized', reason: 'this token may close threads but not write knowledge' }
+          }
+          const [proj] = await db.execute<{
+            config: { redactionRules?: unknown; redactionPatterns?: unknown; distillOnClose?: boolean } | null
+            snapshot: string
+          }>(sql`
+            select knowledge_config as config, ${sql.raw(REDACTION_INPUT_SNAPSHOT)} as snapshot
+              from ${projects} where ${projects.id} = ${ctx.projectId} limit 1
+          `)
+          if (proj?.config?.distillOnClose === false) {
+            return { recorded: false, code: 'distill_disabled', reason: 'this project does not store lessons at close' }
+          }
+          const { patterns, unresolved } = resolveRedactionRules(proj?.config)
+          if (unresolved.length > 0) {
+            return {
+              recorded: false,
+              code: 'redaction_unresolvable',
+              reason: `${unresolved.length} redaction rule(s) cannot be applied (${unresolved.map(u => u.reason).join(', ')})`,
+            }
+          }
+          const agent = await touchAgent(db, ctx.projectId, ctx.part)
+          if (!agent || !allowCloseLesson(agent.id)) {
+            return {
+              recorded: false,
+              code: 'rate_limited',
+              reason: `ceiling of ${CLOSE_LESSON_PER_AGENT_HOURLY} close-carried lessons per hour reached`,
+            }
+          }
+          const titleResult = redact(args.lesson!.title, patterns)
+          const bodyResult = redact(args.lesson!.body, patterns)
+          reportSkippedPatterns(ctx.projectId, 'close', [...titleResult.skipped, ...bodyResult.skipped])
+          const body = bodyResult.text.trim()
+          if (body === '') {
+            return { recorded: false, code: 'empty_after_redaction', reason: 'nothing was left of the body after redaction' }
+          }
+          // A title emptied by redaction falls back rather than refusing: a title is a
+          // label and the body is what makes it a lesson. The column has no non-empty
+          // check, so without this a titleless row is storable.
+          //
+          // DIVERGENCE FROM THE CONTRACT, reported rather than quietly matched: §4 lists
+          // the refusal codes and says nothing about the title, so an implementer either
+          // invents this or stores an empty string. The extractor already answers it the
+          // same way, which is why this follows the extractor rather than the document.
+          ruleSnapshot = proj?.snapshot ?? ''
+          lessonText = { title: titleResult.text.trim() === '' ? '(redacted)' : titleResult.text.trim(), body }
+          return null
+        })()
+      }
+
+      const needsClose = thread.status !== 'closed' && thread.status !== 'canceled'
+      let closed = false
+      /** The status this thread actually ends up in - reported, never assumed. */
+      let finalStatus = needsClose ? 'closed' : thread.status
+      if (needsClose || lessonText) {
         // Close and raise the extractor marker in ONE transaction: a closed thread is
         // extractor input, so a close that committed without the marker would leave a
         // thread that never becomes a candidate and never errors. markProjectKnowledgeDirty
         // is the single cross-package setter (@relayroom/db); it writes now() as the
         // transaction clock, so the two commit together or not at all. (FEAT-0004 L3.)
         await db.transaction(async (tx) => {
-          await tx.update(threads).set({ status: 'closed' }).where(eq(threads.id, args.threadId))
-          await markProjectKnowledgeDirty(tx, ctx.projectId)
+          // THE STATUS CHANGE GOES FIRST, and the reason the old order was wrong is worth
+          // keeping. It used to write the lesson first, arguing that taking the watermark
+          // after the close "leaves a window where the thread is closed, unclaimed, and
+          // extractable". That window does not exist: both statements are in ONE
+          // transaction, so nothing outside sees either of them until commit, and at
+          // commit both are there. The ordering never bought what its comment claimed.
+          //
+          // What the order DOES decide is which facts this transaction gets to act on.
+          // Deciding `thread_canceled` from the pre-transaction read left a real hole:
+          // a cancellation committing in between meant the lesson and its watermark were
+          // already durable by the time the conditional update found zero rows, so a
+          // canceled thread ended up carrying a lesson - the one thing the refusal exists
+          // to prevent - and the response still said "closed". Review loop 14 found it.
+          // Doing the update first makes its own result the authority.
+          if (needsClose) {
+            // CONDITIONAL on the status we read. Another writer may have closed or
+            // canceled this thread since, and an unconditional update would turn their
+            // cancellation into a close.
+            const changed = await tx.update(threads).set({ status: 'closed' })
+              .where(and(eq(threads.id, args.threadId), eq(threads.status, thread.status)))
+              .returning({ id: threads.id })
+            closed = changed.length > 0
+            if (closed) {
+              finalStatus = 'closed'
+              // The marker only when the close is ours. If someone else closed it, they
+              // raised it; raising it again would be harmless but claiming it here would
+              // make the marker look like a consequence of this statement, which it is not.
+              await markProjectKnowledgeDirty(tx, ctx.projectId)
+            }
+            else {
+              // Zero rows means the status moved under us. Read what it moved TO, because
+              // that decides both the lesson and what we report - guessing "closed" here
+              // is what made the old response a lie.
+              const [now] = await tx.select({ status: threads.status })
+                .from(threads).where(eq(threads.id, args.threadId))
+              finalStatus = now?.status ?? thread.status
+            }
+          }
+          if (lessonText && finalStatus === 'canceled') {
+            // The refusal decided before the transaction, re-decided on the fact rather
+            // than on the stale read. Nothing has been claimed at this point, so the
+            // sweep is unaffected.
+            lessonOutcome = {
+              recorded: false,
+              code: 'thread_canceled',
+              reason: 'the thread was canceled while this close was being prepared; a cancellation is not a resolution to learn from',
+            }
+          }
+          else if (lessonText) {
+            // INSIDE A SAVEPOINT, because a lesson that cannot be stored must not cost the
+            // caller their close: the close is what they asked for, the lesson is what
+            // they offered, and losing the first to save the second is backwards.
+            try {
+              await tx.transaction(async (sp) => {
+                const claimed = await sp.execute<{ thread_id: string }>(sql`
+                  insert into ${threadExtractions} (project_id, thread_id, reason)
+                  values (${ctx.projectId}, ${thread.id}, 'extracted')
+                  on conflict (project_id, thread_id) do nothing
+                  returning thread_id
+                `)
+                if (claimed.length === 0) {
+                  // Someone else got here: a sweep tick extracted it, or a purge marked it.
+                  // Either way this thread's knowledge is already decided and a second row
+                  // citing it would be the duplicate the watermark exists to prevent.
+                  throw new LessonRefused('already_decided',
+                    'this thread was already extracted or purged, so its lesson is already decided')
+                }
+                // 'extracted' rather than a third reason, because the column's check
+                // constraint admits two values and the sweep reads it as "decided, do not
+                // revisit" - which is exactly what a close-carried lesson makes true. A
+                // distinct reason would be a schema change whose only reader is a human.
+
+                // THE SAME COMPARISON THE SWEEP PUTS ON ITS CANDIDATE INSERT, for the same
+                // reason: the rules were read in a different statement, Read Committed gave
+                // that statement its own snapshot, and a settings save committing in between
+                // would leave this row redacted under rules the owner had already replaced.
+                // The guard rides on the write that stores the text, never on one beside it.
+                const stored = await sp.execute<{ id: string }>(sql`
+                  insert into ${knowledge} (project_id, kind, title, body, source_kind, source_refs, validation_state)
+                  select ${ctx.projectId}, ${args.lesson!.kind}, ${lessonText!.title}, ${lessonText!.body},
+                         'thread', ${JSON.stringify([{ threadId: thread.id }])}::jsonb, 'candidate'
+                   where exists (
+                           select 1 from ${projects} p
+                            where p.id = ${ctx.projectId}
+                              and ${sql.raw(REDACTION_INPUT_SNAPSHOT_P)} = ${ruleSnapshot}
+                         )
+                  returning id
+                `)
+                if (stored.length === 0) {
+                  throw new LessonRefused('storage_failed',
+                    'the project\'s redaction rules changed while this lesson was being written; nothing was stored')
+                }
+                lessonOutcome = { recorded: true, knowledgeId: stored[0]!.id }
+              })
+            }
+            catch (err) {
+              // The savepoint is already rolled back here, which is what makes the claim
+              // safe to take first: a refusal releases it, so the sweep can still extract
+              // this thread later. Only OUR refusals are swallowed - anything else is a
+              // real failure and must not be reported as a successful close.
+              if (!(err instanceof LessonRefused)) throw err
+              lessonOutcome = { recorded: false, code: err.code, reason: err.reason }
+            }
+          }
         })
+      }
+      if (closed) {
         // Recipients who still had unread in this thread - they may now be caught up.
         const affected = await db.selectDistinct({ agentId: messageRecipients.agentId })
           .from(messageRecipients)
@@ -1195,7 +1417,23 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
           if (await openUnreadCount(db, a.agentId) === 0) await settleCaughtUp(db, a.agentId)
         }
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, threadId: thread.id, status: 'closed' }) }] }
+      return {
+        content: [{
+          type: 'text' as const,
+          text: JSON.stringify({
+            ok: true,
+            threadId: thread.id,
+            // The status the thread IS IN, not the one this call asked for. It was
+            // hard-coded to 'closed', which was a lie for a thread another writer had
+            // canceled first - and the caller has no other way to find out.
+            status: finalStatus,
+            // Present whenever a lesson was offered, absent when none was. A refusal is
+            // reported here rather than as an error because the close succeeded - see
+            // LessonOutcome for why those two must not be collapsed.
+            ...(lessonOutcome ? { lesson: lessonOutcome } : {}),
+          }),
+        }],
+      }
     },
   )
 
@@ -1436,35 +1674,87 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
       // extractor uses. A human pasting a lesson can paste a secret with it, so the
       // learn path is not exempt (FEAT-0004 L3). A body redacted to nothing is
       // rejected rather than stored empty.
-      const [proj] = await db.select({ config: projects.knowledgeConfig })
-        .from(projects).where(eq(projects.id, ctx.projectId)).limit(1)
-      const patterns = proj?.config?.redactionPatterns ?? []
-      const title = redact(args.title, patterns).text
-      const body = redact(args.body, patterns).text
+      // The rules are read WITH the exact text Postgres renders for them, because the
+      // insert below has to prove it is still writing under the same ones - see there.
+      const [proj] = await db.execute<{
+        config: { redactionRules?: unknown; redactionPatterns?: unknown } | null
+        rules_text: string
+      }>(sql`
+        select knowledge_config as config,
+               ${sql.raw(REDACTION_INPUT_SNAPSHOT)} as rules_text
+          from ${projects} where ${projects.id} = ${ctx.projectId} limit 1
+      `)
+      // Same rule as the extractor: if any configured redaction rule cannot be
+      // resolved, refuse the write rather than storing under a protection that is not
+      // being applied. `learn` refuses loudly by design, so this fits the path it is on.
+      const { patterns, unresolved } = resolveRedactionRules(proj?.config)
+      if (unresolved.length > 0) {
+        return { content: [{ type: 'text' as const,
+          text: `error: this project has ${unresolved.length} redaction rule(s) that cannot be applied `
+            + `(${unresolved.map(u => u.reason).join(', ')}); nothing was recorded. `
+            + 'Re-save the project\'s redaction settings.' }], isError: true }
+      }
+      const titleResult = redact(args.title, patterns)
+      const bodyResult = redact(args.body, patterns)
+      const title = titleResult.text
+      const body = bodyResult.text
+      // A pattern that did not run is a secret the owner believes is being removed and
+      // is not. Skipping is correct - one bad regex must not break every write - but it
+      // has to be visible somewhere, and the only party who can see this is the operator
+      // reading logs. The pattern is the project's own config, so it is safe to print;
+      // the text it would have matched is not, and is not printed.
+      reportSkippedPatterns(ctx.projectId, 'learn', [...titleResult.skipped, ...bodyResult.skipped])
       if (body.trim() === '') {
         return { content: [{ type: 'text' as const,
           text: 'error: the body was empty after redaction; nothing was recorded' }], isError: true }
       }
 
-      const [row] = await db.insert(knowledge).values({
-        projectId: ctx.projectId,
-        kind: args.kind,
-        title,
-        body,
-        sourceKind: 'learn',
-        sourceRefs,
-        // ALWAYS candidate. There is no argument this tool can take, and no branch
-        // in it, that produces a trusted row: promotion is a separate ledgered
-        // transaction with a human or CI as the issuer. An agent asserting its own
-        // claim is trustworthy is the failure this whole design is built to avoid.
-        validationState: 'candidate',
-        createdByUserId: ctx.userId,
-      }).returning({ id: knowledge.id, validationState: knowledge.validationState })
+      // THE SAME GUARD THE SWEEP CARRIES, on the write whose content the rules decided.
+      // Between the read above and this insert, an owner can save new rules; this text was
+      // redacted under the old ones, and storing it would put a secret in the table that
+      // the current configuration was written to remove. Read Committed gives this
+      // statement its own snapshot, so the check has to be IN it - the sweep learned that
+      // the expensive way (review loop 9), and copying the resolver here without copying
+      // the guard would have reproduced the same defect one path over.
+      //
+      // Nothing is claimed on this path, so a refusal costs the caller a retry and nothing
+      // else. `learn` already refuses loudly for four other reasons; this is a fifth.
+      //
+      // NOT INTERLEAVE-TESTED, and the reason is worth knowing before someone assumes it
+      // is: the window is between a read and an insert with only pure JS in between, so
+      // there is no point a test can commit a change from another connection into. Every
+      // hook tried lands on the wrong side - a row-level trigger fires after the WHERE has
+      // been evaluated, and a statement-level one runs in the same command, invisible to
+      // the statement's own snapshot. The sweep's identical guard IS interleave-tested
+      // (extractor-stale-patterns), and this is the same statement shape against the same
+      // column. That is verification by construction, which is weaker, and saying so is
+      // better than a test that reaches the wrong moment and reports green.
+      const [row] = await db.execute<{ id: string; validation_state: string }>(sql`
+        insert into ${knowledge} (project_id, kind, title, body, source_kind, source_refs, validation_state, created_by_user_id)
+        select ${ctx.projectId}, ${args.kind}, ${title}, ${body}, 'learn',
+               ${JSON.stringify(sourceRefs)}::jsonb,
+               -- ALWAYS candidate. There is no argument this tool can take, and no branch
+               -- in it, that produces a trusted row: promotion is a separate ledgered
+               -- transaction with a human or CI as the issuer. An agent asserting its own
+               -- claim is trustworthy is the failure this whole design is built to avoid.
+               'candidate', ${ctx.userId}
+         where exists (
+                 select 1 from ${projects} p
+                  where p.id = ${ctx.projectId}
+                    and ${sql.raw(REDACTION_INPUT_SNAPSHOT_P)} = ${proj?.rules_text ?? ''}
+               )
+        returning id, validation_state
+      `)
+      if (!row) {
+        return { content: [{ type: 'text' as const,
+          text: 'error: the project\'s redaction rules changed while this was being recorded; '
+            + 'nothing was recorded. Retry.' }], isError: true }
+      }
 
       return {
         content: [{ type: 'text' as const, text: JSON.stringify({
-          id: row!.id,
-          validationState: row!.validationState,
+          id: row.id,
+          validationState: row.validation_state,
         }) }],
       }
     },

@@ -80,6 +80,50 @@ describe('proposeKnowledgeDiff', () => {
 })
 
 describe('decideProposal', () => {
+  it('applies the project redaction rules to an approved proposal', async () => {
+    // The fourth knowledge writer, and the one that had no redaction for two releases.
+    // It was invisible while the denylist lived in the server slice: this path is in
+    // packages/db and could not have called it. Found by review loop 12 walking the
+    // contract's "three writers" against the code and finding four.
+    const p = await project()
+    await db.update(projects)
+      .set({ knowledgeConfig: { redactionRules: [{ kind: 'literal', value: 'sk-proposal-secret' }] } })
+      .where(eq(projects.id, p))
+    const proposal = await knowledgeProposal(p, {
+      change: { title: 'rotate sk-proposal-secret', body: 'the key sk-proposal-secret leaked', kind: 'pitfall' },
+    })
+    const result = await decideProposal(db, { projectId: p, proposalId: proposal!.id, decision: 'approved', userId: USER })
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('unreachable')
+
+    const [k] = await db.select().from(knowledge).where(eq(knowledge.id, result.knowledgeId!))
+    expect(k!.title).not.toContain('sk-proposal-secret')
+    expect(k!.body).not.toContain('sk-proposal-secret')
+    expect(k!.body).toContain('leaked')
+  })
+
+  it('refuses to approve when a redaction rule cannot be resolved', async () => {
+    // Same rule as every other writer: a protection the owner switched on and we cannot
+    // evaluate means the write does not happen. Nothing is written and the proposal stays
+    // pending, so fixing the configuration makes the decision available again.
+    const p = await project()
+    // The proposal is created FIRST, under a configuration that resolves - creation now
+    // refuses too, so setting the broken rule first would produce no proposal to approve
+    // and the test would pass for the wrong reason. This is the real sequence anyway: a
+    // proposal exists, then the rules break, then someone tries to approve it.
+    const proposal = await knowledgeProposal(p)
+    await db.update(projects)
+      .set({ knowledgeConfig: { redactionRules: [{ kind: 'detector', id: 'no-such-detector', v: 1 }] } })
+      .where(eq(projects.id, p))
+    const result = await decideProposal(db, { projectId: p, proposalId: proposal!.id, decision: 'approved', userId: USER })
+    expect(result).toMatchObject({ ok: false, reason: 'redaction_unresolvable' })
+
+    const rows = await db.select().from(knowledge).where(eq(knowledge.projectId, p))
+    expect(rows).toHaveLength(0)
+    const [still] = await db.select().from(knowledgeProposals).where(eq(knowledgeProposals.id, proposal!.id))
+    expect(still!.status).toBe('pending')
+  })
+
   it('approves a knowledge proposal as a CANDIDATE, never trusted', async () => {
     // The trust boundary. A human approving the proposal is intake, not promotion:
     // the fact still has to earn trusted through K independent issuers.
@@ -209,5 +253,155 @@ describe('rollbackPlaybook', () => {
     await approvePlaybook(p, 'only body', 'sig-solo')
     const result = await rollbackPlaybook(db, { projectId: p, toVersion: 9, userId: USER })
     expect(result).toEqual({ ok: false, reason: 'version_not_found' })
+  })
+})
+
+/**
+ * The PLAYBOOK target, which the redaction cases below never touched.
+ *
+ * Review loop 14: creation redacted `change.title` and `change.body` - the knowledge
+ * shape - while a playbook proposal's shape is `{ content }`, so its text went in
+ * untouched. Approval then copied that content into `playbook_version.content` and into
+ * `project.relayroom_md`, the file every agent in the project reads, with no rules
+ * applied at any point.
+ *
+ * The existing playbook test asserted byte-for-byte preservation of the content, which is
+ * the right assertion for a project with no rules and is exactly why the hole was
+ * invisible: it was green, and it was measuring something else.
+ */
+describe('playbook proposals carry the denylist too', () => {
+  const RULE = { kind: 'literal' as const, value: 'sk-playbook-secret' }
+  const BODY = '# RELAYROOM.md\n\nDeploy with sk-playbook-secret before rebasing.\n'
+
+  it('redacts the content at creation, not just title and body', async () => {
+    const p = await project()
+    await db.update(projects).set({ knowledgeConfig: { redactionRules: [RULE] } })
+      .where(eq(projects.id, p))
+
+    const proposal = await proposeKnowledgeDiff(db, {
+      projectId: p, target: 'playbook',
+      hypothesis: 'the deploy step should be written down',
+      change: { content: BODY, patch: '+ Deploy with sk-playbook-secret' },
+      triggerSignature: `sig-pb-${randomBytes(3).toString('hex')}`,
+    })
+    expect(proposal).not.toBeNull()
+    // Every string in `change`, not a named pair - `patch` is redacted for the same
+    // reason `content` is, and neither is in the knowledge shape.
+    expect(JSON.stringify(proposal!.change)).not.toContain('sk-playbook-secret')
+    expect(JSON.stringify(proposal!.change)).toContain('before rebasing')
+  })
+
+  it('redacts at approval under a rule saved AFTER the proposal was created', async () => {
+    // The case creation-time redaction cannot cover: the proposal was clean when it was
+    // written because there was no rule yet. Approval is a second durable write and has
+    // to apply what is configured NOW, which is the same thing the knowledge branch does.
+    const p = await project()
+    const proposal = await proposeKnowledgeDiff(db, {
+      projectId: p, target: 'playbook',
+      hypothesis: 'the deploy step should be written down',
+      change: { content: BODY },
+      triggerSignature: `sig-pb-${randomBytes(3).toString('hex')}`,
+    })
+    expect(proposal!.change).toMatchObject({ content: BODY }) // clean at creation, no rule yet
+
+    await db.update(projects).set({ knowledgeConfig: { redactionRules: [RULE] } })
+      .where(eq(projects.id, p))
+    const result = await decideProposal(db, {
+      projectId: p, proposalId: proposal!.id, decision: 'approved', userId: USER,
+    })
+    expect(result).toMatchObject({ ok: true, version: 1 })
+
+    const [v] = await db.select().from(playbookVersions)
+      .where(and(eq(playbookVersions.projectId, p), eq(playbookVersions.version, 1)))
+    expect(v!.content).not.toContain('sk-playbook-secret')
+    expect(v!.content).toContain('before rebasing')
+    // The hash follows the stored content, or the version's own integrity check fails.
+    expect(v!.contentHash).toBe(createHash('sha256').update(v!.content).digest('hex'))
+    // And the LIVE copy - the one agents read - carries the same text.
+    const [proj] = await db.select().from(projects).where(eq(projects.id, p))
+    expect(proj!.relayroomMd).toBe(v!.content)
+  })
+
+  it('refuses the approval when a rule cannot be resolved', async () => {
+    // Fail closed, like every other writer: an unresolvable rule means the owner switched
+    // on a protection we cannot apply, and the playbook is the most widely read text in
+    // the project.
+    const p = await project()
+    const proposal = await proposeKnowledgeDiff(db, {
+      projectId: p, target: 'playbook',
+      hypothesis: 'the deploy step should be written down',
+      change: { content: BODY },
+      triggerSignature: `sig-pb-${randomBytes(3).toString('hex')}`,
+    })
+    await db.update(projects)
+      .set({ knowledgeConfig: { redactionRules: [{ kind: 'detector', id: 'no-such', v: 1 }] } })
+      .where(eq(projects.id, p))
+
+    const result = await decideProposal(db, {
+      projectId: p, proposalId: proposal!.id, decision: 'approved', userId: USER,
+    })
+    expect(result).toMatchObject({ ok: false, reason: 'redaction_unresolvable' })
+    // Nothing written and the proposal stays pending, so it can be decided again once
+    // the configuration is fixed.
+    const versions = await db.select().from(playbookVersions)
+      .where(eq(playbookVersions.projectId, p))
+    expect(versions).toHaveLength(0)
+    const [still] = await db.select().from(knowledgeProposals)
+      .where(eq(knowledgeProposals.id, proposal!.id))
+    expect(still!.status).toBe('pending')
+  })
+})
+
+describe('proposeKnowledgeDiff redaction', () => {
+  it('redacts at creation, so the staging row never holds the raw text', async () => {
+    // knowledge_proposal is durable and a human reads it to decide, so it is a display
+    // surface rather than an internal buffer. Redacting only on approval would leave the
+    // original here while putting a clean copy in `knowledge`.
+    const p = await project()
+    await db.update(projects)
+      .set({ knowledgeConfig: { redactionRules: [{ kind: 'literal', value: 'sk-staging-secret' }] } })
+      .where(eq(projects.id, p))
+    const proposal = await knowledgeProposal(p, {
+      hypothesis: 'sk-staging-secret keeps appearing in the logs',
+      change: { title: 'rotate sk-staging-secret', body: 'sk-staging-secret leaked', kind: 'pitfall' },
+    })
+    expect(proposal).not.toBeNull()
+    expect(proposal!.hypothesis).not.toContain('sk-staging-secret')
+    expect(JSON.stringify(proposal!.change)).not.toContain('sk-staging-secret')
+    expect(proposal!.hypothesis).toContain('keeps appearing')
+  })
+
+  it('creates nothing when a rule cannot be resolved', async () => {
+    // Same rule as every writer, and the cost is bounded: the sweep re-clusters a rolling
+    // window, so a proposal skipped now is proposed again once the configuration resolves.
+    const p = await project()
+    await db.update(projects)
+      .set({ knowledgeConfig: { redactionRules: [{ kind: 'detector', id: 'gone', v: 9 }] } })
+      .where(eq(projects.id, p))
+    expect(await knowledgeProposal(p)).toBeNull()
+  })
+})
+
+describe('rejection clears the payload', () => {
+  it('keeps the decision and removes the text', async () => {
+    // The only removal path this table has - purge is thread-scoped and does not reach it.
+    // Same shape as purge: purge keeps the watermark and removes the content; rejection
+    // keeps the decision and removes the content.
+    const p = await project()
+    const proposal = await knowledgeProposal(p, {
+      hypothesis: 'a hypothesis nobody wants kept',
+      change: { title: 'unwanted', body: 'unwanted body', kind: 'pitfall' },
+    })
+    const result = await decideProposal(db, { projectId: p, proposalId: proposal!.id, decision: 'rejected', userId: USER })
+    expect(result.ok).toBe(true)
+
+    const [row] = await db.select().from(knowledgeProposals).where(eq(knowledgeProposals.id, proposal!.id))
+    expect(row!.hypothesis).toBe('')
+    expect(row!.change).toEqual({})
+    // The decision survives - that is the half worth keeping.
+    expect(row!.status).toBe('rejected')
+    expect(row!.decidedByUserId).toBe(USER)
+    expect(row!.decidedAt).not.toBeNull()
+    expect(row!.triggerSignature).toBe(proposal!.triggerSignature)
   })
 })

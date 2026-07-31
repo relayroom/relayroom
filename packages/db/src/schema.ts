@@ -14,6 +14,7 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core'
+import type { RedactionRule } from '@relayroom/shared'
 import { better_auth_user } from './auth-schema'
 
 const uuidPk = () => uuid('id').primaryKey().default(sql`uuidv7()`)
@@ -51,12 +52,30 @@ export const projects = pgTable('project', {
   attestKeyIdPrev: text('attest_key_id_prev'),                  // short id of the previous secret
   attestSecretPrevExpiresAt: timestamp('attest_secret_prev_expires_at', { withTimezone: true }), // after this, prev is rejected and should be nulled
   // Per-project knobs. The promotion transaction reads kDistinctIssuers/windowDays;
-  // the L3 extractor and retention sweep read retentionDays and redactionPatterns;
+  // the L3 extractor and retention sweep read retentionDays and redactionRules;
   // dynamicFactsBlock gates the served-playbook block. Empty object = every default
-  // applies. redactionPatterns is a secret/PII regex denylist the extractor and
-  // `learn` apply BEFORE writing a row - a matched span is dropped, never stored;
-  // the field lives here, the matching runs in the server slice.
-  knowledgeConfig: jsonb('knowledge_config').$type<{ kDistinctIssuers?: number; windowDays?: number; dynamicFactsBlock?: boolean; retentionDays?: number; redactionPatterns?: string[] }>()
+  // applies.
+  //
+  // redactionRules is the secret/PII denylist every durable text write applies BEFORE
+  // writing a row - a matched span is dropped, never stored. (The writers are enumerated
+  // in packages/shared/src/redaction.ts; this line named two of them for two releases
+  // while the set grew to six, which is why it now points at the list instead of
+  // repeating it.) It is a UNION, not a list of regexes, and that is the point: a `literal` is escaped by the server and a
+  // `detector` is resolved from our own catalogue, so **no operator-authored regex is
+  // ever compiled**. `RedactionRule` and the resolver live in @relayroom/shared, where
+  // the dashboard that writes this and the server that compiles it read the same rule.
+  //
+  // The previous key, `redactionPatterns: string[]`, is GONE rather than deprecated -
+  // it never had a write path, so nothing can be holding a value through the product,
+  // and leaving a dead key readable is how the last one bit us. If a row does carry it
+  // (hand-edited SQL), the resolver reports it as unresolvable and the write fails
+  // closed; it is not silently ignored, because a protection that stops applying
+  // without saying so is the failure this shape exists to prevent.
+  // `distillOnClose` is ABSENT-MEANS-ON: every project today has `{}`, and a feature
+  // that only works for projects that opted in after the fact is a feature nobody has.
+  // Stored only when an owner turns it off, which is also why the read tests `=== false`
+  // rather than truthiness - `undefined` and `false` must not mean the same thing.
+  knowledgeConfig: jsonb('knowledge_config').$type<{ kDistinctIssuers?: number; windowDays?: number; dynamicFactsBlock?: boolean; retentionDays?: number; redactionRules?: RedactionRule[]; distillOnClose?: boolean }>()
     .notNull().default(sql`'{}'::jsonb`),
   // Durable trigger for the extractor. A thread going closed/answered sets this to
   // now(); the leased sweep claims projects where it is not null, snapshots the

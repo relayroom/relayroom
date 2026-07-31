@@ -23,11 +23,13 @@ afterAll(async () => {
   await rawSql.end()
 })
 
-async function project(redactionPatterns?: string[]): Promise<{ id: string; agentId: string }> {
+async function project(literals?: string[]): Promise<{ id: string; agentId: string }> {
   const sfx = randomBytes(6).toString('hex')
   const [p] = await db.insert(projects).values({
     organizationId: `es-org-${sfx}`, slug: `es-${sfx}`, name: 'Extractor', connectCode: `es-cc-${sfx}`,
-    ...(redactionPatterns ? { knowledgeConfig: { redactionPatterns } } : {}),
+    ...(literals
+      ? { knowledgeConfig: { redactionRules: literals.map(value => ({ kind: 'literal' as const, value })) } }
+      : {}),
   }).returning({ id: projects.id })
   const [a] = await db.insert(agents).values({ projectId: p!.id, part: 'w' }).returning({ id: agents.id })
   return { id: p!.id, agentId: a!.id }
@@ -69,18 +71,43 @@ describe('extractor output', () => {
     expect(rows[0]!.sourceKind).toBe('thread')
   })
 
-  it('extracts answered threads too, and skips open ones', async () => {
+  it('extracts NEITHER answered nor open threads - extraction is closed-only', async () => {
+    // This test asserted the opposite until 0.6.0. `'answered'` is a live thread the
+    // dashboard has marked as having an answer; extracting it froze a mid-conversation
+    // snapshot permanently, because extraction is once-per-thread.
     const p = await project()
     await thread(p.id, p.agentId, 'answered', [{ body: 'answered lesson' }])
     await thread(p.id, p.agentId, 'open', [{ body: 'still open' }])
     await markProjectKnowledgeDirty(db, p.id)
 
+    const r = await runExtractorSweep(db, { projectId: p.id })
+    // The project WAS swept - without this the test passes on a sweep that did nothing,
+    // which is the failure mode every test in extractor-resurrection.test.ts guards.
+    expect(r.projects).toBe(1)
+    expect(await candidatesFor(p.id)).toHaveLength(0)
+  })
+
+  it('NEGATIVE CONTROL: the same thread IS extracted once it actually closes', async () => {
+    // Without this half, the test above passes for a sweep that is simply broken. It also
+    // pins the trade: the answered thread is deferred, not discarded.
+    const p = await project()
+    const t = await thread(p.id, p.agentId, 'answered', [{ body: 'the answer, still live' }])
+    await markProjectKnowledgeDirty(db, p.id)
     await runExtractorSweep(db, { projectId: p.id })
-    expect(await candidatesFor(p.id)).toHaveLength(1)
+    expect(await candidatesFor(p.id)).toHaveLength(0)
+
+    await db.update(threads).set({ status: 'closed' }).where(eq(threads.id, t))
+    await markProjectKnowledgeDirty(db, p.id)
+    const second = await runExtractorSweep(db, { projectId: p.id })
+    expect(second.candidates).toBe(1)
+    const [row] = await candidatesFor(p.id)
+    expect(row!.body).toContain('the answer, still live')
   })
 
   it('applies redaction before writing the candidate', async () => {
-    const p = await project(['sk-[a-z0-9]+'])
+    // A literal, because an operator can no longer author a regex - the stored shape is
+    // a union and the server escapes literals, so `sk-[a-z0-9]+` is not configurable.
+    const p = await project(['sk-abc123'])
     await thread(p.id, p.agentId, 'closed', [{ body: 'rotate sk-abc123 now' }])
     await markProjectKnowledgeDirty(db, p.id)
     await runExtractorSweep(db, { projectId: p.id })
