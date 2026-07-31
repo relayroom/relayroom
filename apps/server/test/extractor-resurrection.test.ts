@@ -201,6 +201,47 @@ describe('extractor resurrection (BUG-0010)', () => {
   })
 })
 
+/**
+ * WHAT THE `source_refs` PREDICATE STILL DOES, pinned before item 4 removes it.
+ *
+ * The predicate is not what stops resurrection - the watermark claim is, and the tests
+ * above are what showed that. Its one remaining job is the `learn` race: `learn` writes
+ * a row citing a thread WITHOUT taking a watermark and without the sweep's advisory
+ * lock, so a `learn` that commits between the eligibility query and the claim is skipped
+ * only because of this line. Delete it with nothing in its place and both rows appear,
+ * silently - two candidates for one thread is not an error anywhere.
+ *
+ * The state is reproduced rather than the interleaving. A row citing the thread with no
+ * watermark IS what `learn` leaves behind, and the predicate reads the row, not how it
+ * got there - so a test that inserts that state reaches the same branch a real race
+ * would, deterministically. Written and confirmed RED against a tree with the predicate
+ * deleted BEFORE any deletion, so what it defends is known rather than assumed.
+ */
+describe('the source_refs predicate and the learn race', () => {
+  it('does not extract a thread that a learn row already cites', async () => {
+    const { id: p, agentId } = await project()
+    const t = await closedThread(p, agentId)
+
+    // Exactly what `learn` with a sourceThreadId writes: source_kind 'learn', citing
+    // the thread, and NO watermark. Migration 0022's backfill deliberately excludes
+    // these rows - see its comment - so this is also the shape that survived the
+    // migration untouched.
+    await db.insert(knowledge).values({
+      projectId: p, kind: 'pitfall', title: 'what an agent recorded',
+      body: 'a lesson an agent wrote while the thread was still open',
+      sourceKind: 'learn', sourceRefs: [{ threadId: t }], validationState: 'candidate',
+    })
+    expect(await watermark(p, t)).toBeNull()
+
+    await markProjectKnowledgeDirty(db, p)
+    const r = await runExtractorSweep(db, { projectId: p })
+    // The project WAS processed - without this the assertion below is satisfied by a
+    // sweep that did nothing at all.
+    expect(r.projects).toBe(1)
+    expect(await citesThread(p, t)).toHaveLength(1)
+  })
+})
+
 /** Knowledge rows in this project citing this thread. */
 async function citesThread(projectId: string, threadId: string) {
   return db.execute<{ id: string }>(sql`
