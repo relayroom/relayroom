@@ -296,6 +296,15 @@ async function extractProject(
   // two: "already decided" is the watermark and nothing else. It used to also skip a
   // thread that any knowledge row cited, which is a different question - see the file
   // header for why those two came apart.
+  //
+  // HALF OF A PAIR. The other half is the `on conflict do nothing` on the claim below,
+  // and the two cover each other: this one keeps decided threads out of the loop, and
+  // the claim catches anything decided between this query and that insert. MEASURED, so
+  // that "redundant" is not something the next reader has to guess at: removing either
+  // one alone leaves the whole server suite green (388 passed), and only removing both
+  // is red (4 failed in extractor-resurrection). So no test can tell you this line is
+  // doing anything - which is exactly why deleting it as dead weight is easy, and why
+  // correctness would then rest on the claim alone with nothing saying so.
   const eligible = await tx
     .select({ id: threads.id, subject: threads.subject })
     .from(threads)
@@ -378,6 +387,11 @@ async function extractProject(
                 where p.id = ${projectId}
                   and ${sql.raw(REDACTION_INPUT_SNAPSHOT_P)} = ${patternsSnapshot}
              )
+      -- The other half of the pair described at the eligibility query above: that one
+      -- keeps decided threads out of the loop, this one catches anything decided in
+      -- between. Neither alone can be shown red by a test (388 passed with either one
+      -- removed; 4 failed with both), so if you are removing one as redundant, you are
+      -- removing a guard the suite cannot defend.
       on conflict (project_id, thread_id) do nothing
       returning thread_id
     `)
