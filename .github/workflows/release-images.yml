@@ -3,15 +3,40 @@ name: Release images
 # Build + push multi-arch GHCR images for a given version, building each arch on its
 # OWN native runner (no QEMU emulation): amd64 on ubuntu-latest, arm64 on the free
 # public arm64 hosted runner. Each arch is pushed by digest, then a merge step combines
-# them into one multi-arch tag (:VERSION + :latest). Manual (workflow_dispatch).
+# them into one multi-arch tag (:VERSION, and :latest unless told otherwise). Manual
+# (workflow_dispatch).
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to tag the images with (e.g. 0.3.3)"
+        # NO DEFAULT, deliberately. This input used to default to "0.3.3", and a dispatch
+        # that forgot to pass it did not fail - it succeeded, republished whatever was
+        # checked out as 0.3.3, and moved :latest onto it. That happened: the 0.6.0 release
+        # was published under the 0.3.3 tag, with RELAYROOM_VERSION=0.3.3 baked in, and the
+        # workflow reported success. A default here cannot be right for more than one
+        # release, so its only lasting effect is to turn a forgotten argument into a
+        # silently wrong publish.
+        description: "Version to tag the images with (e.g. 0.6.0)"
         required: true
-        default: "0.3.3"
+      ref:
+        # The tree to build. Empty means the ref this workflow was dispatched on, which is
+        # the normal case. Set it to rebuild an older release WITHOUT running that release's
+        # copy of this file: workflow_dispatch takes the workflow definition from the
+        # dispatched ref, so dispatching on an old tag would run the old workflow, which has
+        # the default above and always writes :latest. Dispatch on main and name the old tag
+        # here instead.
+        description: "Git ref to build (blank = the dispatched ref)"
+        required: false
+        default: ""
+      tag_latest:
+        # Rebuilding an old version must not drag :latest backwards. A fresh install reads
+        # :latest through the compose file `install` writes, so :latest is what new users
+        # get, not a convenience alias.
+        description: "Also move :latest to this build"
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -35,6 +60,10 @@ jobs:
       VERSION: ${{ inputs.version }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # Blank falls back to the dispatched ref, which is what checkout does with an
+          # empty string.
+          ref: ${{ inputs.ref }}
       - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
       - uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
         with:
@@ -96,7 +125,7 @@ jobs:
           images: ${{ env.IMAGE }}
           tags: |
             type=raw,value=${{ env.VERSION }}
-            type=raw,value=latest
+            type=raw,value=latest,enable=${{ inputs.tag_latest }}
       - name: Create multi-arch manifest from per-arch digests
         working-directory: /tmp/digests
         run: |
