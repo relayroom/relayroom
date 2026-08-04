@@ -95,6 +95,19 @@ exit 0
     bin = mkdtempSync(join(tmpdir(), "relayroom-bin-"))
     savedTmux = process.env.TMUX
     delete process.env.TMUX
+    // The generated rr.sh resolves `CLI="relayroom"`, falling back to `npx -y
+    // @relayroom/cli` when that is not on PATH - so without this shim these tests run
+    // whatever is INSTALLED on the machine, or whatever is PUBLISHED on npm, and not the
+    // checkout being tested. Both were observed: 0.6.1 shipped a CLI that threw at import,
+    // and afterwards this file failed locally against the global install and in CI against
+    // the published package, while the fix sat right here passing its own tests. A suite
+    // that reaches outside the working tree reports on a version nobody chose.
+    writeFileSync(
+      join(bin, "relayroom"),
+      `#!/usr/bin/env bash\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(join(import.meta.dirname, "..", "dist", "index.js"))} "$@"\n`,
+      { mode: 0o755 },
+    )
+    chmodSync(join(bin, "relayroom"), 0o755)
     env = { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, RR_CHANNEL_WATCH_TICKS: "1" }
     delete env.TMUX
     hub = createServer((_req, res) => {

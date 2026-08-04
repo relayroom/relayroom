@@ -1,5 +1,13 @@
 # @relayroom/server
 
+## 0.6.2
+
+### Patch Changes
+
+- @relayroom/db@0.6.2
+- @relayroom/shared@0.6.2
+- @relayroom/telemetry@0.6.2
+
 ## 0.6.1
 
 ### Patch Changes

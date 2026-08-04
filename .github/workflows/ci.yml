@@ -39,10 +39,18 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Test
-        run: pnpm test
+      # BUILD FIRST. This used to run after `pnpm test`, and the cli suite runs the built
+      # `dist/index.js` rather than the sources - so the tests were asserting against
+      # whatever dist happened to be lying around, never against the code in the commit.
+      # 0.6.1 shipped a CLI that threw at import (two `program.command("channel")`
+      # registrations, which commander rejects) with 185 cli tests green: tsc does not
+      # see a runtime registration clash, tsup happily built it, and the suite ran an
+      # older dist that predated the clash. Nothing was wrong with any single step; the
+      # ORDER meant the thing under test was never the thing being shipped.
       - name: Build publishable CLI
         run: pnpm --filter @relayroom/cli build
+      - name: Test
+        run: pnpm test
 
   # What this job catches that `test` cannot: things MISSING FROM THE DOCKER BUILD
   # CONTEXT. `tsc --noEmit` and `pnpm build` run against the whole working tree, so a

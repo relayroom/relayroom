@@ -1,6 +1,6 @@
 {
   "name": "@relayroom/cli",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "RelayRoom agent-side CLI - connect Claude Code over MCP, run the pager, install the usage hook.",
   "type": "module",
   "license": "Apache-2.0",
@@ -38,7 +38,8 @@
   "scripts": {
     "build": "tsup",
     "prepublishOnly": "tsup",
-    "test": "vitest run"
+    "test": "vitest run",
+    "pretest": "tsup"
   },
   "dependencies": {
     "commander": "^15.0.0"
