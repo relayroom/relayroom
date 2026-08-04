@@ -1,0 +1,83 @@
+name: Release
+
+# Publish the GitHub Release for a version tag, with that version's CHANGELOG section as
+# the body.
+#
+# This is here because the step was previously a habit rather than a step. Every release
+# through 0.5.5 was created by hand, and 0.6.0's was skipped entirely - the git tag, both npm
+# packages and both GHCR images all shipped and were verified by fetching them, and the
+# release was still missing days later, when someone installing the version noticed the tag
+# had no release attached. Checking a list cannot find an item that was never on it.
+#
+# Note what this does NOT do: it does not build, test, or publish anything. The tag is pushed
+# after the release branch has already merged and CI has passed on it, so re-running the
+# suite here would re-verify the commit rather than the artifacts, and gate the announcement
+# on a job that can fail for reasons that have nothing to do with what shipped. npm and the
+# images stay deliberately manual - they are irreversible and want a person - and this is the
+# one step whose absence leaves no evidence, which is why it is the one that got automated.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Derive the version from the tag
+        id: v
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Extract the changelog section
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          # No `|| true`, deliberately. If the section is missing, empty, or duplicated, this
+          # fails and no release is created. Publishing an empty release would reproduce the
+          # original defect in the shape that hides it best: something exists at the URL, so
+          # nothing looks skipped, and the notes are gone.
+          ./scripts/changelog-section.sh "$VERSION" > /tmp/notes.md
+          echo "::notice::changelog section for $VERSION: $(wc -l < /tmp/notes.md) lines"
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.v.outputs.version }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # --verify-tag so a release is never created against a tag this push did not put
+          # there. Re-running on an existing release is an error rather than an overwrite:
+          # published notes someone may already have read are not ours to silently replace.
+          gh release create "$TAG" \
+            --title "RelayRoom $VERSION" \
+            --notes-file /tmp/notes.md \
+            --verify-tag
+
+      - name: Confirm it is actually there
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # Reading it back, rather than trusting the create step's exit code. The failure
+          # this workflow exists to prevent was invisible precisely because every signal
+          # available at the time was green.
+          draft=$(gh release view "$TAG" --json isDraft --jq '.isDraft')
+          body_len=$(gh release view "$TAG" --json body --jq '.body | length')
+          notes_len=$(wc -c < /tmp/notes.md)
+
+          [ "$draft" = "false" ] || { echo "release is a draft" >&2; exit 1; }
+
+          # Compare against what we sent, not against a number someone guessed. A fixed
+          # threshold would need a value chosen to be smaller than every future release's
+          # notes, which is a guess that only ever fails in the permissive direction.
+          [ "$body_len" -ge "$((notes_len - 32))" ] || {
+            echo "published body is $body_len bytes, sent $notes_len" >&2; exit 1; }
+
+          gh release view "$TAG" --json tagName --jq '"published: " + .tagName'
