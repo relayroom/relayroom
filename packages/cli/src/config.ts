@@ -35,6 +35,25 @@ export interface RelayRoomConfig {
    *  counts. Absent/true keeps the dashboard event showing the exchange; false
    *  reports counts only. Read by runtime/usage-report.mjs. */
   usageContent?: boolean
+  /**
+   * INTENT: does this worktree want Claude Code Channels at all?
+   *
+   * Separate from `delivery` on purpose, and the separation is the fix for an outage.
+   * One field was carrying two facts - what the user asked for, and what is actually
+   * running - so the state where they DIVERGE had no representation, and a divergence
+   * read as a normal value. That is exactly what happened: config said `channel` while
+   * nothing was being delivered, and everything downstream agreed with the config.
+   *
+   * Only an explicit human command writes this (`./rr.sh up --channel`,
+   * `relayroom channel on`). A failed channel launch falls back by changing `delivery`
+   * and LEAVES THIS ALONE, so the next launch tries again - and a stale `delivery` can
+   * never be mistaken for a user's choice, because it is not where the choice lives.
+   *
+   * Absent/false is the default, and the default is pager: it is the only delivery path
+   * we control end to end (no preview flag, no allowlist, no prompt), and a part that
+   * wakes slightly less precisely beats a part that does not wake at all.
+   */
+  channel?: boolean
   /** Wake delivery path for the primary agent. "channel" => Claude Code Channels
    *  (the pager skips send-keys; the channel server pushes notifications). "headless"
    *  => the pager spawns the part's CLI (codex/agy) once per wake instead of typing

@@ -84,8 +84,8 @@ CONF="$ROOT/.relayroom/config.json"
 # Load all config fields in ONE node call (statusline runs every few seconds, so
 # avoid 6 separate spawns). Fields are slug/url/hex - none contain '|'. PREV is the
 # previous session name (if init just renamed it) so up can migrate a live session.
-_C="$(node -e 'var c=require(process.argv[1]);process.stdout.write([c.code,c.part,c.server,c.target,c.agent,c.token,c.previousTarget].map(function(x){return String(x||"")}).join("|"))' "$CONF" 2>/dev/null || true)"
-IFS='|' read -r CODE PART SERVER SESSION AGENT TOKEN PREV <<< "$_C"
+_C="$(node -e 'var c=require(process.argv[1]);process.stdout.write([c.code,c.part,c.server,c.target,c.agent,c.token,c.previousTarget,c.channel?1:0].map(function(x){return String(x||"")}).join("|"))' "$CONF" 2>/dev/null || true)"
+IFS='|' read -r CODE PART SERVER SESSION AGENT TOKEN PREV CHANNEL_WANTED <<< "$_C"
 [ -n "$SERVER" ] || SERVER="http://localhost:48801"
 [ -n "$SESSION" ] || SESSION="$PART"
 PRIMARY="\${AGENT%%,*}"; [ -n "$PRIMARY" ] || PRIMARY="claude"
@@ -114,6 +114,16 @@ BYPASS=0; for _a in "$@"; do [ "$_a" = "--bypass" ] && BYPASS=1; done
 # reboot keeps context), falling back to a fresh start when there is none. Detected
 # anywhere in the args.
 NEW=0; for _a in "$@"; do [ "$_a" = "--new" ] && NEW=1; done
+# Opt-in / opt-out of Claude Code Channels. The flag is SUGAR over a persisted intent,
+# never the intent itself: a self-update re-exec, a respawn, or any script that relaunches
+# without repeating the argument would otherwise turn the user's choice off silently, and
+# silently-off is the class of failure this whole release is about.
+for _a in "$@"; do
+  case "$_a" in
+    --channel)    $CLI channel on  >/dev/null 2>&1 || true; CHANNEL_WANTED=1 ;;
+    --no-channel) $CLI channel off >/dev/null 2>&1 || true; CHANNEL_WANTED=0 ;;
+  esac
+done
 # Opt-in restart: \`./rr.sh up --restart\` replaces a running session instead of attaching
 # to it. \`up\` stays non-destructive by default - people type it reflexively - so a session
 # that predates its own config is REFUSED with the evidence, and this is how you act on it.
@@ -297,6 +307,12 @@ verdict() {
   esac
 }
 start="$(verdict)"
+# The streak carries across launches: "it failed once" and "it has failed every launch
+# for a week" are different situations and a single boolean tells them apart as one.
+# Read before the state file is overwritten, defaulting to 0 for a first run.
+streak=0
+[ -f "$state" ] && streak="$(awk '{print ($4 == "" ? 0 : $4)}' "$state" 2>/dev/null || echo 0)"
+case "$streak" in ''|*[!0-9]*) streak=0 ;; esac
 i=0
 answered=0
 # ~40s: claude has to start, print the prompt, and (after Enter) reach the channel gate.
@@ -312,13 +328,14 @@ while [ "$i" -lt "$ticks" ]; do
   # "registered" from a previous session would otherwise confirm a launch that is
   # still sitting on the prompt.
   if [ "$v" = "registered" ] && { [ "$start" != "registered" ] || [ "$i" -gt 10 ]; }; then
-    printf '%s ok registered\\n' "$(date +%s)" > "$state"
+    printf '%s ok registered 0\\n' "$(date +%s)" > "$state"
     exit 0
   fi
   i=$((i + 1))
   sleep 0.5
 done
-printf '%s fallback %s-after-%sticks-answered-%s\\n' "$(date +%s)" "$(verdict)" "$ticks" "$answered" > "$state"
+streak=$((streak + 1))
+printf '%s fallback %s-after-%sticks-answered-%s %s\\n' "$(date +%s)" "$(verdict)" "$ticks" "$answered" "$streak" > "$state"
 # Delivery was written as channel and channel did not happen. Switch the pager over so
 # the part still gets woken, and leave the reason on disk for the status bar.
 #
@@ -330,6 +347,10 @@ printf '%s fallback %s-after-%sticks-answered-%s\\n' "$(date +%s)" "$(verdict)" 
 # the next launch rather than failing here.
 $cli delivery pager >/dev/null 2>&1 || true
 [ -x "$rr" ] && "$rr" pager restart >/dev/null 2>&1 || true
+# THE INTENT IS NOT TOUCHED. Turning off what a person turned on, because we could not
+# make it work today, is the same disease as leaving it on and delivering nothing: in
+# both cases the config stops describing what anyone chose. The next launch tries again,
+# and the streak above is how the cost of that becomes visible instead of invisible.
 CHANWATCH
   chmod +x "$script"
   setsid nohup "$script" "$target" "$CHANNEL_STATE" "$(channel_log_dir)" "$CHANNEL_PROMPT_MATCH" "$CLI" "$ROOT/rr.sh" \
@@ -341,17 +362,32 @@ CHANWATCH
 # question is how the probe and the launch drifted apart in the first place.
 channel_after_launch() {
   [ "$DELIVERY_MODE" = "channel" ] || return 0
-  printf '%s pending watching\n' "$(date +%s)" > "$CHANNEL_STATE" 2>/dev/null || true
+  # Four fields everywhere: <epoch> <result> <detail> <streak>. One shape means a reader
+  # never has to know which writer produced the line.
+  _prev_streak=0
+  [ -f "$CHANNEL_STATE" ] && _prev_streak="$(awk '{print ($4 == "" ? 0 : $4)}' "$CHANNEL_STATE" 2>/dev/null || echo 0)"
+  case "$_prev_streak" in ''|*[!0-9]*) _prev_streak=0 ;; esac
+  printf '%s pending watching %s\\n' "$(date +%s)" "$_prev_streak" > "$CHANNEL_STATE" 2>/dev/null || true
   channel_watch_bg "$1"
 }
 
 prepare_launch() {
   local mode="pager" probe="" base="$PRIMARY" byp="" why="" verdict="" layer=""
+  # A verdict from the PREVIOUS launch must never be read as this one's, so it is dropped
+  # before any decision runs - not after, which would also erase what this launch just
+  # wrote about itself (the refusal below is written during the decision).
+  rm -f "$CHANNEL_STATE" 2>/dev/null || true
   # Capture the probe to a var FIRST: piping \`claude --channels\` into grep under
   # \`set -o pipefail\` would report claude's intentional nonzero exit and make the
   # \`if\` always false (channels never activate). \`|| true\` keeps the nonzero from
   # tripping \`set -e\`. The flag exists iff commander prints "argument missing".
-  if [ "$PRIMARY" = "claude" ]; then
+  # PAGER IS THE DEFAULT, and channel is something a human turns on. The reason is not
+  # that channels are bad: it is that nobody has ever measured what they buy, they are a
+  # research preview we do not control (the flag has already changed once, and the
+  # confirmation prompt's wording can change without notice), and the pager works without
+  # any of it. A part that wakes slightly less precisely beats a part that does not wake.
+  # So the failure mode of getting this wrong is a worse wake rather than no wake.
+  if [ "$PRIMARY" = "claude" ] && [ "\${CHANNEL_WANTED:-0}" = "1" ]; then
     probe="$(claude --channels 2>&1 || true)"
     if grep -q "argument missing" <<<"$probe"; then
       # Channels EXIST. Whether ours LOADS is a separate question - ask it.
@@ -378,9 +414,20 @@ prepare_launch() {
             base="claude --dangerously-load-development-channels server:relayroom-channel"
             mode="channel"; why=" (relayroom-channel loadable, via $layer; prompt answered in tmux)"
           else
-            # No pane to press Enter in: the launch would park on the prompt forever and
-            # look alive. Pager delivery works everywhere and is visible when it does not.
-            why=" (channel supported and loadable, but nothing here can answer the development-channels prompt - pager delivers instead)"
+            # SOMEBODY ASKED FOR THIS, so it is said out loud rather than quietly
+            # downgraded. Now that channel mode is opt-in there is a person to tell, and
+            # a silent downgrade would be the same disease in the other direction: their
+            # setting stays on, nothing uses it, and nothing says so.
+            #
+            # Delivery still goes to pager rather than refusing the launch outright - the
+            # part must wake either way - but the state file keeps the refusal so
+            # BT_rr.sh statusBT_ repeats it long after this line has scrolled away.
+            printf '%s refused no-tmux-pane 0\\n' "$(date +%s)" > "$CHANNEL_STATE" 2>/dev/null || true
+            echo "rr: channel is ON for this worktree, but there is no tmux pane to answer the" >&2
+            echo "    development-channels prompt, so channels cannot start here. Delivering by" >&2
+            echo "    pager instead. Launch inside tmux (./rr.sh up), or ./rr.sh up --no-channel" >&2
+            echo "    to stop asking." >&2
+            why=" (channel wanted, but nothing here can answer the development-channels prompt)"
           fi ;;
         notready)
           why=" (channel supported, but relayroom-channel is not approved here - run ./rr.sh setup; via $layer)" ;;
@@ -394,10 +441,6 @@ prepare_launch() {
   # be written rather than launching with a wrong mode.
   $CLI delivery "$mode" >/dev/null || { echo "rr.sh: failed to set delivery=$mode - aborting launch" >&2; exit 1; }
   DELIVERY_MODE="$mode"
-  # A stale verdict from the previous launch must not be read as this one's. Cleared
-  # here rather than in the watcher, so the window where the file describes the wrong
-  # launch is zero rather than "however long the watcher takes to start".
-  rm -f "$CHANNEL_STATE" 2>/dev/null || true
   # Opt-in: skip the CLI's approval prompts (bypasses ALL permission checks, not just
   # RelayRoom). Carried as a suffix so it composes with the channel + resume flags.
   [ "$BYPASS" = "1" ] && byp=" $(bypass_flag)" && echo "bypass: ON ($(bypass_flag))" >&2
@@ -543,8 +586,8 @@ sl() {
   if [ -f "$CHANNEL_STATE" ]; then
     read -r _cts _cres _cdet < "$CHANNEL_STATE" 2>/dev/null || true
     case "\${_cres:-}" in
-      fallback) pgr="$pgr $sep #[fg=red,bold]○ !Channel#[default]" ;;
-      pending)  pgr="$pgr $sep #[fg=colour244]channel?#[default]" ;;
+      fallback|refused) pgr="$pgr $sep #[fg=red,bold]○ !Channel#[default]" ;;
+      pending)          pgr="$pgr $sep #[fg=colour244]channel?#[default]" ;;
     esac
   fi
   # CLI update available: the pager writes the latest npm version into this file.
@@ -558,13 +601,19 @@ sl() {
 # every run is one nobody reads by the time it matters.
 channel_report() {
   [ -f "$CHANNEL_STATE" ] || return 0
-  local ts res detail
-  read -r ts res detail < "$CHANNEL_STATE" 2>/dev/null || return 0
+  local ts res detail streak
+  read -r ts res detail streak < "$CHANNEL_STATE" 2>/dev/null || return 0
   case "$res" in
     fallback)
-      echo "channel: NOT delivering - fell back to pager at $(at_hhmm "\${ts:-0}") (\${detail:-no detail})."
-      echo "         claude accepted the launch and dropped notifications; wakes now arrive by send-keys."
-      echo "         Run ./rr.sh doctor, or ./rr.sh up --restart once the cause is fixed." ;;
+      echo "channel: ON for this worktree, but NOT delivering - fell back to pager at $(at_hhmm "\${ts:-0}") (\${detail:-no detail})."
+      echo "         claude accepted the launch and dropped notifications; wakes arrive by send-keys instead."
+      # The streak is the part that turns a one-off into a standing cost: every launch
+      # pays the watcher's wait before falling back, and without a count that is invisible.
+      [ "\${streak:-0}" -gt 1 ] 2>/dev/null && echo "         This has now failed \${streak} launches in a row - ./rr.sh up --no-channel stops the retry."
+      echo "         The setting is left ON: nobody turns off what a person chose. Fix the cause and it works again." ;;
+    refused)
+      echo "channel: ON for this worktree, but this launch had no tmux pane to answer the prompt - pager delivered instead."
+      echo "         Launch inside tmux, or ./rr.sh up --no-channel." ;;
     pending)
       echo "channel: waiting for claude to confirm delivery (started $(at_hhmm "\${ts:-0}"))." ;;
   esac

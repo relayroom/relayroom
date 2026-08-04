@@ -74,7 +74,15 @@ exit 0
    * `launch` path runs inside the session, so TMUX set is what "there is a pane" means
    * there; a test that forgets it is testing the headless case.
    */
-  const decide = async (opts: { inPane?: boolean } = {}) => {
+  const decide = async (opts: { inPane?: boolean; wanted?: boolean } = {}) => {
+    // Channels are OPT-IN now, so every case about "which mode is chosen" is a case
+    // about a worktree that asked for channels. Default true here, with the opposite
+    // pinned separately below - a suite where the default were false would test the
+    // same branch over and over without noticing.
+    const cfgPath = join(dir, ".relayroom", "config.json")
+    const cfg = JSON.parse(readFileSync(cfgPath, "utf8"))
+    cfg.channel = opts.wanted !== false
+    writeFileSync(cfgPath, JSON.stringify(cfg, null, 2))
     const useEnv = opts.inPane === false ? env : { ...env, TMUX: "/tmp/tmux-test,1,0" }
     // `launch` ends in `exec sh -c "$LAUNCH"`, and LAUNCH is the stub, which exits 0.
     const { stdout, stderr } = await run("bash", [join(dir, "rr.sh"), "launch"], { cwd: dir, env: useEnv })
@@ -104,6 +112,23 @@ exit 0
     if (savedTmux !== undefined) process.env.TMUX = savedTmux
     rmSync(dir, { recursive: true, force: true })
     rmSync(bin, { recursive: true, force: true })
+  })
+
+  /**
+   * THE DEFAULT, and it is the whole point of the release. Channels are a research
+   * preview we do not control - the flag changed once already, the confirmation prompt's
+   * wording can change without notice, and under `-p` the flag is ignored outright. The
+   * pager needs none of that. So the question stopped being "can we use channels" and
+   * became "did anyone ask for them", and the answer decides before any evidence is
+   * gathered: nothing here even probes claude when the intent is off.
+   */
+  it("delivers by pager when nobody asked for channels, however good the evidence", async () => {
+    stubClaude({ list: "relayroom-channel: node ... - ✔ Connected" })
+    const { delivery } = await decide({ wanted: false })
+    expect(delivery).toBe("pager")
+    // The capability probe is not even run - the decision does not depend on it.
+    const invoked = readFileSync(join(bin, "calls.log"), "utf8")
+    expect(invoked).not.toMatch(/claude --channels/)
   })
 
   it("takes channel mode when the server is observably connected", async () => {
@@ -147,7 +172,14 @@ exit 0
     stubClaude({ list: "relayroom-channel: node ... - ✔ Connected" })
     const { out, delivery } = await decide({ inPane: false })
     expect(delivery).toBe("pager")
-    expect(out).toContain("nothing here can answer")
+    // LOUD, not quiet. Channels are opt-in now, so there is a person who turned this on
+    // and a silent downgrade would leave their setting true while nothing used it - the
+    // same disease pointing the other way.
+    expect(out).toContain("channel is ON for this worktree")
+    expect(out).toContain("--no-channel")
+    // And it survives the launch scrolling away.
+    const state = readFileSync(join(dir, ".relayroom", "channel.state"), "utf8")
+    expect(state).toContain("refused no-tmux-pane")
   })
 
   /**
@@ -158,6 +190,10 @@ exit 0
   it("reads claude's own log as the strongest evidence of delivery", async () => {
     stubClaude({ list: "" }) // the observable layer cannot answer; the log must carry it
     const home = mkdtempSync(join(tmpdir(), "relayroom-home-"))
+    // These two drive rr.sh directly (they need a custom HOME), so they set the opt-in
+    // themselves - decide() is what normally does it.
+    const cfgPath = join(dir, ".relayroom", "config.json")
+    writeFileSync(cfgPath, JSON.stringify({ ...JSON.parse(readFileSync(cfgPath, "utf8")), channel: true }, null, 2))
     const logDir = join(home, ".cache", "claude-cli-nodejs", dir.replace(/[^A-Za-z0-9]/g, "-"), "mcp-logs-relayroom-channel")
     mkdirSync(logDir, { recursive: true })
     writeFileSync(join(logDir, "a.jsonl"), JSON.stringify({ debug: "Channel notifications registered" }) + "\n")
@@ -183,6 +219,10 @@ exit 0
   it("does not treat a skip from a previous launch form as a verdict", async () => {
     stubClaude({ list: "relayroom-channel: node ... - ✔ Connected" })
     const home = mkdtempSync(join(tmpdir(), "relayroom-home-"))
+    // These two drive rr.sh directly (they need a custom HOME), so they set the opt-in
+    // themselves - decide() is what normally does it.
+    const cfgPath = join(dir, ".relayroom", "config.json")
+    writeFileSync(cfgPath, JSON.stringify({ ...JSON.parse(readFileSync(cfgPath, "utf8")), channel: true }, null, 2))
     const logDir = join(home, ".cache", "claude-cli-nodejs", dir.replace(/[^A-Za-z0-9]/g, "-"), "mcp-logs-relayroom-channel")
     mkdirSync(logDir, { recursive: true })
     writeFileSync(
