@@ -38,7 +38,8 @@
   "scripts": {
     "build": "tsup",
     "prepublishOnly": "tsup",
-    "test": "vitest run"
+    "test": "vitest run",
+    "pretest": "tsup"
   },
   "dependencies": {
     "commander": "^15.0.0"

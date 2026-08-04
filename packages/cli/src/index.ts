@@ -126,9 +126,16 @@ program
     child.on("exit", (code) => process.exit(code ?? 0))
   })
 
-// ── channel: Claude Code Channels wake server (stdio MCP) ───────────────────────
+// ── channel-server: Claude Code Channels wake server (stdio MCP) ────────────────
+// Named `channel-server`, not `channel`, because 0.6.1 added `channel on|off` for the
+// INTENT and commander throws at registration when two commands share a name - which
+// killed every CLI invocation, including the launcher's, so no agent could start. The
+// server keeps the renamed form rather than the intent giving way: `.mcp.json` spawns
+// `relayroom-channel.mjs` directly on every worktree checked, so this wrapper had no
+// callers, while `channel on|off` is already referenced by `rr.sh --channel`, the 0.6.1
+// release notes, and config.ts. Renaming the one nobody calls costs nothing.
 program
-  .command("channel")
+  .command("channel-server")
   .description("Run the RelayRoom Claude Channels server (stdio MCP; invoked by Claude via .mcp.json)")
   .option("--code <connect_code>", "project connect code (default: from .relayroom/config.json)")
   .option("--part <part>", "this agent's part (default: from .relayroom/config.json)")
