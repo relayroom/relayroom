@@ -4,6 +4,47 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.6.2] - 2026-08-04
+
+Patch release. **0.6.1 could not start** - skip it and take this one.
+
+### Fixed
+
+**The CLI threw before it read its first argument.**
+
+0.6.1 added `channel on|off` for the delivery intent, alongside the existing `channel`
+command that runs the channel server. Commander rejects a duplicate command name at
+registration, which happens at import, so every invocation died - including the one the
+launcher makes. `./rr.sh up` ended in `failed to set delivery=channel - aborting launch`, and
+no agent started.
+
+The server command is the one that moved, to `channel-server`. Every `.mcp.json` inspected
+spawns `relayroom-channel.mjs` directly, so that wrapper had no callers, while `channel
+on|off` is already named by `rr.sh --channel`, by the config, and by 0.6.1's own notes.
+
+### Changed
+
+**CI builds before it tests.** The CLI tests run the built `dist/index.js`, and the build job
+ran *after* the test job - so they asserted against whatever build was lying around rather than
+against the code in the commit. The same ordering now applies locally. A new test starts the
+built CLI and asserts it registers its commands and lists each exactly once.
+
+### A note on our own verification
+
+0.6.1's release note said this project keeps finding cases where something stopped working and
+every signal said it was fine. It then shipped one, in the release that said it - and shipped
+it with 185 CLI tests green, a clean typecheck, and green CI.
+
+Each of those was reporting on something adjacent to "the program runs". `tsc` cannot see a
+duplicate registration, because nothing about it is a type error. The bundler cannot, because
+it is valid code. The tests could have, but they ran an older build, because of a job order
+nobody had reason to look at. **No step was wrong. The order meant the thing under test was
+never the thing being shipped** - which is the same shape as the defect 0.6.1 existed to fix,
+one layer further out.
+
+The fix that matters here is the ordering, not the rename. The rename removes today's crash;
+the ordering is what makes the next one visible before a user finds it.
+
 ## [0.6.1] - 2026-08-04
 
 Patch release. **No database migrations.** One fix, and it is the kind this project keeps
