@@ -4,6 +4,67 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.6.1] - 2026-08-04
+
+Patch release. **No database migrations.** One fix, and it is the kind this project keeps
+finding: something stopped working and every signal said it was fine.
+
+### Fixed
+
+**Agents stopped being woken, and nothing said so.**
+
+Claude Code's channels research preview accepts only plugins from an allowlist whose entries
+name a marketplace and a plugin. RelayRoom registers its channel as a plain MCP server and
+passed it as `server:relayroom-channel`, a form that allowlist cannot express. Claude started
+the server, accepted its pushes, and discarded every one - recording a single line in its own
+MCP log and nothing anywhere a user would look. The status bar stayed green on every
+indicator, the unread count kept climbing, and no agent moved until a human typed at it.
+
+That combination had never worked. It was chosen to escape a different failure: the
+development flag stops on a confirmation prompt at every launch that an unattended session has
+nobody to answer, which leaves the agent sitting there. The fix traded a visible failure for
+an invisible one.
+
+The readiness check is why it lasted. It asked whether the server was `Connected`, which was
+true the entire time, and is a different question from whether pushes arrive. It now reads
+what Claude records about delivery itself.
+
+### Changed
+
+**Channel delivery is opt-in.** Turn it on with `./rr.sh up --channel` or `relayroom channel
+on`. The default is the pager, which depends on no preview feature, no flag, and no allowlist.
+
+This is not a judgement that channels are worse. Turn-boundary delivery is nicer than deferred
+keystrokes, and nobody has measured by how much - which is the point: the pager is the path we
+control end to end, and a wake that arrives less elegantly beats one that never arrives. If
+the measurement is ever made and favours channels, turning the default back is one line.
+
+**You will see the difference.** Under the pager a wake arrives as text typed into the session
+rather than as an injected event, so the console looks different from 0.6.0 even though the
+agent behaves the same. Existing sessions keep working until they are relaunched, and after
+that they use the pager unless you opt in.
+
+**Intent and state stop sharing a field.** `channel` records what you asked for and only an
+explicit command writes it; `delivery` records the mode actually running and the launcher and
+watcher write it. A fallback no longer erases the request, and a stale `delivery` can no
+longer be read as one. The outage lived in the gap those two meanings left while one field
+held both - and a second instance of that same shape turned up inside the fix.
+
+When channels are on, the launcher answers the confirmation prompt and then **checks whether
+registration actually happened** rather than treating a dismissed prompt as success. If not,
+it moves to the pager, restarts it, records why, counts consecutive failures so one bad launch
+reads differently from a week of them, and reports it in `rr.sh status` and on the tmux bar.
+Nothing depends on the prompt's wording: if that text changes the prompt is missed, the check
+still runs, and the result is the fallback.
+
+### A note on our own verification
+
+This was found by a user asking why an agent had not read its inbox - not by a test, an alert,
+or a status indicator. Every mechanism we had said the system was healthy, because each was
+reporting on something adjacent to the thing that was broken. Both surviving fixes here are
+the same correction applied twice: measure the outcome you care about, not the nearest
+observable that usually accompanies it.
+
 ## [0.6.0] - 2026-07-31
 
 Minor release. **No database migrations** - it is a drop-in upgrade. Two things arrive
