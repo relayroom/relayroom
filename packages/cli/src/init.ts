@@ -96,6 +96,7 @@ PIDFILE="$ROOT/.relayroom/pager.pid"; LOG="$ROOT/.relayroom/pager.log"
 # already gone, and the owner sees only a part that went quiet. This file is how the
 # silence explains itself the next time anyone looks.
 RESPAWN_STATE="$ROOT/.relayroom/last-respawn"
+CHANNEL_STATE="$ROOT/.relayroom/channel.state"
 CLI="relayroom"; command -v relayroom >/dev/null 2>&1 || CLI="npx -y @relayroom/cli"
 
 # ── launch (Claude Channels premium path vs send-keys) ─────────────────────────
@@ -149,6 +150,37 @@ build_launch() {
 }
 
 LAUNCH="$PRIMARY"
+DELIVERY_MODE="pager"
+
+# Where Claude Code writes what it did with our channel server. The escape rule is the
+# cwd with every non-alphanumeric turned into '-', measured against this machine's real
+# directories rather than inferred from one example.
+channel_log_dir() { echo "$HOME/.cache/claude-cli-nodejs/$(pwd | sed 's/[^A-Za-z0-9]/-/g')/mcp-logs-relayroom-channel"; }
+
+# What claude LAST said about delivering channel notifications for this worktree:
+# registered | skipped-allowlist | skipped-notlisted | none.
+#
+# THE ONLY EVIDENCE ABOUT DELIVERY WE HAVE, and it exists because every earlier probe
+# was about a neighbouring fact. \`claude mcp list\` says Connected - true, and it stays
+# true while notifications are dropped: the server really does connect (stdio, 50ms,
+# capabilities exchanged) and the channel gate is applied separately, after that. These
+# log lines are claude describing the thing we actually want to happen.
+#
+# Reads every file in the directory, newest line wins: a worktree accumulates one log per
+# session and a session that never reached the gate writes none of these lines, so
+# "newest FILE" is not the same question as "newest ANSWER".
+channel_log_verdict() {
+  local d line
+  d="$(channel_log_dir)"
+  [ -d "$d" ] || { echo none; return; }
+  line="$(grep -h "Channel notifications" "$d"/*.jsonl 2>/dev/null | tail -1 || true)"
+  case "$line" in
+    *"Channel notifications registered"*)        echo registered ;;
+    *"approved channels allowlist"*)             echo skipped-allowlist ;;
+    *"not in --channels list for this session"*) echo skipped-notlisted ;;
+    *)                                           echo none ;;
+  esac
+}
 
 # Whether the relayroom-channel MCP server will actually LOAD in this worktree,
 # as "<ready|notready|unknown> <layer that decided>".
@@ -173,10 +205,22 @@ LAUNCH="$PRIMARY"
 # The general form, worth asking out loud the next time anything here says "we choose on
 # evidence": evidence about WHAT, and is it the thing we then do?
 channel_ready() {
-  local out=""
-  # Layer 1, the observable: \`claude mcp list\` reports the server's real state,
-  # approval included. An outcome rather than a config key, so it still answers if a
-  # future Claude Code moves the gate somewhere we have not heard of.
+  local out="" prior=""
+  # Layer 0, the newest and the strongest: what claude last DID with the channel here.
+  # \`registered\` is the only line that reports the behaviour we are about to depend on.
+  #
+  # A previous \`skipped\` is deliberately NOT read as notready. It describes the launch
+  # form that produced it, and if that form was \`--channels server:\` - which cannot work
+  # for a bare MCP server at all - the verdict says nothing about the dev-flag launch we
+  # now perform. Evidence is about an action, not about a worktree; reading a stale
+  # skip as a verdict would make one bad launch permanent.
+  prior="$(channel_log_verdict)"
+  if [ "$prior" = "registered" ]; then echo "ready delivered"; return; fi
+  # Layer 1, the observable: \`claude mcp list\` reports the server's real state, approval
+  # included. It answers "can this server load at all", NOT "will notifications be
+  # delivered" - it read Connected through the entire outage. Kept because a server that
+  # cannot load certainly cannot deliver; demoted because it was being read as the
+  # stronger claim.
   out="$(claude mcp list 2>/dev/null || true)"
   if grep -q '^relayroom-channel:' <<<"$out"; then
     if grep -q '^relayroom-channel:.*Connected' <<<"$out"; then echo "ready observed"; else echo "notready observed"; fi
@@ -196,6 +240,105 @@ channel_ready() {
   echo "unknown none"
 }
 
+# Can something answer the development-channels confirmation prompt for this launch?
+#
+# Channel mode now requires the dangerous flag (see prepare_launch), and that flag stops
+# on a prompt every single time - it is not suppressed by --dangerously-skip-permissions
+# and accepting it stores no consent. So the question "can we use channels" reduces to
+# "is there a tmux pane we can send Enter to". Answer no and we take pager delivery,
+# which works without a terminal at all.
+#
+# Two known-negative cases, both left to pager on purpose: a launch with no tmux, and
+# claude's non-interactive \`-p\` mode, where the dev flag is ignored outright
+# (\`if (!isNonInteractive && devChannels?.length)\` in Claude Code) - so a headless
+# deployment has no channel path at all and must not be told it does.
+channel_prompt_answerable() {
+  command -v tmux >/dev/null 2>&1 || return 1
+  [ -n "$SESSION" ] || return 1
+  # Set by the in-place BT_launchBT_ path when it is NOT inside tmux: there the pane is
+  # wherever the caller already is, so an absent $TMUX means the prompt has no reader and
+  # no watcher can reach it. The session-creating paths (up, respawn, console) do not set
+  # it - they are about to create the pane the watcher will target.
+  [ -z "\${RR_NO_TMUX_PANE:-}" ] || return 1
+}
+
+# The prompt's text. Matching on prose is fragile, which is why nothing DEPENDS on it:
+# if the wording changes we simply never see it, the verification below still runs, and
+# the launch degrades to pager instead of pretending. Captured from a live pane.
+CHANNEL_PROMPT_MATCH="using this for local development"
+
+# Answer the prompt, then CHECK WHETHER IT WORKED, then fall back if it did not.
+#
+# The check is the point. Pressing Enter into a pane is an action with no result to
+# inspect - the same class of blind step that produced this outage - so the watcher
+# reads claude's own log afterwards and only then decides. Three outcomes:
+#   registered -> channel delivery confirmed; record it and stop.
+#   anything else after the deadline -> rewrite delivery to pager and restart the pager,
+#     so wakes arrive by send-keys instead of not at all.
+# The verdict is written to .relayroom/channel.state for the status bar, because a
+# fallback nobody can see is the failure this whole change is about.
+#
+# Runs DETACHED (setsid): up attaches to the session immediately after launching, and a
+# watcher in the foreground would either block that or die with the caller's shell.
+channel_watch_bg() {
+  local target="$1" script="$ROOT/.relayroom/channel-watch.sh"
+  cat > "$script" <<'CHANWATCH'
+#!/bin/sh
+# Generated by rr.sh - answers the development-channels prompt and verifies delivery.
+# args: <tmux-target> <state-file> <log-dir> <prompt-match> <cli>
+target="$1"; state="$2"; logdir="$3"; match="$4"; cli="$5"
+verdict() {
+  line="$(grep -h "Channel notifications" "$logdir"/*.jsonl 2>/dev/null | tail -1)"
+  case "$line" in
+    *"Channel notifications registered"*) echo registered ;;
+    *"approved channels allowlist"*) echo skipped-allowlist ;;
+    *"not in --channels list for this session"*) echo skipped-notlisted ;;
+    *) echo none ;;
+  esac
+}
+start="$(verdict)"
+i=0
+answered=0
+# ~40s: claude has to start, print the prompt, and (after Enter) reach the channel gate.
+# Overridable because the right number is a property of the machine, not of this script -
+# a loaded box needs longer, and a test needs it to be over in one tick.
+ticks="\${RR_CHANNEL_WATCH_TICKS:-80}"
+while [ "$i" -lt "$ticks" ]; do
+  if [ "$answered" = "0" ] && tmux capture-pane -p -t "$target" 2>/dev/null | grep -q "$match"; then
+    tmux send-keys -t "$target" Enter 2>/dev/null && answered=1
+  fi
+  v="$(verdict)"
+  # A verdict is only OURS if it changed, or if there was none before: a stale
+  # "registered" from a previous session would otherwise confirm a launch that is
+  # still sitting on the prompt.
+  if [ "$v" = "registered" ] && { [ "$start" != "registered" ] || [ "$i" -gt 10 ]; }; then
+    printf '%s ok registered
+' "$(date +%s)" > "$state"
+    exit 0
+  fi
+  i=$((i + 1))
+  sleep 0.5
+done
+printf '%s fallback %s-after-40s-answered-%s
+' "$(date +%s)" "$(verdict)" "$answered" > "$state"
+# Delivery was written as channel and channel did not happen. Switch the pager over so
+# the part still gets woken, and leave the reason on disk for the status bar.
+$cli delivery pager >/dev/null 2>&1 || true
+CHANWATCH
+  chmod +x "$script"
+  setsid nohup "$script" "$target" "$CHANNEL_STATE" "$(channel_log_dir)" "$CHANNEL_PROMPT_MATCH" "$CLI" \
+    >"$ROOT/.relayroom/channel-watch.out" 2>&1 </dev/null &
+}
+
+# Start the prompt-answering watcher, but only for the launch that needs it. Reads the
+# mode prepare_launch just decided rather than re-deciding: two decisions about one
+# question is how the probe and the launch drifted apart in the first place.
+channel_after_launch() {
+  [ "$DELIVERY_MODE" = "channel" ] || return 0
+  printf '%s pending watching\n' "$(date +%s)" > "$CHANNEL_STATE" 2>/dev/null || true
+  channel_watch_bg "$1"
+}
+
 prepare_launch() {
   local mode="pager" probe="" base="$PRIMARY" byp="" why="" verdict="" layer=""
   # Capture the probe to a var FIRST: piping \`claude --channels\` into grep under
@@ -209,17 +352,30 @@ prepare_launch() {
       read -r verdict layer <<< "$(channel_ready)"
       case "$verdict" in
         ready)
-          # \`--channels\`, NOT \`--dangerously-load-development-channels\`. Measured: the
-          # dangerous form stops on a confirmation prompt on EVERY launch - it is not
-          # suppressed by --dangerously-skip-permissions, and accepting it stores no
-          # consent anywhere, so the next launch asks again. An unattended relaunch has
-          # nobody to press Enter, so the session exists, the process is alive, the pane
-          # reads \`zsh\`, and the agent sits on that prompt forever. \`--channels\` starts
-          # with no prompt and reports the channel active - it is what the warning itself
-          # tells you to use. Note the probe above already tests for \`--channels\`: we were
-          # detecting one flag and then launching with the other.
-          base="claude --channels server:relayroom-channel"
-          mode="channel"; why=" (relayroom-channel loadable, via $layer)" ;;
+          # \`--channels server:<name>\` IS NOT AN OPTION AND NEVER WAS, for a reason that is
+          # about the shape of the feature rather than about a bug. During the preview
+          # \`--channels\` accepts only PLUGINS on an allowlist - Anthropic's, or an org's
+          # \`allowedChannelPlugins\` - and an allowlist entry is a {marketplace, plugin}
+          # pair. We pass a bare MCP server from .mcp.json, which cannot be written in that
+          # form at all, so no amount of approval can ever let it through. claude does not
+          # fail: it starts, connects the server, and writes one line to its own log -
+          # "Channel notifications skipped: ... is not on the approved channels allowlist".
+          #
+          # That combination cost a four-part project every wake it should have received,
+          # with the status bar green throughout. The previous comment here was right that
+          # the dangerous flag prompts on every launch and wrong that \`--channels\` was the
+          # alternative: it traded a VISIBLE failure (a session parked on a prompt, on
+          # screen) for an INVISIBLE one (delivery silently dropped, nothing on screen).
+          # Between those two, the visible one is always the better trade - and the prompt
+          # is answerable, which is what makes this branch conditional.
+          if channel_prompt_answerable; then
+            base="claude --dangerously-load-development-channels server:relayroom-channel"
+            mode="channel"; why=" (relayroom-channel loadable, via $layer; prompt answered in tmux)"
+          else
+            # No pane to press Enter in: the launch would park on the prompt forever and
+            # look alive. Pager delivery works everywhere and is visible when it does not.
+            why=" (channel supported and loadable, but nothing here can answer the development-channels prompt - pager delivers instead)"
+          fi ;;
         notready)
           why=" (channel supported, but relayroom-channel is not approved here - run ./rr.sh setup; via $layer)" ;;
         *)
@@ -231,6 +387,11 @@ prepare_launch() {
   # wakes (delivery=channel + bare claude => nobody delivers). Fail loud if it can't
   # be written rather than launching with a wrong mode.
   $CLI delivery "$mode" >/dev/null || { echo "rr.sh: failed to set delivery=$mode - aborting launch" >&2; exit 1; }
+  DELIVERY_MODE="$mode"
+  # A stale verdict from the previous launch must not be read as this one's. Cleared
+  # here rather than in the watcher, so the window where the file describes the wrong
+  # launch is zero rather than "however long the watcher takes to start".
+  rm -f "$CHANNEL_STATE" 2>/dev/null || true
   # Opt-in: skip the CLI's approval prompts (bypasses ALL permission checks, not just
   # RelayRoom). Carried as a suffix so it composes with the channel + resume flags.
   [ "$BYPASS" = "1" ] && byp=" $(bypass_flag)" && echo "bypass: ON ($(bypass_flag))" >&2
@@ -368,10 +529,39 @@ sl() {
   if [ "\${n:-0}" -gt 0 ] 2>/dev/null; then inbox="#[fg=yellow,bold]inbox: \${n}#[default]"; else inbox="#[fg=colour244]inbox: 0#[default]"; fi
   if mcp_online; then mcp="#[fg=green]●#[default] MCP"; else mcp="#[fg=red,bold]○ !MCP#[default]"; fi
   if pg_running;  then pgr="#[fg=green]●#[default] Pager"; else pgr="#[fg=red,bold]○ !Pager#[default]"; fi
+  # Channel state, shown ONLY when something is wrong with it. The outage this exists for
+  # was invisible precisely because every indicator was about a neighbouring fact - MCP
+  # reachable, pager alive - while delivery was dead. A green dot for a working channel
+  # would add a fourth thing that is true when nothing works; a red one appears only when
+  # the watcher measured a real fallback.
+  if [ -f "$CHANNEL_STATE" ]; then
+    read -r _cts _cres _cdet < "$CHANNEL_STATE" 2>/dev/null || true
+    case "\${_cres:-}" in
+      fallback) pgr="$pgr $sep #[fg=red,bold]○ !Channel#[default]" ;;
+      pending)  pgr="$pgr $sep #[fg=colour244]channel?#[default]" ;;
+    esac
+  fi
   # CLI update available: the pager writes the latest npm version into this file.
   # Shows '↑<ver>'; run './rr.sh update' to refresh RELAYROOM.md (npm for the CLI).
   if [ -f "$ROOT/.relayroom/.update" ]; then upd=" $sep #[fg=cyan,bold]↑$(cat "$ROOT/.relayroom/.update" 2>/dev/null)#[default]"; fi
   printf '%s %s %s %s %s %s %s%s' "$PART" "$sep" "$inbox" "$sep" "$mcp" "$sep" "$pgr" "$upd"
+}
+
+# What happened to channel delivery on the last launch, in words. Silent when there is
+# nothing to say (no channel launch, or it worked), because a status line that speaks on
+# every run is one nobody reads by the time it matters.
+channel_report() {
+  [ -f "$CHANNEL_STATE" ] || return 0
+  local ts res detail
+  read -r ts res detail < "$CHANNEL_STATE" 2>/dev/null || return 0
+  case "$res" in
+    fallback)
+      echo "channel: NOT delivering - fell back to pager at $(at_hhmm "\${ts:-0}") (\${detail:-no detail})."
+      echo "         claude accepted the launch and dropped notifications; wakes now arrive by send-keys."
+      echo "         Run ./rr.sh doctor, or ./rr.sh up --restart once the cause is fixed." ;;
+    pending)
+      echo "channel: waiting for claude to confirm delivery (started $(at_hhmm "\${ts:-0}"))." ;;
+  esac
 }
 
 # ── tmux ─────────────────────────────────────────────────────────────────────
@@ -396,7 +586,13 @@ assert_session_name() {
 tx_exists() { tmux has-session -t "=$SESSION" 2>/dev/null; }
 tx_start() {
   if tx_exists; then echo "session '$SESSION' exists - attaching"; tmux attach -t "=$SESSION";
-  else prepare_launch; echo "creating session '$SESSION' running '$LAUNCH'"; tmux new-session -s "$SESSION" "$LAUNCH"; fi
+  else
+    prepare_launch; echo "creating session '$SESSION' running '$LAUNCH'"
+    # Spawned first: new-session without -d ATTACHES and does not return until the
+    # session ends, so a watcher started after it would start when it no longer matters.
+    channel_after_launch "$SESSION"
+    tmux new-session -s "$SESSION" "$LAUNCH"
+  fi
 }
 tx_status() { tx_exists && echo "tmux: session '$SESSION' running" || echo "tmux: no session '$SESSION'"; }
 
@@ -589,7 +785,7 @@ respawn_session() {
   if [ "$mode" = "detached" ]; then respawn_detached; return 0; fi
   tmux kill-session -t "=$SESSION" 2>/dev/null || true
   echo "restarting session '$SESSION' running '$LAUNCH'"
-  if tmux new-session -d -s "$SESSION" "$LAUNCH"; then respawn_record ok respawned-in-place
+  if tmux new-session -d -s "$SESSION" "$LAUNCH"; then respawn_record ok respawned-in-place; channel_after_launch "$SESSION"
   else respawn_record failed tmux-refused-new-session; return 1; fi
 }
 
@@ -1029,7 +1225,11 @@ case "\${1:-help}" in
         exit 1
       fi
     fi
-    if ! tx_exists; then prepare_launch; echo "starting session '$SESSION' running '$LAUNCH'"; tmux new-session -d -s "$SESSION" "$LAUNCH"; fi
+    if ! tx_exists; then
+      prepare_launch; echo "starting session '$SESSION' running '$LAUNCH'"
+      tmux new-session -d -s "$SESSION" "$LAUNCH"
+      channel_after_launch "$SESSION"
+    fi
     # RESTART the pager (not just start): a pager left over from a previous session
     # has the OLD target baked in (it reads config.json once at startup and has no
     # --target), so a bare pg_start would no-op on the stale pager and the new
@@ -1048,11 +1248,22 @@ case "\${1:-help}" in
   # RESTART the pager (not just start): prepare_launch may have CHANGED delivery
   # (channel<->pager), but the pager only reads delivery at startup, so a stale
   # running pager would deliver in the wrong mode.
-  launch) assert_session_name; prepare_launch; pg_stop >/dev/null 2>&1 || true; pg_start; exec sh -c "$LAUNCH" ;;
+  launch)
+    assert_session_name
+    # No tmux around this shell means no pane for the development-channels prompt, and
+    # channel mode would park the agent on it. Decided here rather than inside
+    # prepare_launch because only this path knows the pane is the caller's own.
+    [ -n "\${TMUX:-}" ] || RR_NO_TMUX_PANE=1
+    prepare_launch; pg_stop >/dev/null 2>&1 || true; pg_start
+    # The watcher must be spawned BEFORE the exec - after it there is no shell left to
+    # spawn anything. It targets this pane, which is where the prompt will appear.
+    channel_after_launch "\${TMUX_PANE:-$SESSION}"
+    exec sh -c "$LAUNCH" ;;
   down) assert_session_name; pg_stop; tmux kill-session -t "$SESSION" 2>/dev/null && echo "killed session '$SESSION'" || echo "no session to kill" ;;
   status)
     tx_status
     if mcp_online; then echo "mcp: server reachable ($SERVER)"; else echo "mcp: server UNREACHABLE ($SERVER) - is the hub up?"; fi
+    channel_report
     pg_status
     respawn_report ;;
   # Re-register and reload, from INSIDE the session that needs it. This is the command an

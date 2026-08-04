@@ -68,9 +68,16 @@ exit 0
   }
 
   /** Run `rr.sh launch` far enough to make the decision, without execing an agent. */
-  const decide = async () => {
+  /**
+   * `inPane` is not a detail. Channel mode now requires a tmux pane, because the launch
+   * form it needs stops on a confirmation prompt and something has to press Enter. The
+   * `launch` path runs inside the session, so TMUX set is what "there is a pane" means
+   * there; a test that forgets it is testing the headless case.
+   */
+  const decide = async (opts: { inPane?: boolean } = {}) => {
+    const useEnv = opts.inPane === false ? env : { ...env, TMUX: "/tmp/tmux-test,1,0" }
     // `launch` ends in `exec sh -c "$LAUNCH"`, and LAUNCH is the stub, which exits 0.
-    const { stdout, stderr } = await run("bash", [join(dir, "rr.sh"), "launch"], { cwd: dir, env })
+    const { stdout, stderr } = await run("bash", [join(dir, "rr.sh"), "launch"], { cwd: dir, env: useEnv })
     const delivery = JSON.parse(readFileSync(join(dir, ".relayroom", "config.json"), "utf8")).delivery
     return { out: stdout + stderr, delivery }
   }
@@ -80,7 +87,7 @@ exit 0
     bin = mkdtempSync(join(tmpdir(), "relayroom-bin-"))
     savedTmux = process.env.TMUX
     delete process.env.TMUX
-    env = { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` }
+    env = { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, RR_CHANNEL_WATCH_TICKS: "1" }
     delete env.TMUX
     hub = createServer((_req, res) => {
       res.writeHead(200, { "content-type": "text/markdown", "x-relayroom-project-slug": "demo" })
@@ -109,17 +116,91 @@ exit 0
   })
 
   /**
-   * The flag matters, not just the mode. Measured: `--dangerously-load-development-channels`
-   * stops on a confirmation prompt on EVERY launch, is not suppressed by
-   * `--dangerously-skip-permissions`, and stores no consent - so an unattended relaunch
-   * parks on it forever while the session looks healthy. `--channels` starts clean.
+   * REWRITTEN, and the direction of the flip is the finding. This case used to assert
+   * `--channels server:relayroom-channel` and forbid the dangerous form, on the measured
+   * grounds that the dangerous form prompts on every launch. The measurement was right
+   * and the conclusion was wrong: during the preview `--channels` accepts only PLUGINS on
+   * an allowlist, whose entries are {marketplace, plugin} pairs, and we pass a bare MCP
+   * server from .mcp.json - a shape that cannot appear on any allowlist. claude does not
+   * fail; it starts, connects the server, and drops notifications with one line in its
+   * own log. A four-part project lost every wake for hours with a green status bar.
+   *
+   * So the trade was a VISIBLE failure (a session parked on a prompt) for an INVISIBLE
+   * one, and the prompt is answerable - see the watcher tests below.
    */
-  it("launches channel mode with --channels, never the prompting dangerous form", async () => {
+  it("launches channel mode with the development flag, never --channels for a bare server", async () => {
     stubClaude({ list: "relayroom-channel: node ... - ✔ Connected" })
     await decide()
     const invoked = readFileSync(join(bin, "calls.log"), "utf8")
-    expect(invoked).toMatch(/claude --channels server:relayroom-channel/)
-    expect(invoked).not.toMatch(/--dangerously-load-development-channels/)
+    expect(invoked).toMatch(/claude --dangerously-load-development-channels server:relayroom-channel/)
+    // The probe still runs (it asks whether channels exist at all); what must never
+    // appear is a LAUNCH naming the server after --channels.
+    expect(invoked).not.toMatch(/claude --channels server:/)
+  })
+
+  it("stays on pager when there is no tmux pane to answer the prompt", async () => {
+    // The headless case, and the reason channel mode is now conditional on something
+    // other than the server being loadable: the launch form it needs stops on a prompt,
+    // and with no pane the agent would sit on it while the session looked alive. Pager
+    // needs no terminal. (claude ignores the dev flag under `-p` for the same reason:
+    // `if (!isNonInteractive && devChannels?.length)`.)
+    stubClaude({ list: "relayroom-channel: node ... - ✔ Connected" })
+    const { out, delivery } = await decide({ inPane: false })
+    expect(delivery).toBe("pager")
+    expect(out).toContain("nothing here can answer")
+  })
+
+  /**
+   * The evidence layer that did not exist during the outage. `claude mcp list` said
+   * Connected the whole time - true, and about a different question. These lines are
+   * claude reporting what it did with the notifications themselves.
+   */
+  it("reads claude's own log as the strongest evidence of delivery", async () => {
+    stubClaude({ list: "" }) // the observable layer cannot answer; the log must carry it
+    const home = mkdtempSync(join(tmpdir(), "relayroom-home-"))
+    const logDir = join(home, ".cache", "claude-cli-nodejs", dir.replace(/[^A-Za-z0-9]/g, "-"), "mcp-logs-relayroom-channel")
+    mkdirSync(logDir, { recursive: true })
+    writeFileSync(join(logDir, "a.jsonl"), JSON.stringify({ debug: "Channel notifications registered" }) + "\n")
+    try {
+      const { stdout, stderr } = await run("bash", [join(dir, "rr.sh"), "launch"], {
+        cwd: dir,
+        env: { ...env, HOME: home, TMUX: "/tmp/tmux-test,1,0" },
+      })
+      const delivery = JSON.parse(readFileSync(join(dir, ".relayroom", "config.json"), "utf8")).delivery
+      expect(delivery).toBe("channel")
+      expect(stdout + stderr).toContain("via delivered")
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  /**
+   * A stale `skipped` must NOT veto the next launch, and this is the subtle half of the
+   * rule. That line describes the launch form that produced it - and the form that
+   * produced every one of them (`--channels server:`) is the one this release removed.
+   * Reading it as a verdict about the worktree would make one bad launch permanent.
+   */
+  it("does not treat a skip from a previous launch form as a verdict", async () => {
+    stubClaude({ list: "relayroom-channel: node ... - ✔ Connected" })
+    const home = mkdtempSync(join(tmpdir(), "relayroom-home-"))
+    const logDir = join(home, ".cache", "claude-cli-nodejs", dir.replace(/[^A-Za-z0-9]/g, "-"), "mcp-logs-relayroom-channel")
+    mkdirSync(logDir, { recursive: true })
+    writeFileSync(
+      join(logDir, "a.jsonl"),
+      JSON.stringify({ debug: "Channel notifications skipped: server relayroom-channel is not on the approved channels allowlist (use --dangerously-load-development-channels for local dev)" }) + "\n",
+    )
+    try {
+      const { stdout, stderr } = await run("bash", [join(dir, "rr.sh"), "launch"], {
+        cwd: dir,
+        env: { ...env, HOME: home, TMUX: "/tmp/tmux-test,1,0" },
+      })
+      const delivery = JSON.parse(readFileSync(join(dir, ".relayroom", "config.json"), "utf8")).delivery
+      expect(delivery).toBe("channel")
+      // Decided by the observable layer, not by the stale log line.
+      expect(stdout + stderr).toContain("via observed")
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
   })
 
   /** The exact fleet-wide case: the flag exists, the server is pending approval. */
