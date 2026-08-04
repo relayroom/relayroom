@@ -167,6 +167,28 @@ program
     console.log(`delivery=${mode} -> ${path}`)
   })
 
+// ── channel: the INTENT to use Claude Code Channels (not the current mode) ──────
+// Two commands, not one field, because the outage this comes from was a single field
+// carrying both "what was asked for" and "what is running". `delivery` remains the
+// measured mode; this is the standing wish, and only a human writes it.
+program
+  .command("channel")
+  .description("Turn Claude Code Channels on or off for this worktree (intent; delivery reports the actual mode)")
+  .argument("<state>", "on or off")
+  .option("--dir <path>", "worktree directory", ".")
+  .action((state: string, opts: { dir: string }) => {
+    if (state !== "on" && state !== "off") {
+      console.error(`error: state must be "on" or "off" (got "${state}")`)
+      process.exit(1)
+    }
+    const path = writeConfig(opts.dir, { channel: state === "on" })
+    console.log(`channel=${state === "on"} -> ${path}`)
+    if (state === "on") {
+      console.log("channels need a tmux pane (the launch stops on a confirmation prompt).")
+      console.log("Run ./rr.sh up --restart for it to take effect.")
+    }
+  })
+
 // ── hooks: manage the per-agent usage turn-end hook ─────────────────────────────
 const hooks = program.command("hooks").description("Manage the RelayRoom usage hook")
 

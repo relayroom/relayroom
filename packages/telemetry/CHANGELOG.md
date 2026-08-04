@@ -1,5 +1,11 @@
 # @relayroom/telemetry
 
+## 0.6.1
+
+### Patch Changes
+
+- @relayroom/db@0.6.1
+
 ## 0.6.0
 
 ### Patch Changes
