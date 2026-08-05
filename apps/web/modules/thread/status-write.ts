@@ -22,9 +22,9 @@ import { projects, threads } from "@relayroom/db/schema"
  * agent's close lands between them often enough to matter.
  *
  * Unconditionally, the later writer won and nobody learned anything. An agent could
- * close a thread - which marks the project for extraction - and a dashboard action a
+ * close a thread - which is when its lesson is written - and a dashboard action a
  * moment later would move the status back, with both callers told they succeeded.
- * The result was a lesson distilled from a thread that is not closed.
+ * The result was a lesson recorded against a thread that is not closed.
  *
  * Returns false when the row no longer matches. A caller must NOT read that as
  * "nothing needed doing": a compare-and-set that reports a lost race as success is

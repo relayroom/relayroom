@@ -333,7 +333,7 @@
     "title": "Secret redaction",
     "description": "Chosen formats are removed from the text of anything distilled into knowledge from now on. Removed, not hidden - the matching text is never stored, so there is nothing to reveal later and nothing to restore if a pattern was wrong.",
     "scopeNote": "This applies from the next distillation onward. It does not touch entries already stored - to remove those, use Purge below.",
-    "recoveryNote": "A thread that was skipped because redaction left nothing to keep is tried again after you change these settings. An entry that was already stored is not: only Purge removes it.",
+    "recoveryNote": "Changing these rules does not bring anything back. A thread that was skipped because redaction left nothing to keep stays as it is, and an entry that was already stored is removed only by Purge. New rules apply to what is distilled from here on.",
     "detectorsTitle": "Built-in formats",
     "detectorsHint": "Maintained by us. Each looks for one credential format - together they are a list of shapes we thought of, not a guarantee that a secret cannot get through.",
     "literalsTitle": "Exact text",

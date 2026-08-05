@@ -5,8 +5,8 @@
  * action's contract: owner-only (checked from the action, not by which button
  * renders), dry-run counts without deleting, and the real purge honoring the
  * (다) semantic - sole-source entries deleted, multi-source entries refused. A
- * separate suite covers that closing a thread from the dashboard sets the
- * extractor marker.
+ * separate suite covers which statuses set the knowledge marker when a thread is
+ * closed from the dashboard.
  */
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest"
 import { eq } from "drizzle-orm"

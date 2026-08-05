@@ -13,7 +13,8 @@ import { markProjectKnowledgeDirty } from "@relayroom/db/knowledge"
  */
 
 /**
- * Merge keys into `project.knowledge_config` and tell the extractor to look again.
+ * Merge keys into `project.knowledge_config`, and record that the project's
+ * knowledge settings moved.
  *
  * MERGE, NOT REPLACE. `knowledge_config` is one JSONB column holding several
  * unrelated settings - `kDistinctIssuers`, `windowDays`, `retentionDays`,
@@ -27,29 +28,29 @@ import { markProjectKnowledgeDirty } from "@relayroom/db/knowledge"
  * database, so a concurrent writer touching a different key does not lose it
  * either - reading, merging in memory and writing back would.
  *
- * MARKS THE PROJECT DIRTY, IN THE SAME TRANSACTION. The extractor only revisits a
- * project that carries the marker. Changing redaction settings without it means a
- * thread that produced nothing - because an over-broad pattern removed everything
- * worth keeping - STAYS empty after the pattern is corrected, until some unrelated
- * thread happens to close. The recovery the settings screen promises is this call.
+ * MARKS THE PROJECT DIRTY, AND NOTHING READS THAT MARKER TODAY. The automatic
+ * extractor was removed in 0.6.3, and it was the only reader; `knowledge_dirty_at`
+ * now has four writers and no consumer. This call is one of the four.
  *
- * One transaction rather than two statements, because either order fails on its
- * own and fails silently:
- *   - config first, then a crash: the settings are live and nothing asks for a
- *     re-look, so the recovery never happens for that project.
- *   - marker first, and a sweep consumes and clears it before the config commits:
- *     the marker that would have triggered the re-look is already spent.
- * Both leave the screen's promise false for one project with nothing recording it.
+ * It is kept rather than deleted because the marker answers a question the next
+ * layer needs - when did this project's conversations and knowledge settings last
+ * change - and a cross-thread reflection pass is what will ask it. Writing a column
+ * nobody reads yet is cheaper than dropping one and adding it back.
  *
- * That promise is the other half of a decision made in 0.5.2: extraction
- * deliberately writes no watermark when it produces nothing, precisely so a
- * corrected pattern can recover the thread. Not writing the watermark only keeps
- * recovery POSSIBLE - something still has to ask for it. Delete this call and that
- * earlier decision quietly stops meaning anything.
+ * What must NOT be inferred from this line is that something acts on it. It used to
+ * mean "revisit this project", and the recovery the settings screen once promised -
+ * a thread emptied by an over-broad pattern coming back once the pattern was fixed -
+ * was this call. That promise is gone with its reader, and the screen no longer
+ * makes it. Correcting a redaction rule now changes what future distillation keeps
+ * and nothing else.
  *
- * Recovery has a boundary the UI states: only extractions that stored nothing come
- * back. One that stored a candidate holds a claim, so correcting a pattern does not
- * revisit it - purge is the tool for that.
+ * ONE TRANSACTION, for a narrower reason than it originally had. The original
+ * argument named two failure orders, and one of them - a sweep consuming the marker
+ * before the config commits - has no sweep left to do it. What remains is the other:
+ * the config committing and the marker not, which would leave the column saying the
+ * settings last moved earlier than they did. The eventual reader will be deciding
+ * what has changed since a timestamp, and a marker that disagrees with the settings
+ * beside it is worse than one that is absent.
  */
 export async function mergeKnowledgeConfig(
   projectId: string,
@@ -81,6 +82,10 @@ export async function mergeKnowledgeConfig(
       .set({ knowledgeConfig: config })
       .where(eq(projects.id, projectId))
 
+    // WRITTEN, AND NOTHING READS IT TODAY. One of `knowledge_dirty_at`'s four
+    // writers and zero readers since the extractor was removed - see the docblock
+    // for why the column stays. Do not read this line as evidence that a change to
+    // redaction settings causes anything to be revisited.
     await markProjectKnowledgeDirty(tx, projectId)
   })
 }

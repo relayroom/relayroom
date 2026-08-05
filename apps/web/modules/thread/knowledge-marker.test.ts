@@ -1,10 +1,17 @@
 /**
- * Closing a thread from the dashboard must set the extractor's dirty marker.
+ * Closing a thread from the dashboard records that the project's conversations
+ * moved, through the same shared setter the server's closers call.
  *
- * Without it, a thread closed on the web would never carry knowledge_dirty_at and
- * the extractor would never distill it - the same shared setter the server's
- * closers call, so all three paths agree. The marker fires for closed/answered
- * (a resolution worth learning from) but not canceled.
+ * NOTHING READS `knowledge_dirty_at` TODAY. The automatic extractor was its only
+ * reader and was removed in 0.6.3; the column is kept because a cross-thread
+ * reflection pass needs exactly the question it answers. These cases pin which
+ * statuses write it, so the three closers keep agreeing until that reader arrives -
+ * they are not evidence that anything acts on it.
+ *
+ * Which statuses: closed only. Not answered, which means "I have replied", and not
+ * canceled. The previous version of this comment said closed AND answered while the
+ * case below asserted the opposite, which is the reason a header is worth checking
+ * against the assertions under it.
  */
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest"
 import { eq } from "drizzle-orm"
@@ -66,7 +73,7 @@ afterAll(async () => {
   await db.$client.end()
 })
 
-describe("closeThread sets the extractor marker", () => {
+describe("closeThread and the knowledge marker", () => {
   it("marks dirty when a thread is closed", async () => {
     await clearDirty()
     const threadId = await makeThread()
@@ -77,10 +84,10 @@ describe("closeThread sets the extractor marker", () => {
 
   it("does NOT mark dirty when a thread is answered - answered means replied, not finished", async () => {
     // This used to assert the opposite. Answered is a live state: autoclose treats
-    // it as such and closes it once idle, and extraction no longer accepts it,
-    // because a thread is claimed by the first extraction that succeeds - letting a
-    // mid-conversation state qualify would distil the partial transcript and lock
-    // out the complete one. The thread is still extracted, when it actually closes.
+    // it as such and closes it once idle. Recording the project as having moved on
+    // a thread that has not finished would put a timestamp on a conversation still
+    // in progress, and the marker's whole value to its eventual reader is that it
+    // marks conversations that are done.
     await clearDirty()
     const threadId = await makeThread()
     const res = await closeThread({ threadId, status: "answered" })
@@ -102,9 +109,9 @@ describe("closeThread sets the extractor marker", () => {
  * autoclose write the same column.
  *
  * Before this was conditional the later writer simply won: an agent could close a
- * thread (marking the project for extraction) and a dashboard action a moment later
- * would move the status back, with BOTH callers told they succeeded, leaving a
- * lesson distilled from a thread that is not closed.
+ * thread - writing its lesson and marking the project - and a dashboard action a
+ * moment later would move the status back, with BOTH callers told they succeeded,
+ * leaving a lesson recorded against a thread that is not closed.
  *
  * These test the compare-and-set directly rather than through `closeThread`. The
  * interleaving cannot be reproduced from a test that calls the action - anything
