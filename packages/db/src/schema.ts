@@ -52,7 +52,7 @@ export const projects = pgTable('project', {
   attestKeyIdPrev: text('attest_key_id_prev'),                  // short id of the previous secret
   attestSecretPrevExpiresAt: timestamp('attest_secret_prev_expires_at', { withTimezone: true }), // after this, prev is rejected and should be nulled
   // Per-project knobs. The promotion transaction reads kDistinctIssuers/windowDays;
-  // the L3 extractor and retention sweep read retentionDays and redactionRules;
+  // the retention sweep reads retentionDays, every knowledge writer reads redactionRules;
   // dynamicFactsBlock gates the served-playbook block. Empty object = every default
   // applies.
   //
@@ -77,11 +77,17 @@ export const projects = pgTable('project', {
   // rather than truthiness - `undefined` and `false` must not mean the same thing.
   knowledgeConfig: jsonb('knowledge_config').$type<{ kDistinctIssuers?: number; windowDays?: number; dynamicFactsBlock?: boolean; retentionDays?: number; redactionRules?: RedactionRule[]; distillOnClose?: boolean }>()
     .notNull().default(sql`'{}'::jsonb`),
-  // Durable trigger for the extractor. A thread going closed/answered sets this to
-  // now(); the leased sweep claims projects where it is not null, snapshots the
-  // value, writes candidates, then clears it only if it still equals the snapshot
-  // (so a re-dirty mid-run is not lost). Durable on purpose: a missed NOTIFY is
-  // still caught by the next sweep because the marker survives in the row.
+  // "This project's knowledge moved at time T". A thread reaching closed sets it to now().
+  //
+  // NOTHING READS IT TODAY. It was the extractor sweep's trigger - the sweep claimed
+  // projects where it was not null, wrote candidates, then cleared it - and the sweep was
+  // removed in 0.6.3. Four writers remain (the `close` tool, autoclose, the dashboard's
+  // thread action, the dashboard's knowledge-settings save) and zero readers.
+  //
+  // Kept rather than dropped because the next layer needs exactly this: a cross-thread
+  // reflection pass has to know when a project's conversations last changed, and that is
+  // the question this column already answers. Anyone treating these writes as evidence
+  // that something consumes them would be wrong until that lands.
   knowledgeDirtyAt: timestamp('knowledge_dirty_at', { withTimezone: true }),
   createdByUserId: text('created_by_user_id')
     .references(() => better_auth_user.id, { onDelete: 'set null' }),
@@ -464,7 +470,17 @@ export const knowledge = pgTable('knowledge', {
   kind: text('kind').notNull(),               // fact | convention | pitfall | decision
   title: text('title').notNull(),
   body: text('body').notNull(),
-  sourceKind: text('source_kind').notNull(),  // thread | event | human | learn | proposer
+  // WHAT WRITES EACH VALUE, enumerated rather than listed from memory - the previous
+  // comment named five values and only three had a writer, which is how `thread` came to
+  // mean two different things without anyone noticing:
+  //   lesson    `close` with a lesson (routes/mcp.ts) - an agent's distillation
+  //   learn     the `learn` tool
+  //   proposer  an approved proposal (packages/db/src/knowledge.ts)
+  //   thread    HISTORY ONLY. The automatic thread extractor, removed in 0.6.3. Nothing
+  //             writes it now; rows that still carry it are pre-0.6.3, and one migration
+  //             deletes the provable ones. See 0026.
+  // `event` and `human` were in the old list and were never written by anything.
+  sourceKind: text('source_kind').notNull(),
   // Where the claim came from, so an operator can trace it back and purge
   // everything derived from one thread.
   sourceRefs: jsonb('source_refs').$type<{ threadId?: string; eventId?: string; messageId?: string }[]>()
@@ -493,21 +509,28 @@ export const knowledge = pgTable('knowledge', {
 // ── thread_extraction ─────────────────────────────────────────────────────────
 // The durable record that a thread has been DECIDED, one row per (project, thread).
 //
-// WHY IT EXISTS (BUG-0010). The extractor's only previous record that a thread was
-// already processed was the existence of a knowledge row citing it in source_refs.
-// Two shipped paths delete that row while the thread's messages remain - retention's
-// hard delete and purgeKnowledgeFromThread - after which the next sweep re-extracts
-// and writes the candidate back. For purge, the operator's remedy for a leaked
-// secret, that meant the remedy silently undid itself. Evidence of the work is not a
-// record of the work; this table is the record.
+// WHY IT EXISTS (BUG-0010). The automatic extractor's only record that a thread had been
+// processed was the existence of a knowledge row citing it in source_refs. Two shipped
+// paths delete that row while the thread's messages remain - retention's hard delete and
+// purgeKnowledgeFromThread - after which the next sweep re-extracted and wrote the
+// candidate back. For purge, the operator's remedy for a leaked secret, that meant the
+// remedy silently undid itself. Evidence of the work is not a record of the work.
+//
+// WHAT IT DOES NOW that the extractor is gone (0.6.3). Two things, both narrower:
+//   - `close` with a lesson claims the thread here before storing, so a retry and two
+//     simultaneous closes produce one lesson rather than two. The claim is the only
+//     serialization point; close carries no idempotency key.
+//   - purge writes `purged`, which now also means "no lesson may be recorded here
+//     later" - the claim above conflicts with it. That is the right reading of purge:
+//     an operator removing a thread's knowledge did not ask for a fresh copy of it.
+// A pre-0.6.3 `extracted` row means the same thing to the claim, whoever wrote it.
 //
 // `reason` is STATE, not history: purge overwrites `extracted`, and the sequence
 // lives in knowledge_audit. Deliberately two values, both statements about content
-// that EXISTED. There is no third value for "extraction ran and produced nothing" -
-// that is the current output of a function over inputs that change (a project's
-// redactionPatterns are editable, the rule changes on deploy), so marking it would
-// convert "no lesson found yet" into "never look again", silently, on exactly the
-// threads a corrected pattern would recover.
+// that EXISTED. There is no third value for "we looked and found nothing" - with the
+// extractor gone nothing looks automatically at all, and adding one would convert
+// "no lesson recorded yet" into "never again" for a thread whose agent may still
+// close it with one.
 export const threadExtractions = pgTable('thread_extraction', {
   projectId: uuid('project_id').notNull()
     .references(() => projects.id, { onDelete: 'cascade' }),

@@ -1270,8 +1270,9 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
           //
           // DIVERGENCE FROM THE CONTRACT, reported rather than quietly matched: §4 lists
           // the refusal codes and says nothing about the title, so an implementer either
-          // invents this or stores an empty string. The extractor already answers it the
-          // same way, which is why this follows the extractor rather than the document.
+          // invents this or stores an empty string. The extractor answered it this way
+          // first; it has since been removed, and the answer is kept because it is still
+          // the right one - a title is a label and the body is what makes it a lesson.
           ruleSnapshot = proj?.snapshot ?? ''
           lessonText = { title: titleResult.text.trim() === '' ? '(redacted)' : titleResult.text.trim(), body }
           return null
@@ -1283,11 +1284,17 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
       /** The status this thread actually ends up in - reported, never assumed. */
       let finalStatus = needsClose ? 'closed' : thread.status
       if (needsClose || lessonText) {
-        // Close and raise the extractor marker in ONE transaction: a closed thread is
-        // extractor input, so a close that committed without the marker would leave a
-        // thread that never becomes a candidate and never errors. markProjectKnowledgeDirty
-        // is the single cross-package setter (@relayroom/db); it writes now() as the
-        // transaction clock, so the two commit together or not at all. (FEAT-0004 L3.)
+        // Close and raise the knowledge marker in ONE transaction.
+        //
+        // THE MARKER CURRENTLY HAS NO READER. It existed for the extractor sweep - a closed
+        // thread was extractor input, and a close that committed without the marker left a
+        // thread that never became a candidate and never errored - and the sweep was removed
+        // in 0.6.3. It is still written here (and by autoclose, and by the dashboard) because
+        // "this project's knowledge moved at time T" is the trigger a cross-thread reflection
+        // layer needs, and that is the next thing to be built. Anyone reading this write as
+        // evidence that something consumes it today would be wrong; nothing does.
+        // markProjectKnowledgeDirty is the single cross-package setter (@relayroom/db); it
+        // writes now() as the transaction clock, so the two commit together or not at all.
         await db.transaction(async (tx) => {
           // THE STATUS CHANGE GOES FIRST, and the reason the old order was wrong is worth
           // keeping. It used to write the lesson first, arguing that taking the watermark
@@ -1330,7 +1337,7 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
           if (lessonText && finalStatus === 'canceled') {
             // The refusal decided before the transaction, re-decided on the fact rather
             // than on the stale read. Nothing has been claimed at this point, so the
-            // sweep is unaffected.
+            // thread stays open to a later lesson.
             lessonOutcome = {
               recorded: false,
               code: 'thread_canceled',
@@ -1350,26 +1357,42 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
                   returning thread_id
                 `)
                 if (claimed.length === 0) {
-                  // Someone else got here: a sweep tick extracted it, or a purge marked it.
-                  // Either way this thread's knowledge is already decided and a second row
-                  // citing it would be the duplicate the watermark exists to prevent.
+                  // Someone else got here: a competing close, a retry of this one, or a
+                  // purge. Either way this thread's knowledge is already decided and a
+                  // second row citing it would be the duplicate the watermark prevents.
                   throw new LessonRefused('already_decided',
-                    'this thread was already extracted or purged, so its lesson is already decided')
+                    'this thread was already decided or purged, so its lesson is already recorded')
                 }
-                // 'extracted' rather than a third reason, because the column's check
-                // constraint admits two values and the sweep reads it as "decided, do not
-                // revisit" - which is exactly what a close-carried lesson makes true. A
-                // distinct reason would be a schema change whose only reader is a human.
+                // WHAT THIS ROW MEANS NOW THAT THE SWEEP IS GONE. It was written to keep an
+                // automatic extractor off a thread a lesson had claimed; the extractor no
+                // longer exists, so the only reader left is this very insert on a later
+                // call. That is not redundancy - it is what makes a retry and two
+                // simultaneous closes produce one lesson instead of two - but the reason is
+                // narrower than it was, and a comment claiming it guards against a sweep
+                // would send the next reader looking for one.
+                //
+                // 'extracted' stays as the value because the column's check constraint
+                // admits two, and the pre-0.6.3 rows written by the extractor carry it too:
+                // one value for "this thread's knowledge is decided", whoever decided it.
 
-                // THE SAME COMPARISON THE SWEEP PUTS ON ITS CANDIDATE INSERT, for the same
-                // reason: the rules were read in a different statement, Read Committed gave
-                // that statement its own snapshot, and a settings save committing in between
-                // would leave this row redacted under rules the owner had already replaced.
-                // The guard rides on the write that stores the text, never on one beside it.
+                // THE SNAPSHOT COMPARISON ON THE WRITE THAT STORES THE TEXT. The rules were
+                // read in a different statement, Read Committed gave that statement its own
+                // snapshot, and a settings save committing in between would leave this row
+                // redacted under rules the owner had already replaced. The guard rides on
+                // the write that stores the bytes, never on one beside it. (The extractor
+                // carried the same guard for the same reason before it was removed; `learn`
+                // and the proposal paths still do.)
                 const stored = await sp.execute<{ id: string }>(sql`
                   insert into ${knowledge} (project_id, kind, title, body, source_kind, source_refs, validation_state)
                   select ${ctx.projectId}, ${args.lesson!.kind}, ${lessonText!.title}, ${lessonText!.body},
-                         'thread', ${JSON.stringify([{ threadId: thread.id }])}::jsonb, 'candidate'
+                         -- 'lesson', NOT 'thread'. Until 0.6.3 this wrote 'thread', the same
+                         -- value the automatic extractor used, which made the two
+                         -- indistinguishable in the data: same column list, same NULL
+                         -- created_by_user_id, same candidate state, same source_refs. When
+                         -- the extractor was removed, "delete the extractor's output" would
+                         -- have deleted the lessons that replace it. A value that cannot
+                         -- tell two writers apart is not a source_kind.
+                         'lesson', ${JSON.stringify([{ threadId: thread.id }])}::jsonb, 'candidate'
                    where exists (
                            select 1 from ${projects} p
                             where p.id = ${ctx.projectId}
@@ -1386,9 +1409,9 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
             }
             catch (err) {
               // The savepoint is already rolled back here, which is what makes the claim
-              // safe to take first: a refusal releases it, so the sweep can still extract
-              // this thread later. Only OUR refusals are swallowed - anything else is a
-              // real failure and must not be reported as a successful close.
+              // safe to take first: a refusal releases it, so a later close can still record
+              // a lesson for this thread. Only OUR refusals are swallowed - anything else is
+              // a real failure and must not be reported as a successful close.
               if (!(err instanceof LessonRefused)) throw err
               lessonOutcome = { recorded: false, code: err.code, reason: err.reason }
             }
@@ -1671,7 +1694,7 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
       const sourceRefs = args.sourceThreadId ? [{ threadId: args.sourceThreadId }] : []
 
       // Redaction denylist applied BEFORE the row is written - the same gate the
-      // extractor uses. A human pasting a lesson can paste a secret with it, so the
+      // extractor used. A human pasting a lesson can paste a secret with it, so the
       // learn path is not exempt (FEAT-0004 L3). A body redacted to nothing is
       // rejected rather than stored empty.
       // The rules are read WITH the exact text Postgres renders for them, because the
@@ -1684,7 +1707,7 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
                ${sql.raw(REDACTION_INPUT_SNAPSHOT)} as rules_text
           from ${projects} where ${projects.id} = ${ctx.projectId} limit 1
       `)
-      // Same rule as the extractor: if any configured redaction rule cannot be
+      // Same rule as every other writer: if any configured redaction rule cannot be
       // resolved, refuse the write rather than storing under a protection that is not
       // being applied. `learn` refuses loudly by design, so this fits the path it is on.
       const { patterns, unresolved } = resolveRedactionRules(proj?.config)
@@ -1713,9 +1736,10 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
       // Between the read above and this insert, an owner can save new rules; this text was
       // redacted under the old ones, and storing it would put a secret in the table that
       // the current configuration was written to remove. Read Committed gives this
-      // statement its own snapshot, so the check has to be IN it - the sweep learned that
-      // the expensive way (review loop 9), and copying the resolver here without copying
-      // the guard would have reproduced the same defect one path over.
+      // statement its own snapshot, so the check has to be IN it - the extractor sweep
+      // learned that the expensive way (review loop 9) before it was removed, and copying
+      // the resolver here without copying the guard would have reproduced the same defect
+      // one path over.
       //
       // Nothing is claimed on this path, so a refusal costs the caller a retry and nothing
       // else. `learn` already refuses loudly for four other reasons; this is a fifth.
@@ -1725,10 +1749,12 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
       // there is no point a test can commit a change from another connection into. Every
       // hook tried lands on the wrong side - a row-level trigger fires after the WHERE has
       // been evaluated, and a statement-level one runs in the same command, invisible to
-      // the statement's own snapshot. The sweep's identical guard IS interleave-tested
-      // (extractor-stale-patterns), and this is the same statement shape against the same
+      // the statement's own snapshot. `close`'s identical guard IS interleave-tested
+      // (close-lesson.test.ts), and this is the same statement shape against the same
       // column. That is verification by construction, which is weaker, and saying so is
       // better than a test that reaches the wrong moment and reports green.
+      // (Until 0.6.3 this pointed at the extractor's test for the same evidence; the
+      // extractor is gone and close's test now carries it.)
       const [row] = await db.execute<{ id: string; validation_state: string }>(sql`
         insert into ${knowledge} (project_id, kind, title, body, source_kind, source_refs, validation_state, created_by_user_id)
         select ${ctx.projectId}, ${args.kind}, ${title}, ${body}, 'learn',

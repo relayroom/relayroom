@@ -199,10 +199,11 @@
     "colPromoted": "Promoted",
     "colExpires": "Expires",
     "sourceLabel": "From",
-    "sourceThread": "thread",
+    "sourceThread": "a thread (pre-0.6.3 auto-extraction)",
     "sourceEvent": "event",
     "sourceHuman": "a person",
     "sourceLearn": "an agent",
+    "sourceLesson": "an agent, at close",
     "sourceProposer": "the proposer",
     "supportLabel": "{count, plural, =0 {No confirmations yet} =1 {1 independent confirmation} other {# independent confirmations}}",
     "paginationInfo": "{start}-{end} of {total}"
