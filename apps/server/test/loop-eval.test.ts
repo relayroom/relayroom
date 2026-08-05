@@ -6,7 +6,7 @@
  *
  *   learn -> candidate (L0)
  *   recall does not return it (trusted-only)
- *   thread close -> marker -> extractor sweep -> candidate (L3)
+ *   thread close CARRYING A LESSON -> candidate (L3)
  *   two DISTINCT non-agent issuers -> trusted (L1)
  *   recall now returns it - the lesson crosses agents (L0)
  *   an agent contradicts it -> demoted (L1)
@@ -41,7 +41,6 @@ import {
 } from '@relayroom/db'
 import { INTERNAL_AGENT_CLIENT_ID, projectScope } from '@relayroom/shared'
 import postgres from 'postgres'
-import { isProjectDirty, runExtractorSweep } from '../src/knowledge/extractor-sweep'
 import { runProposerSweep } from '../src/knowledge/proposer'
 import { runKnowledgeMetricsRollup } from '../src/knowledge/metrics-rollup'
 import { ERROR_SIGNATURE_VERSION } from '../src/knowledge/error-signature'
@@ -151,7 +150,7 @@ function support(knowledgeId: string, issuer: 'ci_attest' | 'human', issuerId: s
 }
 
 let learnedId: string
-let extractedId: string
+let lessonId: string
 let threadId: string
 
 describe('the knowledge loop closes (0.5.0 DoD)', () => {
@@ -173,25 +172,44 @@ describe('the knowledge loop closes (0.5.0 DoD)', () => {
     expect(entries.map(e => e.id)).not.toContain(learnedId)
   })
 
-  it('L3: closing a thread raises the marker and the extractor writes a candidate', async () => {
+  /**
+   * THE LOOP'S ENTRANCE MOVED in 0.7.0, and that is why this stage is rewritten rather
+   * than repaired. It used to be: close a thread, let the automatic extractor turn it
+   * into a candidate, and assert the candidate's title equals the thread's SUBJECT -
+   * which is the defect that got the extractor removed. A row titled with the thread's
+   * subject and bodied with its last message is a copy of the conversation, and 288 of
+   * the 289 such rows on the production hub were exactly that.
+   *
+   * Intake is now the agent saying what it learned, at the moment it closes the thread.
+   * The assertion follows: the stored title is the AGENT'S sentence, not the subject.
+   */
+  it('L3: closing a thread with a lesson writes the candidate', async () => {
     const sent = await callTool('worker', 'send', {
       subject: SUBJECT, body: 'we always run migrations before deploy, never after', to: ['peer'],
     })
     threadId = (JSON.parse(sent.text) as { threadId: string }).threadId
 
-    const closed = await callTool('worker', 'close', { threadId })
+    const closed = await callTool('worker', 'close', {
+      threadId,
+      lesson: {
+        title: 'run migrations before the deploy, never after',
+        body: 'a deploy that lands before its migration leaves the code ahead of the schema, '
+          + 'and the first request through the new path is the one that finds out',
+        kind: 'convention',
+      },
+    })
     expect(closed.isError).toBe(false)
-    expect(await isProjectDirty(db, projectId)).toBe(true)
-
-    const swept = await runExtractorSweep(db, { projectId })
-    expect(swept.candidates).toBe(1)
+    expect(JSON.parse(closed.text).lesson).toMatchObject({ recorded: true })
 
     const [row] = await db.select({ id: knowledge.id, state: knowledge.validationState, title: knowledge.title })
       .from(knowledge)
-      .where(and(eq(knowledge.projectId, projectId), eq(knowledge.sourceKind, 'thread')))
-    extractedId = row!.id
-    expect(row!.state).toBe('candidate') // extraction is intake, never promotion
-    expect(row!.title).toBe(SUBJECT)
+      .where(and(eq(knowledge.projectId, projectId), eq(knowledge.sourceKind, 'lesson')))
+    lessonId = row!.id
+    expect(row!.state).toBe('candidate') // intake is never promotion
+    // The agent's sentence, NOT the thread's subject. This is the whole difference
+    // between what was removed and what replaced it.
+    expect(row!.title).toBe('run migrations before the deploy, never after')
+    expect(row!.title).not.toBe(SUBJECT)
   })
 
   it('L1 NEGATIVE CONTROL: one issuer - and the same issuer twice - never promotes', async () => {
@@ -206,7 +224,7 @@ describe('the knowledge loop closes (0.5.0 DoD)', () => {
 
     // Nothing an agent can reach has moved it either: `learn` only ever wrote a
     // candidate, and there is no agent-callable promote.
-    expect(await stateOf(extractedId)).toBe('candidate')
+    expect(await stateOf(lessonId)).toBe('candidate')
   })
 
   it('L1: a SECOND DISTINCT issuer promotes it to trusted', async () => {
@@ -276,10 +294,10 @@ describe('the knowledge loop closes (0.5.0 DoD)', () => {
   })
 
   it('L5: a promoted fact reaches every agent through the served playbook', async () => {
-    // Promote the EXTRACTED candidate through the same two-issuer gate: the thread
-    // that closed in L3 becomes a fact the playbook serves.
-    await support(extractedId, 'ci_attest', CI_ISSUER, `fp-ci-x-${SFX}`)
-    const promoted = await support(extractedId, 'human', HUMAN, `fp-human-x-${SFX}`)
+    // Promote the LESSON candidate through the same two-issuer gate: what an agent
+    // distilled when it closed the thread in L3 becomes a fact the playbook serves.
+    await support(lessonId, 'ci_attest', CI_ISSUER, `fp-ci-x-${SFX}`)
+    const promoted = await support(lessonId, 'human', HUMAN, `fp-human-x-${SFX}`)
     expect(promoted.state).toBe('trusted')
 
     await db.update(projects)
@@ -290,7 +308,12 @@ describe('the knowledge loop closes (0.5.0 DoD)', () => {
     expect(res.status).toBe(200)
     const md = await res.text()
     expect(md).toContain('## Trusted project facts')
-    expect(md).toContain(SUBJECT)
+    // The AGENT'S title, which is what the playbook now carries. It used to assert the
+    // thread's SUBJECT here, because the extractor titled its candidate with it - so this
+    // line is where the served playbook stopped repeating conversation titles back at
+    // every agent and started carrying what one of them concluded.
+    expect(md).toContain('run migrations before the deploy, never after')
+    expect(md).not.toContain(SUBJECT)
     // The demoted entry must NOT be served.
     expect(md).not.toContain('deploy window is Tuesday morning')
     // And the norms hash is exposed for rr.sh drift checks.

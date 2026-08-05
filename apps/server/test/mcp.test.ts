@@ -17,7 +17,6 @@ import { invalidateWakeFlagCache } from '../src/wake/flag'
 import { ensurePending } from '../src/wake/state'
 import type { HubBusEvent } from '@relayroom/shared'
 import { makeTestApp, TEST_DATABASE_URL } from './helpers'
-import { runExtractorSweep } from '../src/knowledge/extractor-sweep'
 import { knowledge } from '@relayroom/db'
 
 const { app, db, bus } = makeTestApp()
@@ -1159,9 +1158,21 @@ describe('wake-loop fix: close / scoping / search', () => {
   })
 })
 
-describe('close marks the project for extraction (FEAT-0004 L3)', () => {
+describe('close marks that the project\'s knowledge moved (FEAT-0004 L3)', () => {
   beforeAll(async () => { await ensureInternalClient() })
-  it('closing a thread makes the extractor produce a candidate from it', async () => {
+
+  /**
+   * REWRITTEN in 0.7.0. This used to close a thread, run the extractor sweep, and assert
+   * a candidate appeared with the thread's subject as its title - which is exactly the
+   * output that got the extractor removed: a copy of the thread, not a lesson from it.
+   *
+   * What survives the removal is the marker, and the honest assertion about it is narrow:
+   * the close writes it. NOTHING READS IT TODAY, so there is no downstream effect to
+   * observe, and a test that pretended otherwise would be asserting a consumer that does
+   * not exist. When the reflection layer lands it will read this column, and this case is
+   * where its first real assertion goes.
+   */
+  it('sets the dirty marker when a thread closes, and leaves it set (nothing consumes it yet)', async () => {
     resetLoopBreaker()
     const { projectId, connectCode, rawToken } = await setupCaller()
     await ensureAgents(projectId, 'peer')
@@ -1170,21 +1181,31 @@ describe('close marks the project for extraction (FEAT-0004 L3)', () => {
       { subject: 'how to roll back a migration', body: 'run the down script then redeploy', to: ['peer'] })
     const { threadId } = JSON.parse(sent.text) as { threadId: string }
 
-    // Before close: not dirty, nothing extracted.
-    expect((await runExtractorSweep(db, { projectId })).candidates).toBe(0)
+    const before = await db.select({ at: projects.knowledgeDirtyAt })
+      .from(projects).where(eq(projects.id, projectId))
+    expect(before[0]!.at).toBeNull()
 
-    // Close via the tool - this is the server closer that must set the marker.
     await callTool(connectCode, rawToken, 'sender', 'close', { threadId })
 
-    // The leased sweep now turns the closed thread into a candidate.
-    const r = await runExtractorSweep(db, { projectId })
-    expect(r.candidates).toBe(1)
-    const rows = await db.select().from(knowledge)
-      .where(eq(knowledge.projectId, projectId))
-    const fromThread = rows.filter(k => k.sourceKind === 'thread')
-    expect(fromThread).toHaveLength(1)
-    expect(fromThread[0]!.validationState).toBe('candidate')
-    expect(fromThread[0]!.title).toBe('how to roll back a migration')
+    const after = await db.select({ at: projects.knowledgeDirtyAt })
+      .from(projects).where(eq(projects.id, projectId))
+    expect(after[0]!.at).not.toBeNull()
+  })
+
+  it('writes no knowledge row on its own - a close without a lesson stores nothing', async () => {
+    // The other half of the removal, and the one a reader is most likely to doubt: closing
+    // a thread no longer produces knowledge by itself. An agent has to say what it learned.
+    resetLoopBreaker()
+    const { projectId, connectCode, rawToken } = await setupCaller()
+    await ensureAgents(projectId, 'peer')
+    const sent = await callTool(connectCode, rawToken, 'sender', 'send',
+      { subject: 'a thread nobody distilled', body: 'some conversation', to: ['peer'] })
+    const { threadId } = JSON.parse(sent.text) as { threadId: string }
+
+    await callTool(connectCode, rawToken, 'sender', 'close', { threadId })
+
+    const rows = await db.select().from(knowledge).where(eq(knowledge.projectId, projectId))
+    expect(rows).toHaveLength(0)
   })
 })
 

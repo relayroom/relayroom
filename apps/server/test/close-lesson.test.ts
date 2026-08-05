@@ -7,10 +7,11 @@
  * 1. A refused lesson never costs the caller their close. Eight refusal codes, and in
  *    all eight the thread still ends up closed - because an agent that reads a refusal
  *    as a failed close will re-close forever.
- * 2. A recorded lesson claims the thread, so the sweep does not write a second row from
- *    it. That claim is the only thing standing between this feature and duplicate
- *    knowledge, and the negative control below is what proves the claim is what does it
- *    rather than something incidental to the test setup.
+ * 2. A recorded lesson claims the thread, so nothing records a second one for it. The
+ *    claim is the only serialization point - close carries no idempotency key - and the
+ *    negative control below is what proves the claim is what does it rather than
+ *    something incidental to the test setup. Until 0.7.0 the competitor was the automatic
+ *    extractor; it is gone, and a retry or a simultaneous close is what remains.
  */
 import { randomBytes } from 'node:crypto'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
@@ -19,7 +20,6 @@ import { agents, knowledge, projectAccess, projects, threadExtractions, threads 
 import { INTERNAL_AGENT_CLIENT_ID, projectScope } from '@relayroom/shared'
 import postgres from 'postgres'
 import { resetLearnRateLimit } from '../src/routes/mcp'
-import { runExtractorSweep } from '../src/knowledge/extractor-sweep'
 import { makeTestApp, TEST_DATABASE_URL } from './helpers'
 
 const { app, db, bus } = makeTestApp()
@@ -163,7 +163,9 @@ describe('close with a lesson', () => {
     expect(rows).toHaveLength(1)
     expect(rows[0]!.title).toBe(LESSON.title)
     expect(rows[0]!.body).toBe(LESSON.body)
-    expect(rows[0]!.sourceKind).toBe('thread')
+    // 'lesson', not 'thread' - the value the removed extractor used. Two writers sharing
+    // one source_kind is what made the two indistinguishable in the data.
+    expect(rows[0]!.sourceKind).toBe('lesson')
     // A lesson an agent wrote is a claim, not a fact - the same rule `learn` follows.
     // If this could ever be 'trusted', an agent would be authoring facts for every
     // other agent through `recall`.
@@ -175,22 +177,18 @@ describe('close with a lesson', () => {
     expect(mark!.reason).toBe('extracted')
   })
 
-  it('leaves the sweep nothing to extract from that thread, and would otherwise', async () => {
-    // TWO THREADS, ONE SWEEP. Without the second thread this proves nothing: a sweep
-    // that produced zero rows because it was not triggered at all looks exactly like a
-    // sweep that skipped the claimed thread. The unlessoned thread is the control that
-    // says the sweep really ran over this project in this tick.
-    const claimed = await openThread('a thread that carries its own lesson')
-    const control = await openThread('a thread that carries nothing')
-    await closeWith(claimed, LESSON)
-    await closeWith(control)
+  it('claims the thread, so nothing else can record a second lesson for it', async () => {
+    // REWRITTEN in 0.7.0. This used to run the automatic extractor and assert it skipped
+    // the claimed thread, with a second unlessoned thread as the control that the sweep
+    // had really run. The sweep is gone, and with it the competitor this claim was built
+    // against - but not the claim's job: a retry and two simultaneous closes still have
+    // to produce one lesson. The control is now the same thread's second close.
+    const threadId = await openThread('a thread that carries its own lesson')
+    expect(await closeWith(threadId, LESSON)).toMatchObject({ lesson: { recorded: true } })
 
-    await runExtractorSweep(db, { projectId })
-    // Counted per thread, not per sweep: this project accumulates closed threads from
-    // the other cases in this file, so a project-wide candidate count would be an
-    // assertion about test order rather than about the claim.
-    expect(await rowsCiting(claimed)).toHaveLength(1) // still just the lesson
-    expect(await rowsCiting(control)).toHaveLength(1) // the sweep's own candidate
+    const again = await closeWith(threadId, { ...LESSON, title: 'a second attempt' })
+    expect(again.lesson).toMatchObject({ recorded: false, code: 'already_decided' })
+    expect(await rowsCiting(threadId)).toHaveLength(1)
   })
 
   it('applies the project redaction rules to what it stores', async () => {
@@ -220,7 +218,7 @@ describe('close with a lesson - every refusal still closes the thread', () => {
     expect(res.ok).toBe(true)
     expect(await statusOf(threadId)).toBe('closed')
     expect(await rowsCiting(threadId)).toHaveLength(0)
-    // Nothing was claimed either, so the sweep can still extract this thread.
+    // Nothing was claimed either, so a later close can still record a lesson here.
     const marks = await db.select().from(threadExtractions)
       .where(eq(threadExtractions.threadId, threadId))
     expect(marks).toHaveLength(0)
@@ -285,8 +283,8 @@ describe('close with a lesson - every refusal still closes the thread', () => {
     expect(await closeWith(threadId, LESSON)).toMatchObject({ lesson: { recorded: true } })
 
     // The retry an agent makes when a response is lost. One code for retry, competing
-    // close, sweep and purge, because close carries no idempotency key and the data
-    // cannot tell them apart.
+    // close and purge, because close carries no idempotency key and the data cannot tell
+    // them apart. (It covered the extractor too until 0.7.0 removed it.)
     const again = await closeWith(threadId, { ...LESSON, title: 'a different lesson' })
     expect(again.lesson).toMatchObject({ recorded: false, code: 'already_decided' })
     expect(await rowsCiting(threadId)).toHaveLength(1)
@@ -328,23 +326,24 @@ describe('close with a lesson - every refusal still closes the thread', () => {
 })
 
 /**
- * The rule-change window, reproduced the way the sweep's is: a trigger that fires
- * BETWEEN the claim and the lesson insert, which is the one interval a test outside the
- * process cannot otherwise reach.
+ * The rule-change window: a trigger that fires BETWEEN the claim and the lesson insert,
+ * which is the one interval a test outside the process cannot otherwise reach. The
+ * extractor's removed test reached the same window in the same way, and this is now the
+ * only place that guard is exercised against a real interleaving.
  *
  * What this proves and what it does not: it proves the guard sits on the statement that
  * stores the text, because the trigger's UPDATE commits into this transaction's view
  * before that statement runs. It does NOT prove that an independently committed settings
  * save survives - the trigger's own change rolls back with the savepoint, and claiming
- * otherwise is the mistake review loop 10 found in the sweep's version of this test.
+ * otherwise is the mistake review loop 10 found in the extractor's version of this test.
  */
 describe('close with a lesson - the rules changing under the write', () => {
   async function withTrigger(body: string, fn: () => Promise<void>) {
     // SCOPED TO THIS FILE'S PROJECT, and that is not tidiness. A trigger is database-wide
     // and vitest runs files in parallel over one database, so an unguarded body fires on
     // every other file's watermark inserts too - which is exactly what happened:
-    // extractor-stale-patterns failed in the full run and passed alone, because this
-    // trigger was rewriting ITS project's redaction rules mid-sweep.
+    // extractor-stale-patterns (since removed) failed in the full run and passed alone,
+    // because this trigger was rewriting ITS project's redaction rules mid-run.
     await rawSql.unsafe(`
       create or replace function cl_mutate() returns trigger as $$
       begin
@@ -376,11 +375,13 @@ describe('close with a lesson - the rules changing under the write', () => {
       },
     )
     expect(await rowsCiting(threadId)).toHaveLength(0)
-    // And the claim went back with the savepoint, so the sweep can still have this one.
+    // And the claim went back with the savepoint, so this thread is not foreclosed.
     const marks = await db.select().from(threadExtractions)
       .where(eq(threadExtractions.threadId, threadId))
     expect(marks).toHaveLength(0)
-    await runExtractorSweep(db, { projectId })
+    // And the thread can still receive a lesson later, which is the whole point of
+    // rolling the claim back rather than keeping it.
+    expect(await closeWith(threadId, LESSON)).toMatchObject({ lesson: { recorded: true } })
     expect(await rowsCiting(threadId)).toHaveLength(1)
   })
 
@@ -434,8 +435,8 @@ describe('close with a lesson - the rules changing under the write', () => {
 
     expect(await statusOf(threadId)).toBe('canceled')
     expect(await rowsCiting(threadId)).toHaveLength(0)
-    // Nothing was claimed, so the thread is not foreclosed - though a canceled thread is
-    // not extractable either, which is the point of refusing rather than storing.
+    // Nothing was claimed, so the thread is not foreclosed - though a canceled thread has
+    // nothing to record either, which is the point of refusing rather than storing.
     const marks = await db.select().from(threadExtractions)
       .where(eq(threadExtractions.threadId, threadId))
     expect(marks).toHaveLength(0)

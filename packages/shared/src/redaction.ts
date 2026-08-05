@@ -16,21 +16,21 @@
  * lossless when the point is that the sensitive bytes never touch the table.
  *
  * THE WRITERS, and this list is the one place the count is stated - it said "BOTH the
- * extractor and `learn`" for two releases while the set kept growing, and each stale copy
+ * extractor and `learn`" for two releases while the set kept changing, and each stale copy
  * elsewhere was a reader's reason to stop enumerating. Every durable text stage:
  *
- *   1. the extractor sweep        - reads raw thread text
- *   2. `learn`                    - a human pasting a lesson can paste a secret with it
- *   3. `close` with a `lesson`    - same text, offered at the moment the thread resolves
- *   4. proposal creation          - `knowledge_proposal` is a display surface a human reads
- *   5. proposal approval          - writes `knowledge`, and re-applies current rules
- *   6. playbook approval          - `playbook_version` and `project.relayroom_md`, the
+ *   1. `learn`                    - a human pasting a lesson can paste a secret with it
+ *   2. `close` with a `lesson`    - same text, offered at the moment the thread resolves
+ *   3. proposal creation          - `knowledge_proposal` is a display surface a human reads
+ *   4. proposal approval          - writes `knowledge`, and re-applies current rules
+ *   5. playbook approval          - `playbook_version` and `project.relayroom_md`, the
  *                                   file every agent in the project reads
  *
- * Six, not four, and the sixth was found by review loop 14 storing text no rule had ever
- * touched. If you are adding a seventh, add it here and to `reportSkippedPatterns`'s
- * `path` union - and read that union's comment before assuming the compiler will remind
- * you.
+ * FIVE. It was six until 0.7.0 removed the automatic thread extractor, which was number
+ * one and the only writer that read raw thread text without an agent choosing the words.
+ * The count moves; that is why it lives in one place. If you are adding another, add it
+ * here and to `reportSkippedPatterns`'s `path` union - and read that union's comment
+ * before assuming the compiler will remind you.
  *
  * Pure and config-driven: the patterns come from the project's knowledgeConfig; this
  * only applies them. Invalid patterns are skipped, not thrown - one malformed regex
@@ -119,7 +119,7 @@ export function redact(text: string, patterns: readonly string[]): RedactionResu
 /**
  * Which patterns will not run, and why. **Depends only on the patterns, never on the
  * text** - which is what makes it reportable per project rather than per message: a
- * denylist that is broken is broken for every write, so logging it once per sweep says
+ * denylist that is broken is broken for every write, so logging it once per caller says
  * the same thing as logging it per row, without the volume.
  */
 export function skippedPatterns(patterns: readonly string[]): SkippedPattern[] {
@@ -157,7 +157,7 @@ export function reportSkippedPatterns(
    * The enumeration that IS meant to be complete is in this file's header. This union is
    * a label for the log line.
    */
-  path: 'learn' | 'extractor' | 'proposer_create' | 'proposer' | 'close',
+  path: 'learn' | 'proposer_create' | 'proposer' | 'close',
   skipped: readonly SkippedPattern[],
 ): void {
   if (skipped.length === 0) return

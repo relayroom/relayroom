@@ -194,6 +194,7 @@ export default async function KnowledgePage({ params, searchParams }: Props) {
                 key={entry.id}
                 entry={entry}
                 projectId={project.id}
+                slug={slug}
                 canPromote={canPromote}
                 t={t}
                 formatDateTime={formatDateTime}
@@ -228,12 +229,14 @@ function stateVariant(state: string): "default" | "secondary" | "destructive" | 
 function KnowledgeItem({
   entry,
   projectId,
+  slug,
   canPromote,
   t,
   formatDateTime,
 }: {
   entry: KnowledgeRow
   projectId: string
+  slug: string
   canPromote: boolean
   t: Awaited<ReturnType<typeof getTranslations<"project">>>
   formatDateTime: (iso: string) => string
@@ -246,7 +249,15 @@ function KnowledgeItem({
         <Badge variant="outline" className="text-xs">
           {t(`knowledge.kind${titleKey(entry.kind)}` as Parameters<typeof t>[0])}
         </Badge>
-        <span className="min-w-0 flex-1 truncate text-sm font-medium">{entry.title}</span>
+        {/* The title is the way in. Still truncated - the list stays scannable - but
+            the clipping is no longer a dead end, which is what makes it acceptable.
+            Linking the title rather than the row keeps the promote button clickable. */}
+        <Link
+          href={`/projects/${slug}/knowledge/${entry.id}`}
+          className="min-w-0 flex-1 truncate text-sm font-medium hover:underline"
+        >
+          {entry.title}
+        </Link>
         <Badge variant={stateVariant(entry.validationState)} className="shrink-0 text-xs">
           {t(`knowledge.state${titleKey(entry.validationState)}` as Parameters<typeof t>[0])}
         </Badge>

@@ -27,7 +27,6 @@ import { autoCloseIdleThreads } from './autoclose'
 import { resolveStaleAlerts, runGovernanceDetection } from '../governance/detect'
 import { runKnowledgeRetention } from '../knowledge/retention'
 import { runKnowledgeMetricsRollup } from '../knowledge/metrics-rollup'
-import { runExtractorSweep } from '../knowledge/extractor-sweep'
 import { runKnowledgeGarbageCollection } from '../knowledge/retention'
 import { runProposerSweep } from '../knowledge/proposer'
 
@@ -44,10 +43,6 @@ export const KNOWLEDGE_RETENTION_INTERVAL_MS = 15 * 60_000
 // trailing window and upserts, so a frequent tick just keeps the recent days
 // (whose precision is still accumulating) fresh. Cheap relative to a day.
 export const KNOWLEDGE_METRICS_INTERVAL_MS = 60 * 60_000
-// 60s: extractor sweep. Frequent because it is the loop's intake latency (a closed
-// thread becomes a candidate within a tick); idempotent and lease-guarded, so a
-// short interval is cheap.
-export const KNOWLEDGE_EXTRACTOR_INTERVAL_MS = 60_000
 // 6h: retention GC. Ageing-out is not time-critical; a relaxed interval keeps it off
 // the hot path.
 export const KNOWLEDGE_GC_INTERVAL_MS = 6 * 60 * 60_000
@@ -63,7 +58,6 @@ export interface WakeJobs {
 export interface StartWakeJobsOptions {
   knowledgeRetentionMs?: number
   knowledgeMetricsMs?: number
-  knowledgeExtractorMs?: number
   knowledgeGcMs?: number
   knowledgeProposerMs?: number
   reconcileMs?: number
@@ -86,7 +80,6 @@ export function startWakeJobs(db: Db, bus: Bus, opts: StartWakeJobsOptions = {})
   const autocloseMs = opts.autocloseMs ?? AUTOCLOSE_INTERVAL_MS
   const knowledgeRetentionMs = opts.knowledgeRetentionMs ?? KNOWLEDGE_RETENTION_INTERVAL_MS
   const knowledgeMetricsMs = opts.knowledgeMetricsMs ?? KNOWLEDGE_METRICS_INTERVAL_MS
-  const knowledgeExtractorMs = opts.knowledgeExtractorMs ?? KNOWLEDGE_EXTRACTOR_INTERVAL_MS
   const knowledgeGcMs = opts.knowledgeGcMs ?? KNOWLEDGE_GC_INTERVAL_MS
   const knowledgeProposerMs = opts.knowledgeProposerMs ?? KNOWLEDGE_PROPOSER_INTERVAL_MS
 
@@ -123,8 +116,13 @@ export function startWakeJobs(db: Db, bus: Bus, opts: StartWakeJobsOptions = {})
   // retention: re-entrancy guard + throwing-callback protection, and it is not a
   // wake job but this is the only scheduler the process has.
   timers.push(setInterval(safe('knowledge-metrics', () => runKnowledgeMetricsRollup(db)), knowledgeMetricsMs))
-  // Extractor + retention GC (FEAT-0004 L3). Same scheduler, same re-entrancy guard.
-  timers.push(setInterval(safe('knowledge-extractor', () => runExtractorSweep(db)), knowledgeExtractorMs))
+  // Retention GC (FEAT-0004 L3). Same scheduler, same re-entrancy guard.
+  //
+  // The thread extractor used to run beside this line and is GONE (0.7.0). It turned every
+  // closed thread into a candidate whose title was the thread's subject and whose body was
+  // its last message - a copy of the thread rather than a lesson from it - and 288 of the
+  // 289 rows on the production hub were that. The intake it provided is now `close`'s
+  // optional `lesson`, written by the agent that was there.
   timers.push(setInterval(safe('knowledge-gc', () => runKnowledgeGarbageCollection(db)), knowledgeGcMs))
   // Reflection proposer (FEAT-0005 L4): cluster recurring errors + contradicted
   // knowledge into pending proposals for human review. The only writer of the queue;

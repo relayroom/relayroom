@@ -1,5 +1,12 @@
 # @relayroom/telemetry
 
+## 0.7.0
+
+### Patch Changes
+
+- Updated dependencies [4009795]
+  - @relayroom/db@0.7.0
+
 ## 0.6.2
 
 ### Patch Changes

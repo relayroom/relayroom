@@ -81,7 +81,8 @@
     "promoteFailed": "We could not confirm this entry.",
     "purgeFailed": "We could not purge the derived knowledge.",
     "redactionUnresolved": "Some of those settings cannot be applied, so nothing was saved - saving them would stop this project distilling anything at all.",
-    "redactionSaveFailed": "We could not save the redaction settings."
+    "redactionSaveFailed": "We could not save the redaction settings.",
+    "entryNotFound": "This entry does not exist in this project, or it has been removed."
   },
   "attest": {
     "checkNameRequired": "Enter the CI check name.",

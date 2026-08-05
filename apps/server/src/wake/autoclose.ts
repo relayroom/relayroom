@@ -28,11 +28,13 @@ export async function autoCloseIdleThreads(
   // Re-checking inside the UPDATE means a thread that got a message in that window is
   // no longer idle and is left open. The cutoff is computed in SQL via make_interval
   // (binding a JS Date inside a raw sql fragment mis-serializes with postgres-js).
-  // Close, mark, and clear unread in ONE transaction. The close and the extractor
-  // marker must commit together: a batch that closed threads but crashed before
-  // marking would leave closed threads that never become candidates and never error
-  // (the same atomicity the close tool needs). markProjectKnowledgeDirty is the single
-  // cross-package setter (@relayroom/db).
+  // Close, mark, and clear unread in ONE transaction. The marker is written here for the
+  // same reason the close tool writes it, and with the same caveat: NOTHING READS IT
+  // TODAY. It was the extractor sweep's trigger and the sweep was removed in 0.7.0; it is
+  // kept because a cross-thread reflection pass needs exactly this timestamp, and dropping
+  // a column to re-add it is worse than writing one nobody reads yet. Do not read these
+  // writes as evidence that something consumes them. markProjectKnowledgeDirty is the
+  // single cross-package setter (@relayroom/db).
   return db.transaction(async (tx) => {
     const closed = await tx
       .update(threads)
@@ -50,8 +52,8 @@ export async function autoCloseIdleThreads(
 
     if (closed.length === 0) return 0
     const ids = closed.map(r => r.id)
-    // Every project that owns a just-closed thread is now extractor-dirty. Mark them so
-    // the leased sweep produces candidates. (FEAT-0004 L3.) Distinct projects only.
+    // Every project that owns a just-closed thread has knowledge that moved. Distinct
+    // projects only. (No consumer today - see the transaction comment above.)
     const dirtied = await tx.selectDistinct({ projectId: threads.projectId })
       .from(threads).where(inArray(threads.id, ids))
     for (const { projectId } of dirtied) await markProjectKnowledgeDirty(tx, projectId)

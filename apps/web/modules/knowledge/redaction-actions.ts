@@ -53,8 +53,9 @@ export async function saveRedactionRules(
     }
 
     // Merged, not written whole: this is one key of a JSONB column that carries other
-    // settings. Marks the project for re-distillation in the same transaction - see
-    // mergeKnowledgeConfig for why both properties are load-bearing.
+    // settings. Records that the settings moved, in the same transaction - see
+    // mergeKnowledgeConfig for why merging is load-bearing and why that marker is
+    // still written although nothing reads it yet.
     //
     // AND DELETES THE LEGACY KEY, which is what makes this save a way out rather than a
     // dead end. The resolver refuses a project whose config still holds

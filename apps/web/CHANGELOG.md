@@ -1,5 +1,34 @@
 # @relayroom/web
 
+## 0.7.0
+
+### Minor Changes
+
+- cdfc824: Knowledge entries can now be opened in full, and the discussion an entry came from is one click away.
+
+  The list clipped every title and every body to three lines with nowhere to go, so an entry longer than the clamp was simply unreadable and the thread that produced it was unreachable even though its id was recorded. Entries now have their own page: the title links to it, the body is shown whole, and each recorded source thread is a link.
+
+  The source link is the point rather than a convenience. An entry is worth keeping short only while the discussion behind it stays one click away; without that, brevity turns into lost information, entries grow to compensate, and long entries stop being read.
+
+  Every recorded source is shown, not the first. An entry usually names one thread today, but the field has always been a list and an entry drawn from several is the case it was made a list for.
+
+  Where there is no link, the page says which kind of nothing it is. An entry that never recorded a thread is complete as written; one whose thread has since been removed is missing evidence it used to have. Rendering nothing for both would make the second look like the first.
+
+  The empty list was also reworded. Nothing is collected automatically, so an empty knowledge list means no one has written a lesson yet rather than that something is not working - and those two readings call for different responses.
+
+### Patch Changes
+
+- a119723: The redaction settings screen no longer promises that changing a rule brings a skipped thread back.
+
+  It did, and that stopped being true when the automatic extractor was removed: nothing revisits a project any more, so a thread that was skipped because redaction left nothing to keep stays skipped. The note now says so directly, because the fact that correcting a rule does not undo the past is itself something an owner needs to know before they change one.
+
+  `knowledge_dirty_at` is still written when settings are saved and when a thread is closed from the dashboard, and nothing reads it. Every write site now says that, along with why the column is kept: a cross-thread reflection pass needs exactly the question it answers, and dropping a column to add it back later is worse than writing one nobody reads yet. Without that note the writes themselves read as evidence that something still consumes them.
+
+- Updated dependencies [4009795]
+  - @relayroom/db@0.7.0
+  - @relayroom/shared@0.7.0
+  - @relayroom/telemetry@0.7.0
+
 ## 0.6.2
 
 ### Patch Changes

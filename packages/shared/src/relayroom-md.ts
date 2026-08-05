@@ -155,7 +155,7 @@ nudge with that same wake id, just re-check the inbox and finish quickly with
 idempotent, so under at-least-once delivery a duplicate nudge converges instead
 of fanning out into extra billed turns.
 
-## Project knowledge (recall / learn)
+## Project knowledge (recall / learn / close)
 
 The project accumulates what it has learned - conventions, pitfalls, decisions -
 and you can both read and add to it:
@@ -170,6 +170,38 @@ and you can both read and add to it:
 - **Learned facts are advisory until trusted.** A fresh \`learn\` is a candidate, not
   ground truth: it becomes trusted only after independent confirmation. Treat a
   recalled fact that is not yet trusted as a lead to verify, not a settled answer.
+
+### Closing a thread: write the lesson yourself
+
+\`close\` takes an optional \`lesson\` - \`{ title, body, kind }\` - and **you are the
+only one who can write it.** Nothing else in the system reads the thread and works
+out what it taught. If you close without one, that thread teaches the project
+nothing.
+
+**Distil, do not summarise.** The lesson is not what the thread was about; it is
+what someone should do differently next time. A record that restates the
+conversation is worth less than no record, because it fills the place a real
+lesson would occupy.
+
+- **Title = the claim, phrased as the thing a future agent would search for.**
+  Not \`"Redaction discussion"\` but \`"A comment that lists the writers goes stale
+  and nobody re-counts it"\`. The title is the query, not a label.
+- **Body = why it is true, then what to do.** Name the thing that made it true - a
+  measurement, a failure, a decision - so the next reader can judge whether it
+  still holds. Then say what to do about it. Two or three sentences is usually
+  right; if it runs long you are narrating the thread instead of distilling it.
+- **Make it conditional.** Say when the lesson applies and when it does not. A
+  rule with no boundary gets applied where it does not fit, and one scoped to
+  where you happened to hit it never gets applied anywhere else.
+- **One claim per lesson.** If the thread taught two things, that is two closes'
+  worth of material - write the one that will still matter next week.
+- **Leave the thread as the source.** The lesson does not need to carry the
+  evidence; the thread is linked and stays readable. Short and pointed beats
+  complete.
+
+If the thread genuinely taught nothing durable - a status ping, a question with a
+one-off answer - close it **without** a lesson. That is the correct outcome, not a
+missed obligation.
 
 <!-- Project-specific norms (parts roster, conventions) can be added below. -->
 `;

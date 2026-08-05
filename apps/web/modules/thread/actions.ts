@@ -335,9 +335,9 @@ export async function closeThread(input: CloseThreadInput): Promise<ApiResult> {
     // CONDITIONAL ON THE STATUS WE READ. The check above and this write are two
     // statements, and an agent's `close` can land between them. Unconditionally
     // setting the status meant the later writer won with no one noticing: the MCP
-    // close would mark the thread for extraction and this update would move the
-    // status back, so a lesson got distilled from a thread that is not closed,
-    // while BOTH callers were told they succeeded.
+    // close would write the thread's lesson and this update would move the status
+    // back, so the lesson was recorded against a thread that is not closed, while
+    // BOTH callers were told they succeeded.
     //
     // Losing the race is not "not found" and it is not success - it is a distinct
     // outcome with its own message, because the two failures need opposite
@@ -372,21 +372,26 @@ export async function closeThread(input: CloseThreadInput): Promise<ApiResult> {
         )
     }
 
-    // Wake the extractor: a thread reaching closed is what makes its conversation
-    // eligible for distillation. Without this, a dashboard-closed thread would
-    // never carry the dirty marker and would never be extracted - the same shared
-    // setter the server's closers call, so all three agree.
+    // Record that this project's conversations moved. WRITTEN, AND NOTHING READS
+    // IT TODAY: the automatic extractor was the only reader and was removed in
+    // 0.7.0, leaving `knowledge_dirty_at` with four writers and no consumer. This
+    // is one of the four - the same shared setter the server's closers call, so
+    // all three still agree on what a close means.
+    //
+    // Kept rather than deleted because a cross-thread reflection pass needs exactly
+    // this - when did this project's conversations last change - and dropping the
+    // column to add it back later is worse than writing one nobody reads yet. What
+    // must not be read into this line is that closing a thread from the dashboard
+    // causes anything to be distilled. Nothing is collected automatically now; a
+    // lesson is written by the agent that was in the thread, through `close`.
     //
     // Note the status set differs from the unread-clear above, and in both
     // directions:
     //   canceled - not a resolution to learn from.
     //   answered - not a finished thread. In our vocabulary it means "I have
     //     replied to you", not "this is over", and autoclose treats it as live and
-    //     closes it after it goes idle. Marking here would raise the marker for a
-    //     thread the extractor cannot take, and extraction claims a thread once:
-    //     letting a mid-conversation state qualify would hand the claim to the
-    //     partial transcript and lock out the full one. The thread is extracted
-    //     when it actually closes, roughly half an hour later.
+    //     closes it after it goes idle. Marking a mid-conversation state would
+    //     record the project as having moved on a thread that has not finished.
     if (status === "closed") {
       await markProjectKnowledgeDirty(db, threadCheck.thread.projectId)
     }
