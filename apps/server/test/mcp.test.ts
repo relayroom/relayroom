@@ -1162,7 +1162,7 @@ describe('close marks that the project\'s knowledge moved (FEAT-0004 L3)', () =>
   beforeAll(async () => { await ensureInternalClient() })
 
   /**
-   * REWRITTEN in 0.6.3. This used to close a thread, run the extractor sweep, and assert
+   * REWRITTEN in 0.7.0. This used to close a thread, run the extractor sweep, and assert
    * a candidate appeared with the thread's subject as its title - which is exactly the
    * output that got the extractor removed: a copy of the thread, not a lesson from it.
    *

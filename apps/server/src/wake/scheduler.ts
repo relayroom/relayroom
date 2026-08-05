@@ -118,7 +118,7 @@ export function startWakeJobs(db: Db, bus: Bus, opts: StartWakeJobsOptions = {})
   timers.push(setInterval(safe('knowledge-metrics', () => runKnowledgeMetricsRollup(db)), knowledgeMetricsMs))
   // Retention GC (FEAT-0004 L3). Same scheduler, same re-entrancy guard.
   //
-  // The thread extractor used to run beside this line and is GONE (0.6.3). It turned every
+  // The thread extractor used to run beside this line and is GONE (0.7.0). It turned every
   // closed thread into a candidate whose title was the thread's subject and whose body was
   // its last message - a copy of the thread rather than a lesson from it - and 288 of the
   // 289 rows on the production hub were that. The intake it provided is now `close`'s

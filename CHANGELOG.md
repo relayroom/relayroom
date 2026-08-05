@@ -4,6 +4,69 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.7.0] - 2026-08-05
+
+Minor release, and a breaking one. **Migration 0023 deletes rows.** Project knowledge is now
+written by agents rather than assembled from threads, and the entries the old mechanism
+produced are removed.
+
+### Removed
+
+**The automatic thread extractor.** It took a closed thread, used its subject as the title and
+its last agent message as the body, cut to 2000 characters, and stored that as knowledge.
+There was no distillation step anywhere in it - what accumulated was a copy of the
+conversation, and enough of it to bury anything worth reading.
+
+The numbers are why it went rather than got improved. Across the two hubs this was measured
+on, **1128 entries carried the thread's subject verbatim and 3 had been written by an agent**.
+The three read as instructions - one titled *"없는 경로 404 통합테스트는 반드시 permitAll
+경로로 짠다"* against a thread called *"[01] 없는 경로 404/405 - 적대리뷰 재요청(bong)"*. Those
+three were written with no guidance at all, from the tool schema alone.
+
+### Changed
+
+**`close` carrying a `lesson` is the only automatic way knowledge is created, and the playbook
+finally says so.** That argument shipped in 0.6.0 and the playbook never mentioned it, which is
+why nearly nobody passed one and everybody saw the fallback. The new section says distil rather
+than summarise: the title is the query a future agent would search for, the body is why it is
+true and then what to do. It also says plainly that closing *without* a lesson is correct when
+a thread taught nothing durable - guidance that only pushes toward writing produces filler, and
+filler occupies the place a real lesson would.
+
+**Lessons are stored as `source_kind = 'lesson'`.** They previously shared `'thread'` with
+extractor output, which made the two indistinguishable in the data - the deletion below would
+have taken the replacement along with the trash.
+
+**Knowledge entries have somewhere to lead.** Each opens on its own page and links back to the
+thread it came from, so an entry can be short without that being a loss. Where a source cannot
+be resolved the page says the thread is gone and that the entry is what remains of it, rather
+than showing nothing: a missing link and a lost source are different facts.
+
+### Migrations
+
+**0023 identifies rows by reconstructing them, not by a label.** For each candidate it rebuilds
+what the extractor would have produced from the same thread and deletes only byte-exact
+matches. Rows whose title is not the thread's subject are relabelled as lessons. Anything it
+cannot attribute is left alone - including rows whose thread is gone, and rows whose body was
+redacted at extraction time and so no longer matches the message.
+
+The asymmetry is deliberate: deleting an agent's lesson cannot be undone, while leftover
+clutter is visible and removable. Rows that were promoted or marked trusted are never touched,
+because a human who read one and approved it made a later and more specific judgement than this
+migration can. The extraction watermarks go with the deleted rows - leaving them would mean
+those threads could never receive the lesson meant to replace what was removed.
+
+### A note on our own verification
+
+The machinery around this extractor was the most heavily reviewed work in 0.6.0: a watermark
+table, a sweep guard, a lock-order fix, a migration backfill tested against its own SQL, and
+fourteen adversarial review rounds. All of it was correct. **None of it asked whether the rows
+coming out were worth reading**, and that question was answered in a sentence by the first
+person who opened the screen.
+
+Precision about a mechanism is not evidence about its output. The reviews measured one and we
+reported the other.
+
 ## [0.6.2] - 2026-08-04
 
 Patch release. **0.6.1 could not start** - skip it and take this one.

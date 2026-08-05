@@ -30,7 +30,7 @@ export async function autoCloseIdleThreads(
   // (binding a JS Date inside a raw sql fragment mis-serializes with postgres-js).
   // Close, mark, and clear unread in ONE transaction. The marker is written here for the
   // same reason the close tool writes it, and with the same caveat: NOTHING READS IT
-  // TODAY. It was the extractor sweep's trigger and the sweep was removed in 0.6.3; it is
+  // TODAY. It was the extractor sweep's trigger and the sweep was removed in 0.7.0; it is
   // kept because a cross-thread reflection pass needs exactly this timestamp, and dropping
   // a column to re-add it is worse than writing one nobody reads yet. Do not read these
   // writes as evidence that something consumes them. markProjectKnowledgeDirty is the

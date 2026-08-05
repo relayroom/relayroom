@@ -4,7 +4,7 @@
  * WHY THIS IS TESTED AND NOT JUST REVIEWED. The migration deletes rows, and its predicate
  * is a RECONSTRUCTION rather than a flag: `source_kind = 'thread'` cannot separate the
  * automatic extractor's output from the lessons agents wrote through `close`, because
- * until 0.6.3 both wrote that value with identical columns. So the migration rebuilds
+ * until 0.7.0 both wrote that value with identical columns. So the migration rebuilds
  * what the extractor would have produced - the thread's subject as the title, its last
  * agent message trimmed to 2000 characters as the body, kind 'decision' - and deletes
  * only exact matches.

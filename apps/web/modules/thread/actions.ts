@@ -374,7 +374,7 @@ export async function closeThread(input: CloseThreadInput): Promise<ApiResult> {
 
     // Record that this project's conversations moved. WRITTEN, AND NOTHING READS
     // IT TODAY: the automatic extractor was the only reader and was removed in
-    // 0.6.3, leaving `knowledge_dirty_at` with four writers and no consumer. This
+    // 0.7.0, leaving `knowledge_dirty_at` with four writers and no consumer. This
     // is one of the four - the same shared setter the server's closers call, so
     // all three still agree on what a close means.
     //

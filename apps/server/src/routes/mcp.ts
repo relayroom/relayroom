@@ -1289,7 +1289,7 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
         // THE MARKER CURRENTLY HAS NO READER. It existed for the extractor sweep - a closed
         // thread was extractor input, and a close that committed without the marker left a
         // thread that never became a candidate and never errored - and the sweep was removed
-        // in 0.6.3. It is still written here (and by autoclose, and by the dashboard) because
+        // in 0.7.0. It is still written here (and by autoclose, and by the dashboard) because
         // "this project's knowledge moved at time T" is the trigger a cross-thread reflection
         // layer needs, and that is the next thing to be built. Anyone reading this write as
         // evidence that something consumes it today would be wrong; nothing does.
@@ -1372,7 +1372,7 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
                 // would send the next reader looking for one.
                 //
                 // 'extracted' stays as the value because the column's check constraint
-                // admits two, and the pre-0.6.3 rows written by the extractor carry it too:
+                // admits two, and the pre-0.7.0 rows written by the extractor carry it too:
                 // one value for "this thread's knowledge is decided", whoever decided it.
 
                 // THE SNAPSHOT COMPARISON ON THE WRITE THAT STORES THE TEXT. The rules were
@@ -1385,7 +1385,7 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
                 const stored = await sp.execute<{ id: string }>(sql`
                   insert into ${knowledge} (project_id, kind, title, body, source_kind, source_refs, validation_state)
                   select ${ctx.projectId}, ${args.lesson!.kind}, ${lessonText!.title}, ${lessonText!.body},
-                         -- 'lesson', NOT 'thread'. Until 0.6.3 this wrote 'thread', the same
+                         -- 'lesson', NOT 'thread'. Until 0.7.0 this wrote 'thread', the same
                          -- value the automatic extractor used, which made the two
                          -- indistinguishable in the data: same column list, same NULL
                          -- created_by_user_id, same candidate state, same source_refs. When
@@ -1753,7 +1753,7 @@ function createMcpServer(db: Db, bus: Bus, ctx: McpConnectionContext): McpServer
       // (close-lesson.test.ts), and this is the same statement shape against the same
       // column. That is verification by construction, which is weaker, and saying so is
       // better than a test that reaches the wrong moment and reports green.
-      // (Until 0.6.3 this pointed at the extractor's test for the same evidence; the
+      // (Until 0.7.0 this pointed at the extractor's test for the same evidence; the
       // extractor is gone and close's test now carries it.)
       const [row] = await db.execute<{ id: string; validation_state: string }>(sql`
         insert into ${knowledge} (project_id, kind, title, body, source_kind, source_refs, validation_state, created_by_user_id)

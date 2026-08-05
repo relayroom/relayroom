@@ -26,7 +26,7 @@
  *   5. playbook approval          - `playbook_version` and `project.relayroom_md`, the
  *                                   file every agent in the project reads
  *
- * FIVE. It was six until 0.6.3 removed the automatic thread extractor, which was number
+ * FIVE. It was six until 0.7.0 removed the automatic thread extractor, which was number
  * one and the only writer that read raw thread text without an agent choosing the words.
  * The count moves; that is why it lives in one place. If you are adding another, add it
  * here and to `reportSkippedPatterns`'s `path` union - and read that union's comment

@@ -173,7 +173,7 @@ describe('the knowledge loop closes (0.5.0 DoD)', () => {
   })
 
   /**
-   * THE LOOP'S ENTRANCE MOVED in 0.6.3, and that is why this stage is rewritten rather
+   * THE LOOP'S ENTRANCE MOVED in 0.7.0, and that is why this stage is rewritten rather
    * than repaired. It used to be: close a thread, let the automatic extractor turn it
    * into a candidate, and assert the candidate's title equals the thread's SUBJECT -
    * which is the defect that got the extractor removed. A row titled with the thread's

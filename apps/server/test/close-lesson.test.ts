@@ -10,7 +10,7 @@
  * 2. A recorded lesson claims the thread, so nothing records a second one for it. The
  *    claim is the only serialization point - close carries no idempotency key - and the
  *    negative control below is what proves the claim is what does it rather than
- *    something incidental to the test setup. Until 0.6.3 the competitor was the automatic
+ *    something incidental to the test setup. Until 0.7.0 the competitor was the automatic
  *    extractor; it is gone, and a retry or a simultaneous close is what remains.
  */
 import { randomBytes } from 'node:crypto'
@@ -178,7 +178,7 @@ describe('close with a lesson', () => {
   })
 
   it('claims the thread, so nothing else can record a second lesson for it', async () => {
-    // REWRITTEN in 0.6.3. This used to run the automatic extractor and assert it skipped
+    // REWRITTEN in 0.7.0. This used to run the automatic extractor and assert it skipped
     // the claimed thread, with a second unlessoned thread as the control that the sweep
     // had really run. The sweep is gone, and with it the competitor this claim was built
     // against - but not the claim's job: a retry and two simultaneous closes still have
@@ -284,7 +284,7 @@ describe('close with a lesson - every refusal still closes the thread', () => {
 
     // The retry an agent makes when a response is lost. One code for retry, competing
     // close and purge, because close carries no idempotency key and the data cannot tell
-    // them apart. (It covered the extractor too until 0.6.3 removed it.)
+    // them apart. (It covered the extractor too until 0.7.0 removed it.)
     const again = await closeWith(threadId, { ...LESSON, title: 'a different lesson' })
     expect(again.lesson).toMatchObject({ recorded: false, code: 'already_decided' })
     expect(await rowsCiting(threadId)).toHaveLength(1)

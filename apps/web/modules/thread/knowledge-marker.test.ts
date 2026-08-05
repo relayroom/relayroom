@@ -3,7 +3,7 @@
  * moved, through the same shared setter the server's closers call.
  *
  * NOTHING READS `knowledge_dirty_at` TODAY. The automatic extractor was its only
- * reader and was removed in 0.6.3; the column is kept because a cross-thread
+ * reader and was removed in 0.7.0; the column is kept because a cross-thread
  * reflection pass needs exactly the question it answers. These cases pin which
  * statuses write it, so the three closers keep agreeing until that reader arrives -
  * they are not evidence that anything acts on it.

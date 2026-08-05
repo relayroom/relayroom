@@ -199,7 +199,7 @@
     "colPromoted": "Promoted",
     "colExpires": "Expires",
     "sourceLabel": "From",
-    "sourceThread": "a thread (pre-0.6.3 auto-extraction)",
+    "sourceThread": "a thread (pre-0.7.0 auto-extraction)",
     "sourceEvent": "event",
     "sourceHuman": "a person",
     "sourceLearn": "an agent",

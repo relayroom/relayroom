@@ -81,7 +81,7 @@ export const projects = pgTable('project', {
   //
   // NOTHING READS IT TODAY. It was the extractor sweep's trigger - the sweep claimed
   // projects where it was not null, wrote candidates, then cleared it - and the sweep was
-  // removed in 0.6.3. Four writers remain (the `close` tool, autoclose, the dashboard's
+  // removed in 0.7.0. Four writers remain (the `close` tool, autoclose, the dashboard's
   // thread action, the dashboard's knowledge-settings save) and zero readers.
   //
   // Kept rather than dropped because the next layer needs exactly this: a cross-thread
@@ -476,8 +476,8 @@ export const knowledge = pgTable('knowledge', {
   //   lesson    `close` with a lesson (routes/mcp.ts) - an agent's distillation
   //   learn     the `learn` tool
   //   proposer  an approved proposal (packages/db/src/knowledge.ts)
-  //   thread    HISTORY ONLY. The automatic thread extractor, removed in 0.6.3. Nothing
-  //             writes it now; rows that still carry it are pre-0.6.3, and one migration
+  //   thread    HISTORY ONLY. The automatic thread extractor, removed in 0.7.0. Nothing
+  //             writes it now; rows that still carry it are pre-0.7.0, and one migration
   //             deletes the provable ones. See 0026.
   // `event` and `human` were in the old list and were never written by anything.
   sourceKind: text('source_kind').notNull(),
@@ -516,14 +516,14 @@ export const knowledge = pgTable('knowledge', {
 // candidate back. For purge, the operator's remedy for a leaked secret, that meant the
 // remedy silently undid itself. Evidence of the work is not a record of the work.
 //
-// WHAT IT DOES NOW that the extractor is gone (0.6.3). Two things, both narrower:
+// WHAT IT DOES NOW that the extractor is gone (0.7.0). Two things, both narrower:
 //   - `close` with a lesson claims the thread here before storing, so a retry and two
 //     simultaneous closes produce one lesson rather than two. The claim is the only
 //     serialization point; close carries no idempotency key.
 //   - purge writes `purged`, which now also means "no lesson may be recorded here
 //     later" - the claim above conflicts with it. That is the right reading of purge:
 //     an operator removing a thread's knowledge did not ask for a fresh copy of it.
-// A pre-0.6.3 `extracted` row means the same thing to the claim, whoever wrote it.
+// A pre-0.7.0 `extracted` row means the same thing to the claim, whoever wrote it.
 //
 // `reason` is STATE, not history: purge overwrites `extracted`, and the sequence
 // lives in knowledge_audit. Deliberately two values, both statements about content

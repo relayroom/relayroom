@@ -29,7 +29,7 @@ import { markProjectKnowledgeDirty } from "@relayroom/db/knowledge"
  * either - reading, merging in memory and writing back would.
  *
  * MARKS THE PROJECT DIRTY, AND NOTHING READS THAT MARKER TODAY. The automatic
- * extractor was removed in 0.6.3, and it was the only reader; `knowledge_dirty_at`
+ * extractor was removed in 0.7.0, and it was the only reader; `knowledge_dirty_at`
  * now has four writers and no consumer. This call is one of the four.
  *
  * It is kept rather than deleted because the marker answers a question the next

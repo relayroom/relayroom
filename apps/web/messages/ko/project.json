@@ -199,7 +199,7 @@
     "colPromoted": "승격 시각",
     "colExpires": "만료",
     "sourceLabel": "출처",
-    "sourceThread": "스레드 (0.6.3 이전 자동 추출)",
+    "sourceThread": "스레드 (0.7.0 이전 자동 추출)",
     "sourceEvent": "이벤트",
     "sourceHuman": "사람",
     "sourceLearn": "에이전트",

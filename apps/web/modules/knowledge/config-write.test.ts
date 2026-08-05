@@ -3,7 +3,7 @@
  * recording that the project's knowledge settings moved.
  *
  * Both properties are invisible in normal use, and the second one is invisible in a
- * stronger sense since 0.6.3: `knowledge_dirty_at` has no reader at all now that the
+ * stronger sense since 0.7.0: `knowledge_dirty_at` has no reader at all now that the
  * automatic extractor is gone, so nothing observable happens either way. The column
  * is kept for the reflection pass that will ask when a project last changed, and
  * these tests hold the writes to the shape that pass will need.

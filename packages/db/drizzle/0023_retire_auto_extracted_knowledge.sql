@@ -1,9 +1,9 @@
 -- Retire what the automatic thread extractor wrote, and rescue what it was confused with.
 --
--- The extractor (removed in 0.6.3) turned every closed thread into a knowledge row titled
+-- The extractor (removed in 0.7.0) turned every closed thread into a knowledge row titled
 -- with the thread's SUBJECT and bodied with its last agent message, truncated to 2000
 -- characters. On the production hub 288 of 289 such rows were that; the one exception was
--- a lesson an agent wrote through `close`, which until 0.6.3 stored the SAME
+-- a lesson an agent wrote through `close`, which until 0.7.0 stored the SAME
 -- `source_kind = 'thread'`, with the same NULL created_by_user_id, the same `candidate`
 -- state and the same source_refs shape. The two are not distinguishable by any column.
 --
