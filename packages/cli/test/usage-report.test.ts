@@ -320,6 +320,31 @@ describe("usage reporter: cost estimate", () => {
     expect(usage.cost_usd).toBeUndefined()
     expect(usage.input_tokens).toBe(1_000_000)
   })
+
+  it("prices the models this fleet actually runs", async () => {
+    // Named individually rather than looped over the table, because a loop asserts
+    // that whatever is listed is priced - which was never the failure. The failure was
+    // a model that RUNS and is not listed, and only a name written here catches that.
+    // These three are what the agents in this repo are launched as today.
+    expect((await costFor("claude-opus-5")).cost_usd).toBeCloseTo(5, 6)
+    expect((await costFor("claude-sonnet-5")).cost_usd).toBeCloseTo(3, 6)
+    expect((await costFor("claude-fable-5")).cost_usd).toBeCloseTo(10, 6)
+  })
+
+  it("says on stderr that an unlisted model is going uncosted", async () => {
+    // The omission is intended; the SILENCE was the defect. `claude-opus-5` was
+    // unlisted for 794 turns and 6.3 billion cache tokens, and the dashboard total
+    // looked like a total. A test that only checks cost_usd is undefined would have
+    // passed throughout that period - it did, and this is the assertion it lacked.
+    writeFileSync(join(dir, "transcript.jsonl"), transcriptFor("claude-opus-4-1-20250805"))
+    const { stderr } = await runReporter(
+      ["--agent", "claude"],
+      { transcript_path: join(dir, "transcript.jsonl") },
+      dir,
+    )
+    expect(stderr).toContain("no verified price")
+    expect(stderr).toContain("claude-opus-4-1-20250805")
+  })
 })
 
 describe("usage reporter: tool-heavy turn (BUG-0009)", () => {
