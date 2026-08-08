@@ -91,7 +91,21 @@ const CACHE_WRITE_RATE = 1.25
  * is visible. An unlisted model showing tokens with no cost is a prompt to add a
  * verified rate; a wrong number looks exactly like a right one.
  */
+// Rates below were read from platform.claude.com/docs/en/about-claude/pricing on
+// 2026-08-05. Recording where and when is the point: the next person can tell a rate
+// that was checked from one that was assumed, and can re-check the ones that are old.
 const CLAUDE_PRICES = [
+  // Added 2026-08-05. Their absence was not a judgement, it was an omission, and it
+  // was invisible in exactly the way this table's design predicts: on the hub this
+  // was found on, `claude-opus-5` had 794 usage events carrying 6.3 BILLION cache
+  // tokens - 86% of everything recorded - and not one of them had a cost_usd field.
+  // The dashboard total read $774 and silently excluded the model doing most of the
+  // work. Reporting tokens with no dollar figure is the designed behaviour for an
+  // unlisted model, and it worked; what nobody did was look at which models were
+  // unlisted.
+  ["claude-opus-5", [5, 25]],
+  ["claude-fable-5", [10, 50]],
+  ["claude-mythos-5", [10, 50]],
   ["claude-opus-4-8", [5, 25]],
   ["claude-opus-4-7", [5, 25]],
   ["claude-opus-4-6", [5, 25]],
@@ -326,6 +340,22 @@ async function main() {
       (cacheWrite / 1e6) * p[0] * CACHE_WRITE_RATE +
       (cacheRead / 1e6) * p[0] * CACHE_READ_RATE
     cost = +(inputCost + (outTok / 1e6) * p[1]).toFixed(6)
+  } else if (model) {
+    // SAY SO. Omitting cost_usd for an unlisted model is the intended behaviour, and
+    // the header above claims the gap is visible - it was not. `claude-opus-5` went
+    // unlisted for 794 turns and 6.3 billion cache tokens, and the only trace was a
+    // dashboard total that looked like a total. Nothing pointed at the model, because
+    // the one diagnostic here is behind RELAYROOM_USAGE_DEBUG and nobody sets it while
+    // things appear to work.
+    //
+    // stderr, not the debug log, for that reason: the condition that needs announcing
+    // is precisely the one where no one is investigating. It fires once per turn on a
+    // model that stays unlisted, which is the right volume - a rate is added once, and
+    // until it is, every turn is silently uncosted.
+    console.error(
+      `relayroom-usage: no verified price for model "${model}" - tokens reported, cost omitted. `
+      + `Add a rate to CLAUDE_PRICES in usage-report.mjs, or this model's spend stays out of every total.`,
+    )
   }
 
   const usage = { input_tokens: inTok, output_tokens: outTok, cache_tokens: cacheTok }
