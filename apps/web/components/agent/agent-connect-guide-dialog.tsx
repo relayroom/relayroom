@@ -109,6 +109,14 @@ export function AgentConnectGuideDialog({ connectCode, part, projectSlug, server
   // a question anyone answers - it is where the agent stops. Unchecking restores
   // every permission check, at the cost of an agent that waits for a human.
   const [bypassMode, setBypassMode] = useState(true)
+  // Which multiplexer the generated command should set up. INTENT, not state: this is
+  // what the reader is about to ask for, and it is never rendered as what the part is
+  // actually delivering through - a worktree can ask for herdr and get tmux, and the
+  // part card sources that from what the pager reports rather than from here.
+  //
+  // Defaults to tmux because tmux is the assumption that is right without the reader
+  // having installed anything.
+  const [multiplexer, setMultiplexer] = useState<"tmux" | "herdr">("tmux")
   const [token, setToken] = useState<string | null>(null)
   // Guard so the token is issued exactly once per open - NOT a cancellable
   // effect, because router.replace (stripping ?connect) re-renders mid-request
@@ -254,6 +262,36 @@ export function AgentConnectGuideDialog({ connectCode, part, projectSlug, server
                   {t("agentConnectGuide.bypassHint")}
                 </p>
               </div>
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">{t("agentConnectGuide.muxLabel")}</p>
+                <div className="inline-flex gap-0.5 rounded-md border border-border p-0.5">
+                  {(["tmux", "herdr"] as const).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      aria-pressed={multiplexer === m}
+                      onClick={() => setMultiplexer(m)}
+                      className={cn(
+                        "cursor-pointer rounded px-2.5 py-1 text-xs font-medium transition-colors",
+                        multiplexer === m
+                          ? "bg-foreground text-background"
+                          : "text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      {t(`agentConnectGuide.mux${m === "tmux" ? "Tmux" : "Herdr"}` as Parameters<typeof t>[0])}
+                    </button>
+                  ))}
+                </div>
+                {/* Both options carry a hint, because the choice is not "default versus
+                    the one that needs explaining" - picking tmux is why setup has two
+                    steps, and that is worth knowing before choosing it. Each says what
+                    follows from the choice rather than naming a requirement. */}
+                <p className="text-[11px] leading-snug text-muted-foreground/80">
+                  {multiplexer === "herdr"
+                    ? t("agentConnectGuide.muxHerdrHint")
+                    : t("agentConnectGuide.muxTmuxHint")}
+                </p>
+              </div>
             </div>
 
             {(() => {
@@ -281,19 +319,52 @@ export function AgentConnectGuideDialog({ connectCode, part, projectSlug, server
                 `${CLI_CMD} init --code ${connectCode} --part ${part} --target ${session} --agent ${clis.join(",")} --token ${token} --server ${base}`,
               )
               for (const cli of clis) insideLines.push(`${CLI_CMD} hooks install --agent ${cli}`)
-              // One channel-aware launcher: ./rr.sh launch decides wake delivery
-              // (Claude Channels when supported, else the pager), starts the pager in
-              // that mode, then runs the first CLI in the foreground - in the right
-              // order so channels actually activate. `--bypass` appends the CLI's
-              // skip-all-approvals flag when the user opted in.
-              insideLines.push(bypassMode ? `./rr.sh launch --bypass` : `./rr.sh launch`)
+              // The last line differs by multiplexer, and it is a different VERB rather
+              // than the same one with a flag.
+              //
+              // tmux: `./rr.sh launch` execs the CLI in the pane the reader is already
+              // sitting in - the one block 1 created. It creates nothing itself, which
+              // is exactly why block 1 has to exist and has to be pasted alone (`tmux
+              // new` takes the terminal, so nothing can follow it in one paste).
+              //
+              // herdr: `./rr.sh up --use-herdr` asks herdr for this worktree's
+              // workspace, puts the agent in it, and starts the pager in herdr mode.
+              // Creation is inside `up`, so there is nothing to create beforehand and
+              // no pane the paste has to happen inside - which collapses the two blocks
+              // into one. Using `launch` here would exec the CLI in the reader's own
+              // terminal and never open a herdr workspace at all.
+              //
+              // The flag only needs to appear once: it persists `multiplexer` into the
+              // worktree config, so a later bare `up` keeps the choice.
+              const byp = bypassMode ? " --bypass" : ""
+              insideLines.push(
+                multiplexer === "herdr" ? `./rr.sh up${byp} --use-herdr` : `./rr.sh launch${byp}`,
+              )
               const insideCmd = insideLines.join("\n")
               return (
                 <div className="space-y-3">
-                  <CmdBlock label={t("agentConnectGuide.step1Label")} command={tmuxCmd} />
+                  {/* No tmux block under herdr. Leaving it in would have the reader
+                      create a session that nothing then uses, and the agent would come
+                      up in a herdr workspace while an empty tmux session sat behind it
+                      looking like the place to attach. */}
+                  {multiplexer === "tmux" && (
+                    <CmdBlock label={t("agentConnectGuide.step1Label")} command={tmuxCmd} />
+                  )}
                   <CmdBlock
-                    label={t("agentConnectGuide.step2Label")}
-                    hint={multi ? t("agentConnectGuide.step2HintMulti") : t("agentConnectGuide.step2Hint")}
+                    label={
+                      multiplexer === "herdr"
+                        ? t("agentConnectGuide.herdrStepLabel")
+                        : t("agentConnectGuide.step2Label")
+                    }
+                    hint={
+                      multiplexer === "herdr"
+                        ? multi
+                          ? t("agentConnectGuide.herdrStepHintMulti")
+                          : t("agentConnectGuide.herdrStepHint")
+                        : multi
+                          ? t("agentConnectGuide.step2HintMulti")
+                          : t("agentConnectGuide.step2Hint")
+                    }
                     command={insideCmd}
                   />
                   {multi && (
