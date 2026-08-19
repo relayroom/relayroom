@@ -106,6 +106,39 @@ CLI="relayroom"; command -v relayroom >/dev/null 2>&1 || CLI="npx -y @relayroom/
 # pager's send-keys deferral. Sets LAUNCH (the command to run) + writes delivery to
 # config so the pager and the channel server agree. Probe is cheap: \`--channels\`
 # with no value makes commander print "argument missing" iff the flag exists.
+# EVERY FLAG \`up\` TAKES, IN ONE PLACE - and anything else is an error, never a no-op.
+#
+# The previous generation of this script picked out the flags it recognised and ignored
+# the rest, so \`./rr.sh up --use-herdr\` on an rr.sh that predates herdr started a tmux
+# session and said nothing. Observed on a user's machine: they believed they had switched
+# multiplexer and had not. We cannot fix the copies already written, but from here on an
+# unknown option stops the command instead of quietly doing the old thing - and the error
+# names the likeliest cause, which is a script older than the flag.
+assert_known_flags() {
+  local verb="$1"; shift
+  local allowed="$1"; shift
+  local a
+  for a in "$@"; do
+    case " $allowed " in
+      *" $a "*) ;;
+      *)
+        echo "rr: unknown option for '$verb': $a" >&2
+        echo "    $verb accepts: $allowed" >&2
+        echo "    If you expected that flag to exist, this rr.sh may predate it:" >&2
+        echo "      npm i -g @relayroom/cli && ./rr.sh update --self" >&2
+        exit 2 ;;
+    esac
+  done
+}
+
+# Checked HERE, before the loops below - one of them writes the multiplexer into config,
+# and a command that is about to be refused must not first change the thing it was
+# refused for. (Also before \`up\`'s self-update re-exec, for the same reason.)
+case "\${1:-help}" in
+  up)     assert_known_flags up "--bypass --new --restart --use-herdr --use-tmux --channel --no-channel" "\${@:2}" ;;
+  launch) assert_known_flags launch "--bypass --new --channel --no-channel" "\${@:2}" ;;
+esac
+
 # Opt-in bypass: \`./rr.sh up --bypass\` (or \`./rr.sh claude run --bypass\`) appends the
 # primary CLI's "skip approval prompts" launch flag. Detected anywhere in the args.
 BYPASS=0; for _a in "$@"; do [ "$_a" = "--bypass" ] && BYPASS=1; done

@@ -151,6 +151,31 @@ sleep 120
     expect(calls().slice(before)).not.toMatch(/multiplexer/)
   })
 
+  it("refuses an option it does not know, before doing anything", async () => {
+    // The rollout trap, from the other side. An rr.sh that predates a flag used to pick
+    // out what it recognised and ignore the rest, so `up --use-herdr` on an old script
+    // started a tmux session and said nothing - observed on a user's machine, who
+    // believed they had switched multiplexer. This is the generation that stops.
+    const res = await run(["up", "--use-herdr", "--typo-flag"])
+    expect(res.code).toBe(2)
+    expect(res.out).toMatch(/unknown option for 'up': --typo-flag/)
+    // It names the likeliest cause, because "unknown option" on its own reads as a typo
+    // when the usual cause is a script older than the flag.
+    expect(res.out).toMatch(/update --self/)
+    // And nothing happened first: the refusal has to come before the side effects, or a
+    // rejected command still rewrites the config it was refused for.
+    expect(config().multiplexer).toBeUndefined()
+    expect(await tmuxSessions()).not.toMatch(/RR-mux-test/)
+  })
+
+  it("still accepts every flag it advertises", async () => {
+    // The other direction of the same guard: a list that refuses everything would pass
+    // the test above and break the tool.
+    const res = await run(["up", "--bypass", "--new", "--restart", "--use-tmux", "--no-channel"])
+    expect(res.out).not.toMatch(/unknown option/)
+    expect(res.code).not.toBe(2)
+  })
+
   it("herdr intent plus an unusable herdr is an error, never a tmux fallback", async () => {
     const res = await run(["up", "--use-herdr"])
     expect(res.code).toBe(1)
