@@ -789,7 +789,7 @@ hd_up() {
   # terminal title belongs to Claude Code, which rewrites it as the conversation changes.
   # Re-applied on every up because the agent record belongs to the terminal, so a relaunch
   # is a new agent; setting it each time is cheaper than knowing which cases drop it.
-  _nm="$($CLI herdr name "$PART" --dir "$ROOT" 2>/dev/null || true)"
+  _nm="$($CLI herdr name "$PART" --agent "$PRIMARY" --dir "$ROOT" 2>/dev/null || true)"
   case "\${_nm:-}" in
     named=true*) : ;;
     # Cosmetic, so it never fails the launch - but silence here is indistinguishable from

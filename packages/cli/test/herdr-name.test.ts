@@ -27,7 +27,45 @@ vi.mock("../runtime/herdr-client.mjs", () => ({
   herdrSocketPresent: () => true,
 }))
 
-const { nameAgent } = await import("../src/herdr")
+const { nameAgent, herdrAgentName } = await import("../src/herdr")
+
+/**
+ * The rule is herdr's, and it was measured against the running server: `^[a-z][a-z0-9_-]
+ * {0,31}$`. It matters because the display everyone asked for - "claude - rrc-server-gb10"
+ * - CANNOT be the stored value: spaces are refused with `invalid_agent_name`.
+ */
+describe("composing a name herdr will accept", () => {
+  it("puts the part first, with a separator the field actually allows", () => {
+    // Requested: `rrc-server-gb10 · claude`. The space and the middle dot are both
+    // refused, so this is the closest legal rendering of the same reading order.
+    expect(herdrAgentName("claude", "rrc-server-gb10")).toBe("rrc-server-gb10_claude")
+  })
+
+  it("produces something legal from input that is not", () => {
+    // Uppercase, dots and spaces are all refused by the server; a name built from a part
+    // that contains them has to be repaired here rather than rejected at the socket.
+    expect(herdrAgentName("Claude", "RRC.Server GB10")).toBe("rrc-server-gb10_claude")
+    // A leading digit is legal in a part and illegal in this field.
+    expect(herdrAgentName("", "9lives")).toMatch(/^[a-z]/)
+  })
+
+  it("drops the agent suffix rather than the part when 32 characters will not fit", () => {
+    const part = "rrc-a-very-long-part-name-indeed"  // 32 exactly
+    const out = herdrAgentName("claude", part)
+    expect(out.length).toBeLessThanOrEqual(32)
+    // The part is why the row is being named; the suffix is decoration.
+    expect(out).toBe(part)
+  })
+
+  it("never exceeds the limit the server enforces", () => {
+    for (const p of ["x", "x".repeat(40), "9".repeat(40), "a b c d e f g h i j k l m n o p"]) {
+      const out = herdrAgentName("claude", p)
+      expect(out.length).toBeGreaterThan(0)
+      expect(out.length).toBeLessThanOrEqual(32)
+      expect(out).toMatch(/^[a-z][a-z0-9_-]*$/)
+    }
+  })
+})
 
 describe("naming a part's agent row", () => {
   beforeEach(() => {

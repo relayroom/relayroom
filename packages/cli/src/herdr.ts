@@ -135,6 +135,34 @@ export async function launchInPane(paneId: string, command: string, timeoutMs = 
 
 /** What `rr.sh` is allowed to assume about herdr before it changes anything. */
 /**
+ * herdr's rule for an agent name, MEASURED against the running server rather than read
+ * off a doc: `^[a-z][a-z0-9_-]{0,31}$`. Rejections observed - `Claude-x`
+ * (uppercase), `claude.x` (dot), `1claude` (leading digit), `-claude` (leading dash),
+ * and 33 characters. All answer `invalid_agent_name`.
+ *
+ * This matters because the requested display cannot be the stored value: it is
+ * `rrc-server-gb10 · claude`, and NEITHER the space NOR the middle dot is allowed. The
+ * closest legal rendering keeps the requested ORDER - part first, because the part is
+ * what someone scans the sidebar for and the agent kind is secondary - and uses `_` as
+ * the separator, which reads as a segment break in a way another hyphen would not, since
+ * part names are full of hyphens already.
+ *
+ * When it will not fit in 32 characters the AGENT SUFFIX is what goes, not the part: the
+ * suffix is decoration (every part in this fleet is `claude` today) while the part is the
+ * entire reason the row is being named at all.
+ */
+export function herdrAgentName(agent: string, part: string): string {
+  const clean = (s: string) => String(s || "").toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+/, "")
+  const p = clean(part) || "part"
+  const a = clean(agent)
+  const composed = a ? `${p}_${a}` : p
+  const fitted = composed.length <= 32 ? composed : (p.length <= 32 ? p : p.slice(0, 32))
+  // A leading digit is legal in a part but not in this field; prefixing keeps the name
+  // recognisable instead of dropping the character that distinguishes it.
+  return /^[a-z]/.test(fitted) ? fitted : `a-${fitted}`.slice(0, 32)
+}
+
+/**
  * Give this worktree's agent a NAME in herdr's agent list.
  *
  * The sidebar had every part reading the same thing, because everything an agent row can
@@ -147,9 +175,20 @@ export async function launchInPane(paneId: string, command: string, timeoutMs = 
  * `{ target, name }`. `pane_id` answers `missing field 'target'` - and the error names
  * the field it wants, unlike report_metadata's, which names one that was already there.
  *
- * Set on every `up` rather than once: the agent record belongs to the terminal, so a
- * relaunch in the same pane is a new agent, and a name that is re-applied at every launch
- * cannot go stale no matter which of those cases actually drops it.
+ * HOW LONG IT LASTS, measured rather than assumed - and the first answer was wrong. The
+ * agent record was assumed to belong to the claude process, so a relaunch would need a
+ * fresh name. It does not: killing claude and starting it again in the same pane keeps
+ * the SAME `terminal_id` and the name with it. What loses the name is the pane going
+ * away, and under herdr a pane only goes away by closing the workspace - which is what
+ * `--restart` does, and which comes back through `up`. So `up` setting it is enough, and
+ * the pager does not need to re-assert it on a timer.
+ *
+ * Still unmeasured: whether a herdr SERVER restart preserves it. That cannot be tested
+ * without restarting the fleet's own server, so it waits for the scheduled restart
+ * window. If it turns out not to survive, the pager assertion becomes justified.
+ *
+ * Requires an agent to be RUNNING: a bare shell pane answers `agent_not_found`. This is
+ * why the call sits after the launch confirmation and not beside the workspace creation.
  */
 export async function nameAgent(worktreePath: string, name: string): Promise<{ named: boolean; pane?: string; why?: string }> {
   const pane = await findPane(worktreePath)

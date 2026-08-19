@@ -7,7 +7,7 @@ import { runtimePath } from "./runtime"
 import { DEFAULT_SERVER } from "./constants"
 import { AGENT_IDS } from "./providers"
 import { readConfig, writeConfig } from "./config"
-import { ensureWorkspace, findPane, herdrStatus, launchInPane, nameAgent } from "./herdr"
+import { ensureWorkspace, findPane, herdrAgentName, herdrStatus, launchInPane, nameAgent } from "./herdr"
 import { herdrCall } from "../runtime/herdr-client.mjs"
 import { basename, resolve } from "node:path"
 
@@ -265,11 +265,20 @@ herdrCmd
 herdrCmd
   .command("name")
   .description("Name this worktree's agent in herdr's agent list (the sidebar row)")
-  .argument("<name>", "what to call it, e.g. the part name")
+  .argument("[part]", "the part name (default: from .relayroom/config.json)")
+  .option("--agent <id>", "the CLI running in the pane (default: from .relayroom/config.json)")
   .option("--dir <path>", "worktree directory", ".")
-  .action(async (name: string, opts: { dir: string }) => {
-    const res = await nameAgent(resolve(opts.dir), name)
-    console.log(`named=${res.named}${res.pane ? ` pane=${res.pane}` : ""}${res.why ? ` reason=${JSON.stringify(res.why)}` : ""}`)
+  .action(async (part: string | undefined, opts: { dir: string; agent?: string }) => {
+    const dir = resolve(opts.dir)
+    const cfg = readConfig(dir)
+    const p = part ?? cfg.part ?? ""
+    const agent = opts.agent ?? (cfg.agent ?? "").split(",")[0]
+    if (!p) { console.error("error: no part given and none in .relayroom/config.json"); process.exit(1) }
+    // Composed here, in the one place that knows herdr's naming rule, so a caller cannot
+    // build a name that the server will refuse.
+    const name = herdrAgentName(agent, p)
+    const res = await nameAgent(dir, name)
+    console.log(`named=${res.named} name=${name}${res.pane ? ` pane=${res.pane}` : ""}${res.why ? ` reason=${JSON.stringify(res.why)}` : ""}`)
   })
 
 // ── channel: the INTENT to use Claude Code Channels (not the current mode) ──────
