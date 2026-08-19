@@ -614,6 +614,42 @@ sl() {
   printf '%s %s %s %s %s %s %s%s' "$PART" "$sep" "$inbox" "$sep" "$mcp" "$sep" "$pgr" "$upd"
 }
 
+# The same bar for Claude Code's statusLine, in ANSI instead of tmux markup.
+#
+# WHY THIS EXISTS AT ALL: a herdr pane has no tmux status bar, so everything \`sl\` renders
+# disappears for a migrated part. And why it is not just the workspace token: statusLine
+# is POLLED - Claude Code re-runs this command - so the checker is a different process
+# from the thing it checks, and a pager that dies turns the bar red BY ITSELF. A pushed
+# token can only ever be as fresh as the last process that was alive to push it, which is
+# the stale-green shape: the push stops exactly when there is something to report.
+#
+# Written for a bar that is redrawn constantly: unread and MCP are already cached (4s and
+# 20s), and nothing here opens a socket on the render path outside those windows.
+sl_claude() {
+  local sep n inbox mcp pgr seg user_line
+  # Dim separator; the segment stays readable on both light and dark themes because it
+  # only ever uses the terminal's own palette.
+  sep="$(printf '\\033[2m│\\033[0m')"
+  n="$(unread_count)"
+  if [ "\${n:-0}" -gt 0 ] 2>/dev/null; then inbox="$(printf '\\033[33;1minbox %s\\033[0m' "$n")"; else inbox="$(printf '\\033[2minbox 0\\033[0m')"; fi
+  if mcp_online; then mcp="$(printf '\\033[32m●\\033[0m MCP')"; else mcp="$(printf '\\033[31;1m○ !MCP\\033[0m')"; fi
+  if pg_running;  then pgr="$(printf '\\033[32m●\\033[0m Pager')"; else pgr="$(printf '\\033[31;1m○ !Pager\\033[0m')"; fi
+  seg="$(printf '\\033[2m%s\\033[0m %s %s %s %s %s %s' "$PART" "$sep" "$inbox" "$sep" "$mcp" "$sep" "$pgr")"
+
+  # COMPOSE, never replace. The user's own statusLine command (dir/branch/model is a
+  # common one) was saved when we installed ours, and it gets the SAME stdin Claude Code
+  # handed us - it is a JSON document about the session, and a wrapper that ate it would
+  # silently break the thing it wrapped. Overwriting someone's statusline would be the
+  # settings-file version of the session-rename bug: their configuration, quietly gone.
+  if [ -f "$ROOT/.relayroom/statusline.user" ] && [ -s "$ROOT/.relayroom/statusline.user" ]; then
+    local payload
+    payload="$(cat)"
+    user_line="$(printf '%s' "$payload" | sh -c "$(cat "$ROOT/.relayroom/statusline.user")" 2>/dev/null | head -1 || true)"
+    if [ -n "$user_line" ]; then printf '%s %s %s\n' "$user_line" "$sep" "$seg"; return; fi
+  fi
+  printf '%s\n' "$seg"
+}
+
 # What happened to channel delivery on the last launch, in words. Silent when there is
 # nothing to say (no channel launch, or it worked), because a status line that speaks on
 # every run is one nobody reads by the time it matters.
@@ -1146,7 +1182,7 @@ mcp_add() {
   echo "registered relayroom MCP for $a"
   [ "$a" = "claude" ] && report_sibling_worktrees || true
 }
-hooks_install() { $CLI hooks install --agent "$1"; }
+hooks_install() { $CLI hooks install --agent "$1" --dir "$ROOT"; }
 # Fall back to PRIMARY when config names no agent. Everything else already defaults that
 # way (\`PRIMARY="\${AGENT%%,*}"\` then claude), but \`read -ra\` splits an empty string into
 # ZERO words, so setup used to run its loop no times and register nothing - silently, and
@@ -1515,7 +1551,13 @@ case "\${1:-help}" in
           rm -f "$_hdrs" 2>/dev/null || true
         else rm -f "$_hdrs" 2>/dev/null || true; echo "rr.sh: failed to fetch RELAYROOM.md from $SERVER" >&2; exit 1; fi ;;
     esac ;;
-  statusline) sl ;;
+  statusline)
+    # --claude renders the same facts for Claude Code's statusLine (ANSI, composed with
+    # the user's own command); the bare form stays tmux markup for the tmux bar.
+    case "\${2:-}" in
+      --claude) sl_claude ;;
+      *)        sl ;;
+    esac ;;
   help|-h|--help) usage ;;
   *) usage; exit 1 ;;
 esac

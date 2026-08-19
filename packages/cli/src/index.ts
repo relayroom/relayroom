@@ -314,6 +314,7 @@ hooks
   .addOption(agentOption())
   .option("--server <url>", "RelayRoom server base URL")
   .option("--settings <path>", "config file to edit (default depends on --agent)")
+  .option("--dir <path>", "worktree directory (the statusLine calls its rr.sh)", ".")
   .action((opts) => {
     const o = withConfig(opts)
     installHook({ ...o, code: need(o.code, "code"), part: need(o.part, "part") })
