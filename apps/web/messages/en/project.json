@@ -749,7 +749,7 @@
     "muxLabel": "Where the agent runs",
     "muxTmux": "tmux",
     "muxHerdr": "herdr",
-    "muxHerdrHint": "herdr must already be running on that machine - the command creates its workspace by asking herdr for one, and it cannot if herdr is not there. Unlike tmux, it does not take over the terminal you run it from.",
+    "muxHerdrHint": "herdr must already be running on that machine - the command creates its workspace by asking herdr for one, and it cannot if herdr is not there. It also records the choice before it tries, so if herdr is not up the command fails and this worktree stays set to herdr until you run `./rr.sh up --use-tmux`. Unlike tmux, it does not take over the terminal you run it from.",
     "muxTmuxHint": "The default. Works anywhere tmux is installed, and the session it creates takes over the terminal you run it in, which is why setup is two steps.",
     "herdrStepLabel": "Run this in the worktree directory",
     "herdrStepHint": "One block, any terminal. It registers the CLI, starts the pager, then asks herdr for this worktree's workspace and starts the agent in it. There is no session to create first and no terminal to keep open.",
