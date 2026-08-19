@@ -7,7 +7,7 @@ import { runtimePath } from "./runtime"
 import { DEFAULT_SERVER } from "./constants"
 import { AGENT_IDS } from "./providers"
 import { readConfig, writeConfig } from "./config"
-import { ensureWorkspace, findPane, herdrAgentName, herdrStatus, launchInPane, nameAgent } from "./herdr"
+import { closePane, ensureWorkspace, findPane, herdrAgentName, herdrStatus, launchInPane, nameAgent } from "./herdr"
 import { herdrCall } from "../runtime/herdr-client.mjs"
 import { basename, resolve } from "node:path"
 
@@ -242,13 +242,12 @@ herdrCmd
 
 herdrCmd
   .command("close")
-  .description("Close this worktree's herdr workspace (the equivalent of killing its tmux session)")
+  .description("Close this worktree's herdr pane (the equivalent of killing its tmux session)")
   .option("--dir <path>", "worktree directory", ".")
   .action(async (opts: { dir: string }) => {
-    const pane = await findPane(resolve(opts.dir))
-    if (!pane) { console.log("pane=none closed=false"); return }
-    await herdrCall("workspace.close", { workspace_id: pane.workspace_id })
-    console.log(`workspace=${pane.workspace_id} closed=true`)
+    const res = await closePane(resolve(opts.dir))
+    if (!res.closed) { console.log("pane=none closed=false"); return }
+    console.log(`pane=${res.pane} closed=true workspace=${res.workspace}`)
   })
 
 herdrCmd

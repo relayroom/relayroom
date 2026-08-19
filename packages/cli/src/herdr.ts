@@ -135,6 +135,28 @@ export async function launchInPane(paneId: string, command: string, timeoutMs = 
 
 /** What `rr.sh` is allowed to assume about herdr before it changes anything. */
 /**
+ * Close THIS WORKTREE'S PANE - not the workspace it happens to sit in.
+ *
+ * This closed the workspace when it was written, and that was correct then: every
+ * worktree had its own. Under the grouped layout the whole fleet shares one workspace,
+ * so `up --restart` in any worktree would have closed every part at once and rebuilt
+ * only the one that asked. Nobody triggered it; the code kept doing what had always been
+ * right while the thing it addressed changed underneath it.
+ *
+ * Measured, so the single-worktree case is not a guess: closing one pane of a workspace
+ * leaves the workspace and its other panes alive, and closing the LAST pane takes the
+ * workspace with it - which is exactly the old behaviour where a workspace held one
+ * worktree.
+ */
+export async function closePane(worktreePath: string): Promise<{ closed: boolean; pane?: string; workspace?: string }> {
+  const pane = await findPane(worktreePath)
+  if (!pane) return { closed: false }
+  await herdrCall("pane.close", { pane_id: pane.pane_id })
+  return { closed: true, pane: pane.pane_id, workspace: pane.workspace_id }
+}
+
+/**
+ * Give this worktree's agent a NAME in herdr's agent list./**
  * Give this worktree's agent a NAME in herdr's agent list.
  *
  * The sidebar had every part reading the same thing, because everything an agent row can

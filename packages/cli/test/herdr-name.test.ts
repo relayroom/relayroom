@@ -25,13 +25,38 @@ vi.mock("../runtime/herdr-client.mjs", async (importOriginal) => ({
     calls.push([method, params])
     if (method === "pane.list") return paneAnswer
     if (method === "agent.rename") { if (renameThrows) throw renameThrows; return { type: "agent_info" } }
+    if (method === "pane.close") return { type: "ok" }
     return { type: "ok" }
   },
   handshake: async () => ({ ok: true, version: "0.8.0" }),
   herdrSocketPresent: () => true,
 }))
 
-const { nameAgent, herdrAgentName } = await import("../src/herdr")
+const { nameAgent, herdrAgentName, closePane } = await import("../src/herdr")
+
+/**
+ * `--restart` closes this worktree's pane. It used to close the WORKSPACE, which was
+ * correct while every worktree had its own and became fleet-destroying the day they were
+ * grouped: one part restarting would have taken all six down and rebuilt one. Nothing
+ * triggered it, because the call kept doing what it had always done while its meaning
+ * changed underneath.
+ */
+describe("closing this worktree's pane", () => {
+  beforeEach(() => { calls.length = 0; paneAnswer = { panes: [{ pane_id: "w2:p4", workspace_id: "w2", cwd: "/w" }] }; renameThrows = null })
+
+  it("closes the pane and never the workspace", async () => {
+    expect(await closePane("/w")).toEqual({ closed: true, pane: "w2:p4", workspace: "w2" })
+    expect(calls.find(([m]) => m === "pane.close")?.[1]).toEqual({ pane_id: "w2:p4" })
+    // The assertion that matters: five other parts live in this workspace.
+    expect(calls.some(([m]) => m === "workspace.close")).toBe(false)
+  })
+
+  it("closes nothing when this worktree has no pane", async () => {
+    paneAnswer = { panes: [] }
+    expect(await closePane("/w")).toEqual({ closed: false })
+    expect(calls.some(([m]) => m === "pane.close")).toBe(false)
+  })
+})
 
 /**
  * The rule is herdr's, and it was measured against the running server: `^[a-z][a-z0-9_-]

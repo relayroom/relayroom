@@ -764,14 +764,20 @@ hd_up() {
   # deterministic replacement is to close the workspace and build it again, which is also
   # the only way to change launch flags for a running agent.
   if [ "$RESTART" = "1" ] && hd_exists; then
-    echo "rr: replacing this worktree's herdr workspace (--restart)"
+    echo "rr: replacing this worktree's herdr pane (--restart)"
     $CLI herdr close --dir "$ROOT" >/dev/null 2>&1 || true
     sleep 1
   fi
 
   $CLI herdr ensure --dir "$ROOT" --label "$SESSION" || { echo "rr: could not create a herdr workspace" >&2; return 1; }
   if hd_agent_running; then
-    echo "rr: an agent is already running in this worktree's pane"
+    # SAY WHAT IS BEING SKIPPED. Launch flags are applied when the agent starts, so an
+    # \`up --bypass\` against a pane that already has an agent applies nothing - and the
+    # old message said only that something was running, which reads like success. That
+    # matters most right after a herdr server restart, when the fleet comes back on bare
+    # \`claude --resume\` and the first instinct is to re-run \`up\` with the flags.
+    echo "rr: an agent is already running in this worktree's pane - launch flags from this"
+    echo "    command were NOT applied. Use ./rr.sh up --restart to replace it with one that has them."
   else
     prepare_launch
     echo "starting '$LAUNCH' in this worktree's herdr pane"
