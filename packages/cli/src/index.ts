@@ -7,7 +7,7 @@ import { runtimePath } from "./runtime"
 import { DEFAULT_SERVER } from "./constants"
 import { AGENT_IDS } from "./providers"
 import { readConfig, writeConfig } from "./config"
-import { ensureWorkspace, findPane, herdrStatus, launchInPane } from "./herdr"
+import { ensureWorkspace, findPane, herdrStatus, launchInPane, nameAgent } from "./herdr"
 import { herdrCall } from "../runtime/herdr-client.mjs"
 import { basename, resolve } from "node:path"
 
@@ -260,6 +260,16 @@ herdrCmd
     if (!pane) { console.error("error: no herdr pane for this worktree"); process.exit(1) }
     await herdrCall("workspace.focus", { workspace_id: pane.workspace_id })
     console.log(`workspace=${pane.workspace_id} focused=true`)
+  })
+
+herdrCmd
+  .command("name")
+  .description("Name this worktree's agent in herdr's agent list (the sidebar row)")
+  .argument("<name>", "what to call it, e.g. the part name")
+  .option("--dir <path>", "worktree directory", ".")
+  .action(async (name: string, opts: { dir: string }) => {
+    const res = await nameAgent(resolve(opts.dir), name)
+    console.log(`named=${res.named}${res.pane ? ` pane=${res.pane}` : ""}${res.why ? ` reason=${JSON.stringify(res.why)}` : ""}`)
   })
 
 // ── channel: the INTENT to use Claude Code Channels (not the current mode) ──────

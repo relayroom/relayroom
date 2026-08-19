@@ -134,6 +134,36 @@ export async function launchInPane(paneId: string, command: string, timeoutMs = 
 }
 
 /** What `rr.sh` is allowed to assume about herdr before it changes anything. */
+/**
+ * Give this worktree's agent a NAME in herdr's agent list.
+ *
+ * The sidebar had every part reading the same thing, because everything an agent row can
+ * be identified by was shared: one grouped workspace (label "relayroom"), one repo behind
+ * every worktree, and a terminal title Claude Code owns and rewrites on its own schedule
+ * ("Claude Code", then whatever the conversation is about). The one field that is per
+ * agent and NOT owned by the program in the pane is `name`, set through `agent.rename`.
+ *
+ * Measured, because the parameter is not what the neighbouring methods take: it is
+ * `{ target, name }`. `pane_id` answers `missing field 'target'` - and the error names
+ * the field it wants, unlike report_metadata's, which names one that was already there.
+ *
+ * Set on every `up` rather than once: the agent record belongs to the terminal, so a
+ * relaunch in the same pane is a new agent, and a name that is re-applied at every launch
+ * cannot go stale no matter which of those cases actually drops it.
+ */
+export async function nameAgent(worktreePath: string, name: string): Promise<{ named: boolean; pane?: string; why?: string }> {
+  const pane = await findPane(worktreePath)
+  if (!pane) return { named: false, why: `no herdr pane has cwd ${worktreePath}` }
+  try {
+    await herdrCall("agent.rename", { target: pane.pane_id, name })
+    return { named: true, pane: pane.pane_id }
+  } catch (err) {
+    // Naming is cosmetic; a part that is running with an unhelpful label is still a
+    // running part, so this reports and never throws into the launch path.
+    return { named: false, pane: pane.pane_id, why: (err as Error).message }
+  }
+}
+
 export async function herdrStatus(worktreePath: string): Promise<{
   usable: boolean
   reason?: string

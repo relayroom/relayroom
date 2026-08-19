@@ -751,6 +751,20 @@ hd_up() {
     }
   fi
 
+  # Name the agent row. Without this every part in the grouped workspace renders as the
+  # same thing - the workspace label and the repo name are shared by construction, and the
+  # terminal title belongs to Claude Code, which rewrites it as the conversation changes.
+  # Re-applied on every up because the agent record belongs to the terminal, so a relaunch
+  # is a new agent; setting it each time is cheaper than knowing which cases drop it.
+  _nm="$($CLI herdr name "$PART" --dir "$ROOT" 2>/dev/null || true)"
+  case "\${_nm:-}" in
+    named=true*) : ;;
+    # Cosmetic, so it never fails the launch - but silence here is indistinguishable from
+    # success, and the symptom (every part showing the same label) looks like herdr's
+    # doing rather than ours.
+    *) echo "rr: could not name this part's agent row in herdr (\${_nm:-no answer}) - the sidebar will show a shared label" >&2 ;;
+  esac
+
   # RESTART the pager, same reason as the tmux path: it reads delivery and multiplexer
   # once at startup, so a pager left from a previous launch would deliver the old way.
   pg_stop >/dev/null 2>&1 || true; pg_start
