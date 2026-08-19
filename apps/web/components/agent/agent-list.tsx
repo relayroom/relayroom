@@ -10,6 +10,8 @@ import { AgentStatusBadge } from "@/components/agent/agent-status-badge"
 import { AgentDisconnectButton } from "@/components/agent/agent-disconnect-button"
 import { AgentAvatar } from "@/components/agent/agent-appearance"
 import { PagerStatusIcon } from "@/components/agent/pager-status-icon"
+import { MultiplexerBadge } from "@/components/agent/multiplexer-badge"
+import type { MultiplexerDelivery } from "@/lib/multiplexer-status"
 import { LimitedBadge } from "@/components/agent/limited-badge"
 import { useTimeAgo } from "@/lib/time-ago"
 import { cn } from "@/lib/utils"
@@ -49,6 +51,10 @@ export interface AgentListItem {
   pagerOnline?: boolean
   /** Provider rate-limit expiry, or null if not limited. */
   limitedUntil?: Date | null
+  /** Measured multiplexer - what the pager found, never the connect dialog's pick. */
+  multiplexer?: MultiplexerDelivery
+  /** A wake the pager took and never delivered. */
+  deliveryStalled?: boolean
 }
 
 interface Props {
@@ -147,6 +153,12 @@ export function AgentList({ items, showProject = false, showOwner = false, showA
                   )}
                   {agent.limitedUntil !== undefined && (
                     <LimitedBadge part={agent.part} limitedUntil={agent.limitedUntil ? agent.limitedUntil.toISOString() : null} />
+                  )}
+                  {agent.multiplexer && (
+                    <MultiplexerBadge
+                      multiplexer={agent.multiplexer}
+                      deliveryStalled={agent.deliveryStalled ?? false}
+                    />
                   )}
                   {showProject && agent.projectName && (
                     <Link

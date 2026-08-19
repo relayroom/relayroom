@@ -458,7 +458,10 @@
       "main": "Main",
       "default": "Default"
     },
-    "noMainHint": "No main agent set yet. Open an agent and choose “Make main agent” in its detail page."
+    "noMainHint": "No main agent set yet. Open an agent and choose “Make main agent” in its detail page.",
+    "muxStalled": "wakes not arriving",
+    "muxStalledHint": "This part's pager took a wake and never delivered it. The pager is alive, so this is not a dead process - the place it types into is gone. Check that the session or workspace it was started in still exists.",
+    "muxDegradedHint": "This worktree asked for {intent} and is delivering through {active}. Wakes still arrive - the pager falls back rather than going silent - but {intent} is not running here. Check that it is up on that machine, then restart the part."
   },
   "agentDelete": {
     "button": "Delete",
