@@ -583,7 +583,16 @@ async function heartbeat() {
     const res = await fetch(`${SERVER}/mcp/${encodeURIComponent(CODE)}/heartbeat`, {
       method: "POST",
       headers: wake.authHeaders({ "content-type": "application/json" }),
-      body: JSON.stringify({ part: PART, holder: HOLDER, host: hostname(), relayroomMd: existsSync(join(DIR, "RELAYROOM.md")), version: VERSION }),
+      // `multiplexer` carries BOTH halves and keeps them apart: what this worktree asked
+      // for, and what selectBackend() actually found. They disagree exactly when the herdr
+      // socket was unreachable and delivery fell back to tmux - wakes still arrive, but not
+      // the way the part was configured, and that is a state the hub cannot see from either
+      // value alone.
+      body: JSON.stringify({
+        part: PART, holder: HOLDER, host: hostname(),
+        relayroomMd: existsSync(join(DIR, "RELAYROOM.md")), version: VERSION,
+        multiplexer: { intent: MULTIPLEXER, active: MUX_ACTIVE },
+      }),
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     })
     // A rejected heartbeat is silent otherwise: presence, the status color, the lease

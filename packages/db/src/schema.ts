@@ -159,6 +159,16 @@ export const agents = pgTable('agent', {
   // (reason 'limited'); message delivery is unaffected. The eligibility sweep
   // naturally re-wakes the part on its first tick after this passes ("resume").
   limitedUntil: timestamp('limited_until', { withTimezone: true }),
+  // What this part's pager ASKED FOR and what it actually FOUND, reported on every
+  // heartbeat. Two columns, never one: the interesting state is precisely when they
+  // DISAGREE (herdr intent, tmux fallback - wakes still arrive, but not the way the
+  // worktree asked), and a single field cannot represent a disagreement at all.
+  //
+  // NULL means "this pager has not told us", NOT tmux. Every pager older than this
+  // field sends nothing, so defaulting either column to 'tmux' would invent a
+  // measurement for every part on the previous release.
+  multiplexerIntent: text('multiplexer_intent'),
+  multiplexerActive: text('multiplexer_active'),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 }, t => [

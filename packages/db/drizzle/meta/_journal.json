@@ -162,6 +162,13 @@
       "when": 1785377001716,
       "tag": "0023_retire_auto_extracted_knowledge",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1785380000000,
+      "tag": "0024_add_agent_multiplexer",
+      "breakpoints": true
     }
   ]
 }
