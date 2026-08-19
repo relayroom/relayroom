@@ -124,6 +124,24 @@ for _a in "$@"; do
     --no-channel) $CLI channel off >/dev/null 2>&1 || true; CHANNEL_WANTED=0 ;;
   esac
 done
+# Choose the multiplexer, for good. \`--use-herdr\` / \`--use-tmux\` are ENTRY POINTS that
+# persist the choice, not per-invocation overrides, and the difference is the whole point:
+# the pager, reboot recovery and every rr.sh verb read the same \`multiplexer\` field, so a
+# flag that only applied to this run would migrate a herdr part back to tmux the first
+# time anyone typed a bare \`up\` - silently, and back onto a delivery path the worktree
+# had deliberately left. \`--use-tmux\` is the rollback and writes tmux explicitly rather
+# than deleting the key: absent and "tmux" read the same but mean different things
+# ("nobody chose" vs "someone chose tmux"), and the rollback is when that is asked about.
+#
+# Same shape as --channel/--no-channel above, for the same reason. It does NOT weaken the
+# loud failure: herdr intent plus an unreachable socket is still an error, never a quiet
+# fall back to tmux.
+for _a in "$@"; do
+  case "$_a" in
+    --use-herdr) $CLI multiplexer herdr --dir "$ROOT" >/dev/null 2>&1 || { echo "rr: could not record multiplexer=herdr in config - not switching" >&2; exit 1; }; MULTIPLEXER=herdr ;;
+    --use-tmux)  $CLI multiplexer tmux  --dir "$ROOT" >/dev/null 2>&1 || { echo "rr: could not record multiplexer=tmux in config - not switching"  >&2; exit 1; }; MULTIPLEXER=tmux  ;;
+  esac
+done
 # Opt-in restart: \`./rr.sh up --restart\` replaces a running session instead of attaching
 # to it. \`up\` stays non-destructive by default - people type it reflexively - so a session
 # that predates its own config is REFUSED with the evidence, and this is how you act on it.
@@ -1285,10 +1303,12 @@ doctor() {
 usage() {
   cat <<EOF
 RelayRoom console (part=$PART, session=$SESSION, agent=$AGENT)
-  rr.sh up [--bypass] [--new] [--restart]
+  rr.sh up [--bypass] [--new] [--restart] [--use-herdr|--use-tmux]
                                  auto-update if a newer CLI is out, ensure setup, then
                                  rebuild session + start pager + attach (after reboot).
                                  --restart replaces a session that predates its config
+                                 --use-herdr/--use-tmux switch this worktree's multiplexer
+                                 for good (written to config), then start it
   rr.sh launch [--bypass] [--new]  from INSIDE a session: set delivery + pager + run the agent
   rr.sh reconnect                from INSIDE a session: re-register + replace the session
                                  so it reloads MCP (resumes the same conversation)

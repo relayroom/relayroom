@@ -284,6 +284,25 @@ program
     }
   })
 
+program
+  .command("multiplexer")
+  .description("Choose the multiplexer this worktree's part runs under (intent, persisted)")
+  .argument("<name>", "tmux or herdr")
+  .option("--dir <path>", "worktree directory", ".")
+  .action((name: string, opts: { dir: string }) => {
+    if (name !== "tmux" && name !== "herdr") {
+      console.error(`error: multiplexer must be "tmux" or "herdr" (got "${name}")`)
+      process.exit(1)
+    }
+    // Written even for "tmux", rather than deleting the key. Absent and "tmux" behave
+    // identically at read time, but they are different FACTS: absent is "nobody has
+    // chosen", "tmux" is "someone chose tmux" - which is what a rollback is. Losing that
+    // distinction would make a rolled-back worktree indistinguishable from one that was
+    // never migrated, and the rollback is exactly the moment somebody will ask.
+    const path = writeConfig(opts.dir, { multiplexer: name })
+    console.log(`multiplexer=${name} -> ${path}`)
+  })
+
 // ── hooks: manage the per-agent usage turn-end hook ─────────────────────────────
 const hooks = program.command("hooks").description("Manage the RelayRoom usage hook")
 
