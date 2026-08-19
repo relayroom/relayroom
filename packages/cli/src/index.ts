@@ -7,6 +7,9 @@ import { runtimePath } from "./runtime"
 import { DEFAULT_SERVER } from "./constants"
 import { AGENT_IDS } from "./providers"
 import { readConfig, writeConfig } from "./config"
+import { ensureWorkspace, findPane, herdrStatus, launchInPane } from "./herdr"
+import { herdrCall } from "../runtime/herdr-client.mjs"
+import { basename, resolve } from "node:path"
 
 const agentOption = () =>
   new Option("--agent <agent>", "coding CLI to target")
@@ -172,6 +175,91 @@ program
     }
     const path = writeConfig(opts.dir, { delivery: mode })
     console.log(`delivery=${mode} -> ${path}`)
+  })
+
+// ── herdr: the verbs rr.sh needs from the socket API ───────────────────────────
+// One command with subcommands rather than several, because the shell calls them the
+// same way and a single `herdr` namespace keeps the CLI's top level from growing a verb
+// per multiplexer. Every one prints ONE line the script can read; nothing here is meant
+// for a human to parse twice.
+const herdrCmd = program
+  .command("herdr")
+  .description("herdr multiplexer helpers used by rr.sh (socket API)")
+
+herdrCmd
+  .command("status")
+  .description("Whether herdr is usable here, and whether this worktree has a pane with an agent in it")
+  .option("--dir <path>", "worktree directory", ".")
+  .action(async (opts: { dir: string }) => {
+    const st = await herdrStatus(resolve(opts.dir))
+    // A shell reads fields, not prose: `key=value` on one line, and `usable` first so a
+    // caller can branch on it without parsing the rest.
+    console.log(
+      [
+        `usable=${st.usable}`,
+        st.version ? `version=${st.version}` : "",
+        `pane=${st.pane?.pane_id ?? "none"}`,
+        `agent=${st.agent ? "yes" : "no"}`,
+        st.reason ? `reason=${JSON.stringify(st.reason)}` : "",
+      ].filter(Boolean).join(" "),
+    )
+    if (!st.usable) process.exit(1)
+  })
+
+herdrCmd
+  .command("ensure")
+  .description("Make sure a herdr workspace exists for this worktree (grouped under the repo when it is a git worktree)")
+  .option("--dir <path>", "worktree directory", ".")
+  .option("--label <label>", "workspace label")
+  .action(async (opts: { dir: string; label?: string }) => {
+    const dir = resolve(opts.dir)
+    const cfg = readConfig(opts.dir)
+    const label = opts.label ?? cfg.target ?? cfg.part ?? basename(dir)
+    const { pane, created, grouped, why } = await ensureWorkspace(dir, label)
+    console.log(
+      `pane=${pane.pane_id} workspace=${pane.workspace_id} created=${created} grouped=${grouped}` +
+        (grouped || !why ? "" : ` reason=${JSON.stringify(why)}`),
+    )
+  })
+
+herdrCmd
+  .command("launch")
+  .description("Type a launch command into this worktree's pane and confirm an agent actually started")
+  .argument("<command>", "the command to run in the pane")
+  .option("--dir <path>", "worktree directory", ".")
+  .action(async (command: string, opts: { dir: string }) => {
+    const pane = await findPane(resolve(opts.dir))
+    if (!pane) {
+      console.error(`error: no herdr pane has cwd ${resolve(opts.dir)} - run \`relayroom herdr ensure\` first`)
+      process.exit(1)
+    }
+    // Confirmed by watching the pane's processes, never by the response to send_keys:
+    // herdr answers "ok" to input it delivered nowhere.
+    const started = await launchInPane(pane.pane_id, command)
+    console.log(`pane=${pane.pane_id} started=${started}`)
+    if (!started) process.exit(1)
+  })
+
+herdrCmd
+  .command("close")
+  .description("Close this worktree's herdr workspace (the equivalent of killing its tmux session)")
+  .option("--dir <path>", "worktree directory", ".")
+  .action(async (opts: { dir: string }) => {
+    const pane = await findPane(resolve(opts.dir))
+    if (!pane) { console.log("pane=none closed=false"); return }
+    await herdrCall("workspace.close", { workspace_id: pane.workspace_id })
+    console.log(`workspace=${pane.workspace_id} closed=true`)
+  })
+
+herdrCmd
+  .command("focus")
+  .description("Bring this worktree's herdr workspace to the front")
+  .option("--dir <path>", "worktree directory", ".")
+  .action(async (opts: { dir: string }) => {
+    const pane = await findPane(resolve(opts.dir))
+    if (!pane) { console.error("error: no herdr pane for this worktree"); process.exit(1) }
+    await herdrCall("workspace.focus", { workspace_id: pane.workspace_id })
+    console.log(`workspace=${pane.workspace_id} focused=true`)
   })
 
 // ── channel: the INTENT to use Claude Code Channels (not the current mode) ──────

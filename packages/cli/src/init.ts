@@ -84,8 +84,8 @@ CONF="$ROOT/.relayroom/config.json"
 # Load all config fields in ONE node call (statusline runs every few seconds, so
 # avoid 6 separate spawns). Fields are slug/url/hex - none contain '|'. PREV is the
 # previous session name (if init just renamed it) so up can migrate a live session.
-_C="$(node -e 'var c=require(process.argv[1]);process.stdout.write([c.code,c.part,c.server,c.target,c.agent,c.token,c.previousTarget,c.channel?1:0].map(function(x){return String(x||"")}).join("|"))' "$CONF" 2>/dev/null || true)"
-IFS='|' read -r CODE PART SERVER SESSION AGENT TOKEN PREV CHANNEL_WANTED <<< "$_C"
+_C="$(node -e 'var c=require(process.argv[1]);process.stdout.write([c.code,c.part,c.server,c.target,c.agent,c.token,c.previousTarget,c.channel?1:0,c.multiplexer||"tmux"].map(function(x){return String(x||"")}).join("|"))' "$CONF" 2>/dev/null || true)"
+IFS='|' read -r CODE PART SERVER SESSION AGENT TOKEN PREV CHANNEL_WANTED MULTIPLEXER <<< "$_C"
 [ -n "$SERVER" ] || SERVER="http://localhost:48801"
 [ -n "$SESSION" ] || SESSION="$PART"
 PRIMARY="\${AGENT%%,*}"; [ -n "$PRIMARY" ] || PRIMARY="claude"
@@ -638,7 +638,71 @@ assert_session_name() {
   exit 1
 }
 
-tx_exists() { tmux has-session -t "=$SESSION" 2>/dev/null; }
+# ── herdr ────────────────────────────────────────────────────────────────────
+# A SECOND MULTIPLEXER, not a replacement. Everything below is reached only when this
+# worktree asked for herdr (config \`multiplexer\`), so a tmux part never executes a line
+# of it - the same rule the pager's backend follows, and the reason a tmux user's
+# behaviour is byte-identical to before.
+#
+# The shell cannot speak herdr's unix socket, so every verb here is one call into the
+# node CLI, which prints \`key=value\` for this script to read. herdr ids are positional
+# and move; the worktree path is the join key everywhere.
+# INTENT, read from config - never from "is a herdr socket present". A machine can run
+# both multiplexers at once, so this is per worktree, and a detection result must never
+# rewrite what the worktree asked for. Absent means tmux.
+MUX="\${MULTIPLEXER:-tmux}"
+herdr_mode() { [ "$MUX" = "herdr" ]; }
+
+# \`usable=... pane=... agent=...\`, or a nonzero exit when herdr cannot be used at all.
+hd_status() { $CLI herdr status --dir "$ROOT" 2>/dev/null; }
+hd_field() { sed -n "s/.*\\b$1=\\([^ ]*\\).*/\\1/p"; }
+
+# Is there a herdr pane for this worktree? The equivalent of tx_exists, and it asks the
+# same question the pager asks when it delivers - by cwd, not by a stored id.
+hd_exists() { [ "$(hd_status | hd_field pane)" != "none" ] && [ -n "$(hd_status | hd_field pane)" ]; }
+hd_agent_running() { [ "$(hd_status | hd_field agent)" = "yes" ]; }
+
+tx_exists() { if herdr_mode; then hd_exists; else tmux has-session -t "=$SESSION" 2>/dev/null; fi; }
+
+# \`up\` for a herdr worktree: ensure the workspace, make sure an agent is in it, start the
+# pager pointed at the socket. Each step CONFIRMS rather than assumes, because every
+# response code in this API has been observed to succeed while doing nothing.
+hd_up() {
+  local st pane agent
+  st="$(hd_status)" || { echo "rr: herdr is not usable here - $st" >&2; return 1; }
+  setup || echo "rr: setup reported a problem - continuing. Run ./rr.sh doctor" >&2
+
+  # --restart means REPLACE. herdr has no respawn: measured, a pane's foreground process
+  # exiting just returns the shell, and there is no pane_start_command to re-run. So the
+  # deterministic replacement is to close the workspace and build it again, which is also
+  # the only way to change launch flags for a running agent.
+  if [ "$RESTART" = "1" ] && hd_exists; then
+    echo "rr: replacing this worktree's herdr workspace (--restart)"
+    $CLI herdr close --dir "$ROOT" >/dev/null 2>&1 || true
+    sleep 1
+  fi
+
+  $CLI herdr ensure --dir "$ROOT" --label "$SESSION" || { echo "rr: could not create a herdr workspace" >&2; return 1; }
+  if hd_agent_running; then
+    echo "rr: an agent is already running in this worktree's pane"
+  else
+    prepare_launch
+    echo "starting '$LAUNCH' in this worktree's herdr pane"
+    # The launch is confirmed by watching the pane's processes, never by the response to
+    # send_keys - herdr answers ok to input it delivered nowhere.
+    $CLI herdr launch --dir "$ROOT" "$LAUNCH" || {
+      echo "rr: the command was typed into the pane but no agent process appeared." >&2
+      echo "    The pane is still there - look at it before retrying." >&2
+      return 1
+    }
+  fi
+
+  # RESTART the pager, same reason as the tmux path: it reads delivery and multiplexer
+  # once at startup, so a pager left from a previous launch would deliver the old way.
+  pg_stop >/dev/null 2>&1 || true; pg_start
+  $CLI herdr focus --dir "$ROOT" >/dev/null 2>&1 || true
+  echo "rr: this part is running under herdr (workspace focused; there is no tmux session to attach)"
+}
 tx_start() {
   if tx_exists; then echo "session '$SESSION' exists - attaching"; tmux attach -t "=$SESSION";
   else
@@ -649,7 +713,26 @@ tx_start() {
     tmux new-session -s "$SESSION" "$LAUNCH"
   fi
 }
-tx_status() { tx_exists && echo "tmux: session '$SESSION' running" || echo "tmux: no session '$SESSION'"; }
+# NAMES THE MULTIPLEXER IT IS TALKING ABOUT. It used to say "tmux:" unconditionally, and
+# once tx_exists learned about herdr that line reported a running tmux session for a part
+# that has no tmux at all - true-sounding and wrong, which is the exact shape this project
+# keeps paying for. A status line that cannot be wrong about which world it is in is worth
+# the extra branch.
+tx_status() {
+  if herdr_mode; then
+    local st
+    st="$(hd_status 2>/dev/null || true)"
+    if [ -z "$st" ] || [ "$(printf '%s' "$st" | hd_field usable)" != "true" ]; then
+      echo "herdr: NOT USABLE here (\${st:-no answer from the socket}) - wakes cannot be delivered"
+    elif hd_exists; then
+      echo "herdr: workspace for this worktree is open (pane $(printf '%s' "$st" | hd_field pane), agent: $(printf '%s' "$st" | hd_field agent))"
+    else
+      echo "herdr: no workspace for this worktree yet - ./rr.sh up creates one"
+    fi
+  else
+    tx_exists && echo "tmux: session '$SESSION' running" || echo "tmux: no session '$SESSION'"
+  fi
+}
 
 # A fingerprint of the config a session reads at startup. Content, not mtime: \`claude mcp
 # add\` rewrites .mcp.json unconditionally and is not ours to fix, so \`up\` running setup
@@ -1229,6 +1312,14 @@ case "\${1:-help}" in
   up)
     assert_session_name
     self_update_if_pending "$@"   # auto-update first if the hub flagged a newer CLI (may re-exec)
+    # HERDR TAKES ITS OWN PATH AND RETURNS. Not a branch threaded through the tmux body
+    # below: that body is about tmux sessions, corpses, remain-on-exit and attach, and
+    # herdr has none of those. Measured rather than assumed - a foreground process exiting
+    # leaves the pane on its shell (no corpse to detect), and the SHELL exiting takes the
+    # whole workspace with it (nothing to attach to). Sharing the code would mean teaching
+    # every check about a second world; keeping them apart is what makes "nothing changes
+    # for tmux users" checkable by reading.
+    if herdr_mode; then hd_up "$@"; exit $?; fi
     migrate_session_name          # rename a still-running old-named session to the standard name
     # \`up\` is meant to be the one command that makes a part work, so it ENSURES the
     # registration rather than treating it as a separate ceremony. setup is idempotent
