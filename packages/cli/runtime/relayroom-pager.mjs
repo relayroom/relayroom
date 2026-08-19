@@ -33,7 +33,7 @@ import { basename, join } from "node:path"
 // are unit-testable and so peer/server-controlled subject/fromPart can never carry a
 // control byte (e.g. \r => Enter) into `tmux send-keys -l`. See pager-text.mjs.
 import { buildText } from "./pager-text.mjs"
-import { herdrCall, herdrSocketPresent, handshake } from "./herdr-client.mjs"
+import { herdrAgentName, herdrCall, herdrSocketPresent, handshake } from "./herdr-client.mjs"
 import { makeHerdrBackend } from "./pager-herdr.mjs"
 // Headless delivery (delivery=headless, codex/agy only): spawn the part's CLI per wake
 // instead of tmux send-keys. Pure spec/prompt builders live in a testable sibling module.
@@ -615,6 +615,11 @@ async function heartbeat() {
       // which must not render as "nothing waiting".
       if (MUX_ACTIVE === "herdr" && typeof deliveryBackend.reportInbox === "function") {
         deliveryBackend.reportInbox(await unreadCount()).catch(() => {})
+        // And put this part's name back if a herdr server restart took it. The pager is
+        // the guarantee rather than the `[[startup]]` plugin hook, which fires earlier
+        // but is an optional install - a plugin-only repair would leave every
+        // non-plugin user with a sidebar that decays on each restart.
+        deliveryBackend.assertName?.(herdrAgentName(AGENT_CLI, PART)).catch(() => {})
       }
       // CLI update nudge: persist the latest npm version (or clear it) so rr.sh's
       // status line can show a `↑<ver>` marker. The hub decides updateAvailable by

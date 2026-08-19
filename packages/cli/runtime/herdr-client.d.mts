@@ -29,3 +29,5 @@ export declare function handshake(opts?: { socketPath?: string; timeoutMs?: numb
   protocol?: number | null
   protocolNote?: string | null
 }>
+
+export declare function herdrAgentName(agent: string, part: string): string

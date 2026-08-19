@@ -164,3 +164,31 @@ export async function handshake(opts = {}) {
     : `herdr protocol ${protocol} differs from the ${HERDR_KNOWN_PROTOCOL} this client was measured against`
   return { ok: true, version, protocol, protocolNote }
 }
+
+/**
+ * herdr's rule for an agent name, MEASURED against the running server rather than read
+ * off a doc: `^[a-z][a-z0-9_-]{0,31}$`. Rejections observed - `Claude-x`
+ * (uppercase), `claude.x` (dot), `1claude` (leading digit), `-claude` (leading dash),
+ * and 33 characters. All answer `invalid_agent_name`.
+ *
+ * This matters because the requested display cannot be the stored value: it is
+ * `rrc-server-gb10 · claude`, and NEITHER the space NOR the middle dot is allowed. The
+ * closest legal rendering keeps the requested ORDER - part first, because the part is
+ * what someone scans the sidebar for and the agent kind is secondary - and uses `_` as
+ * the separator, which reads as a segment break in a way another hyphen would not, since
+ * part names are full of hyphens already.
+ *
+ * When it will not fit in 32 characters the AGENT SUFFIX is what goes, not the part: the
+ * suffix is decoration (every part in this fleet is `claude` today) while the part is the
+ * entire reason the row is being named at all.
+ */
+export function herdrAgentName(agent, part) {
+  const clean = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+/, "")
+  const p = clean(part) || "part"
+  const a = clean(agent)
+  const composed = a ? `${p}_${a}` : p
+  const fitted = composed.length <= 32 ? composed : (p.length <= 32 ? p : p.slice(0, 32))
+  // A leading digit is legal in a part but not in this field; prefixing keeps the name
+  // recognisable instead of dropping the character that distinguishes it.
+  return /^[a-z]/.test(fitted) ? fitted : `a-${fitted}`.slice(0, 32)
+}

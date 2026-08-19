@@ -497,6 +497,36 @@ export function makeHerdrBackend({ call, worktreePath, part = "", log = () => {}
       if (stuck.onDelivered()) await report(inboxTokens({ blocked: false }))
       return true
     },
+    /**
+     * Put this part's name back on its agent row if it has none.
+     *
+     * A herdr SERVER restart wipes every agent name - measured three times on the live
+     * fleet, deterministic - while restoring the layout and relaunching each agent on its
+     * own conversation. `up` sets the name at launch and never runs again in that path,
+     * so without this the sidebar decays into identical rows on every restart and nothing
+     * says why.
+     *
+     * ONLY WHEN BLANK. The failure being repaired is an EMPTY name; a name that is
+     * already there is somebody's decision - ours from the last launch, or a human's -
+     * and a 30-second timer must not be able to overrule a person. That also keeps this
+     * from writing on every beat: after one repair there is nothing left to do.
+     */
+    async assertName(name) {
+      if (!name) return { asserted: false, why: "no name to assert" }
+      try {
+        const paneId = await resolvePane()
+        const list = await call("agent.list", {})
+        const row = (list?.agents ?? []).find((a) => a.pane_id === paneId)
+        if (!row) return { asserted: false, why: "no agent on this pane yet" }
+        if (row.name) return { asserted: false, why: "already named" }
+        await call("agent.rename", { target: paneId, name })
+        log(`herdr: put this part's name back on its agent row (${name}) - a server restart clears it`)
+        return { asserted: true, why: "" }
+      } catch (err) {
+        cachedPaneId = null
+        return { asserted: false, why: `${err.code ?? "error"}: ${err.message}` }
+      }
+    },
     /** Called from the heartbeat with the count the hub reported, or null when the ask
      *  failed. Null is NOT zero and writes nothing. */
     async reportInbox(unread) {

@@ -407,6 +407,56 @@ describe("herdr status surface", () => {
     expect(sent.length).toBe(before)
   })
 
+  it("puts the name back when a server restart blanked it", async () => {
+    // Measured three times on the live fleet: a herdr server restart clears every agent
+    // name while restoring the layout and the conversations, so the sidebar decays into
+    // identical rows and nothing reports it. `up` sets the name at launch and never runs
+    // again on that path, which is why the repair has to live somewhere that keeps
+    // polling.
+    const sent: Array<[string, any]> = []
+    const call = async (method: string, params: any) => {
+      sent.push([method, params])
+      if (method === "pane.list") return { panes: [{ pane_id: "wZ:p1", workspace_id: "wZ", cwd: "/w" }] }
+      if (method === "agent.list") return { agents: [{ pane_id: "wZ:p1" }] }   // name blank
+      return { type: "ok" }
+    }
+    const backend = makeHerdrBackend({ call, worktreePath: "/w", part: "p" })
+    expect(await backend.assertName("rrc-server-gb10_claude")).toEqual({ asserted: true, why: "" })
+    expect(sent.find(([m]) => m === "agent.rename")?.[1])
+      .toEqual({ target: "wZ:p1", name: "rrc-server-gb10_claude" })
+  })
+
+  it("never overwrites a name that is already there", async () => {
+    // The repair is for an EMPTY name. Anything else is somebody's decision - ours from
+    // the last launch, or a person's - and a 30-second timer must not overrule a person.
+    // It also means the steady state writes nothing at all.
+    const sent: Array<[string, any]> = []
+    const call = async (method: string, params: any) => {
+      sent.push([method, params])
+      if (method === "pane.list") return { panes: [{ pane_id: "wZ:p1", workspace_id: "wZ", cwd: "/w" }] }
+      if (method === "agent.list") return { agents: [{ pane_id: "wZ:p1", name: "something-a-human-chose" }] }
+      return { type: "ok" }
+    }
+    const backend = makeHerdrBackend({ call, worktreePath: "/w", part: "p" })
+    expect((await backend.assertName("rrc-server-gb10_claude")).asserted).toBe(false)
+    expect(sent.some(([m]) => m === "agent.rename")).toBe(false)
+  })
+
+  it("does not name a pane whose agent herdr has not registered yet", async () => {
+    // `agent.rename` answers `agent_not_found` for a pane with no agent in it, so acting
+    // on a pane that is not in the agent list would be a guaranteed error every beat.
+    const sent: Array<[string, any]> = []
+    const call = async (method: string, params: any) => {
+      sent.push([method, params])
+      if (method === "pane.list") return { panes: [{ pane_id: "wZ:p1", workspace_id: "wZ", cwd: "/w" }] }
+      if (method === "agent.list") return { agents: [] }
+      return { type: "ok" }
+    }
+    const backend = makeHerdrBackend({ call, worktreePath: "/w", part: "p" })
+    expect((await backend.assertName("x_claude")).why).toMatch(/no agent/)
+    expect(sent.some(([m]) => m === "agent.rename")).toBe(false)
+  })
+
   it("a failing surface cannot stop a delivery", async () => {
     // The pane is fine; report_metadata is broken. Delivery must still succeed - a
     // status bar that can take wakes down is worse than no status bar.

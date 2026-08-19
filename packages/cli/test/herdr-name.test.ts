@@ -16,7 +16,11 @@ const calls: Array<[string, unknown]> = []
 let paneAnswer: unknown = { panes: [{ pane_id: "w2:p4", workspace_id: "w2", cwd: "/w" }] }
 let renameThrows: Error | null = null
 
-vi.mock("../runtime/herdr-client.mjs", () => ({
+// Only the SOCKET is faked. `herdrAgentName` comes through from the real module, because
+// the naming rule is the thing under test - a mock of it would agree with whatever the
+// test expected and prove nothing about what herdr accepts.
+vi.mock("../runtime/herdr-client.mjs", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   herdrCall: async (method: string, params: unknown) => {
     calls.push([method, params])
     if (method === "pane.list") return paneAnswer
