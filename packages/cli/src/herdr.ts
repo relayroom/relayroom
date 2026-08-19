@@ -180,12 +180,15 @@ export function herdrAgentName(agent: string, part: string): string {
  * fresh name. It does not: killing claude and starting it again in the same pane keeps
  * the SAME `terminal_id` and the name with it. What loses the name is the pane going
  * away, and under herdr a pane only goes away by closing the workspace - which is what
- * `--restart` does, and which comes back through `up`. So `up` setting it is enough, and
- * the pager does not need to re-assert it on a timer.
+ * `--restart` does, and which comes back through `up`.
  *
- * Still unmeasured: whether a herdr SERVER restart preserves it. That cannot be tested
- * without restarting the fleet's own server, so it waits for the scheduled restart
- * window. If it turns out not to survive, the pager assertion becomes justified.
+ * A SERVER RESTART WIPES IT, and that half is now measured too (2026-08-19, the fleet's
+ * own server, restarted deliberately): every `name` was gone and every `terminal_id` had
+ * been regenerated, even though native session restore brought all six parts back on
+ * their own conversations. `up` setting the name once is therefore NOT sufficient by
+ * itself - something has to re-assert it after a restart, and the `[[startup]]` hook
+ * fires with the world already rebuilt, which is where that belongs. Until that lands, a
+ * part keeps its name only until the next server restart.
  *
  * Requires an agent to be RUNNING: a bare shell pane answers `agent_not_found`. This is
  * why the call sits after the launch confirmation and not beside the workspace creation.
