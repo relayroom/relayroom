@@ -33,19 +33,43 @@ function fakeHerdr(script: Record<string, unknown | ((params: Record<string, unk
 const WAKE = "abcdef1234567890"
 const TEXT = `📬 RelayRoom: new message "subject" from peer (you are part "p"). Use the inbox tool. (wake ${WAKE.slice(0, 8)})`
 
-/** A pane whose input box shows the staged text, the way `pane.read` returns it - wrapped
- *  across lines, which is why the matcher ignores whitespace. */
-const screenWith = (text: string) =>
-  `❯ ${text.slice(0, 40)}\n  ${text.slice(40, 90)}\n  ${text.slice(90)}\n───────────\n  ctx:80%`
+const RULE = "─".repeat(60)
+
+/**
+ * A pane as `pane.read` actually returns it.
+ *
+ * THE LAYOUT IS PART OF THE TEST, and an earlier version of this file is why: its fake
+ * returned a bare string with no composer rules, so `composerText` found nothing and
+ * every case silently exercised the FALLBACK path instead of the one that ships. A fake
+ * that omits the structure under test is a fake that agrees with anything.
+ *
+ *   transcript...            <- submitted prompts stay visible here, forever
+ *   ────────────
+ *   ❯ <composer>             <- the only place text is still unsent
+ *   ────────────
+ *     status line
+ */
+const pane = ({ transcript = "", composer = "" }: { transcript?: string; composer?: string }) =>
+  [transcript, RULE, composer ? `❯ ${composer.slice(0, 40)}\n  ${composer.slice(40)}` : "❯", RULE, "  ctx:80%"].join("\n")
+
+/** The staged-but-unsent state: the wake is in the composer. */
+const screenWith = (text: string) => pane({ composer: text })
+
+/** The submitted state: the wake is echoed in the transcript and the composer is empty.
+ *  This is the shape that made "is it on screen" useless as a confirm. */
+const screenSubmitted = (text: string) => pane({ transcript: `❯ ${text}\n● a reply` })
 
 describe("herdr delivery refuses to submit what it cannot see", () => {
   it("stages, verifies, and only then presses enter", async () => {
     let staged = false
+    let submitted = false
     let seq = 10
     const h = fakeHerdr({
-      "pane.read": () => ({ read: { text: staged ? screenWith(TEXT) : "❯\n───────────" } }),
+      "pane.read": () => ({
+        read: { text: submitted ? screenSubmitted(TEXT) : staged ? screenWith(TEXT) : pane({}) },
+      }),
       "pane.send_text": () => { staged = true; return {} },
-      "pane.send_keys": () => { seq++; return {} }, // a submit is what moves the counter
+      "pane.send_keys": () => { submitted = true; seq++; return {} },
       "agent.list": () => ({ agents: [{ pane_id: "w2:p4", state_change_seq: seq }] }),
     })
     const res = await deliverViaHerdr({ call: h.call, paneId: "w2:p4", text: TEXT, wakeId: WAKE })
@@ -53,8 +77,8 @@ describe("herdr delivery refuses to submit what it cannot see", () => {
     // Order is the safety property, not an implementation detail: a read must sit
     // between the text and the enter, and the counter must be sampled BEFORE the enter
     // or "did it move" has nothing to compare against.
-    expect(h.methods()).toEqual([
-      "pane.read", "pane.send_text", "pane.read", "agent.list", "pane.send_keys", "agent.list",
+    expect(h.methods().slice(0, 6)).toEqual([
+      "pane.read", "pane.send_text", "pane.read", "agent.list", "pane.send_keys", "pane.read",
     ])
   })
 
@@ -63,15 +87,56 @@ describe("herdr delivery refuses to submit what it cannot see", () => {
     // in its composer until the turn it queued behind starts, so "still on screen"
     // reported "not submitted" for a wake that had been submitted AND answered. Every
     // wake that lands mid-turn would have been delivered twice.
+    let submitted = false
     let seq = 46
     const h = fakeHerdr({
-      "pane.read": { read: { text: screenWith(TEXT) } },   // never clears - mid-turn
+      // The echo stays on screen for good - which is what made a whole-screen check
+      // report "still here" about a wake that had already been answered.
+      "pane.read": () => ({ read: { text: submitted ? screenSubmitted(TEXT) : screenWith(TEXT) } }),
       "pane.send_text": {},
-      "pane.send_keys": () => { seq = 47; return {} },
+      "pane.send_keys": () => { submitted = true; seq = 47; return {} },
       "agent.list": () => ({ agents: [{ pane_id: "w2:p4", state_change_seq: seq }] }),
     })
     const res = await deliverViaHerdr({ call: h.call, paneId: "w2:p4", text: TEXT, wakeId: WAKE })
     expect(res.ok).toBe(true)
+  })
+
+  it("does NOT confirm when the counter moved but our text is still in the composer", async () => {
+    // The false confirm, and the reason the counter cannot be the deciding signal: a turn
+    // ENDING moves it too, with no input from us at all (measured: 61 -> 62 six seconds
+    // after an unrelated submit). A swallowed Enter plus an in-flight turn finishing
+    // inside the window would otherwise be reported as delivered - a wake marked done and
+    // never seen by anyone.
+    let seq = 61
+    const h = fakeHerdr({
+      "pane.read": { read: { text: screenWith(TEXT) } },  // composer never empties
+      "pane.send_text": {},
+      "pane.send_keys": {},                                // the Enter did nothing
+      "agent.list": () => ({ agents: [{ pane_id: "w2:p4", state_change_seq: ++seq }] }),
+    })
+    const res = await deliverViaHerdr({ call: h.call, paneId: "w2:p4", text: TEXT, wakeId: WAKE })
+    expect(res.ok).toBe(false)
+    expect(res.reason).toContain("still in the composer")
+  })
+
+  it("falls back to the counter when the composer cannot be located, and says so", async () => {
+    // A layout this parser does not recognise - a future Claude Code, or another TUI.
+    // Losing the strong signal must cost accuracy, not correctness, and it must be said.
+    const notes: string[] = []
+    let seq = 5
+    const h = fakeHerdr({
+      // No rules anywhere - an unrecognised layout. The staged text IS visible, so the
+      // verify passes and the confirm is what this case is about.
+      "pane.read": { read: { text: `some terminal with no rules at all\n$ ${TEXT}` } },
+      "pane.send_text": {},
+      "pane.send_keys": () => { seq = 6; return {} },
+      "agent.list": () => ({ agents: [{ pane_id: "w2:p4", state_change_seq: seq }] }),
+    })
+    const res = await deliverViaHerdr({
+      call: h.call, paneId: "w2:p4", text: TEXT, wakeId: WAKE, log: (m: string) => notes.push(m),
+    })
+    expect(res.ok).toBe(true)
+    expect(notes.join(" ")).toContain("composer could not be located")
   })
 
   it("does not accept a counter that never moved", async () => {
@@ -85,7 +150,7 @@ describe("herdr delivery refuses to submit what it cannot see", () => {
     })
     const res = await deliverViaHerdr({ call: h.call, paneId: "w2:p4", text: TEXT, wakeId: WAKE })
     expect(res.ok).toBe(false)
-    expect(res.reason).toContain("no agent state change")
+    expect(res.reason).toContain("still in the composer")
   })
 
   it("NEVER presses enter when the staged text is not on screen", async () => {
@@ -132,7 +197,7 @@ describe("herdr delivery refuses to submit what it cannot see", () => {
     })
     const res = await deliverViaHerdr({ call: h.call, paneId: "w2:p4", text: TEXT, wakeId: WAKE })
     expect(res.ok).toBe(false)
-    expect(res.reason).toContain("still in the input box")
+    expect(res.reason).toContain("still in the composer")
   })
 
   it("treats a socket failure as a defer, not as a delivery", async () => {
@@ -227,7 +292,7 @@ describe("the backend the pager holds", () => {
     const h = fakeHerdr({
       "pane.list": { panes: [{ pane_id: "w2:p4", cwd: "/wt", foreground_cwd: "/wt" }] },
       "pane.process_info": { process_info: { foreground_processes: [{ name: "claude" }] } },
-      "pane.read": () => ({ read: { text: staged ? screenWith(TEXT) : "❯" } }),
+      "pane.read": () => ({ read: { text: staged ? screenWith(TEXT) : pane({}) } }),
       "pane.send_text": () => { staged = true; return {} },
       "pane.send_keys": () => { staged = false; return {} },
       "agent.list": { agents: [] },

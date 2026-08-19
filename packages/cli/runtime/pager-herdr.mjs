@@ -115,6 +115,12 @@ export function verificationNeedle(text, wakeId) {
 const RENDER_POLL_MS = 250
 const RENDER_ATTEMPTS = 12   // ~3s
 
+/** The confirm window is longer than the staging one: mid-turn, the composer can hold a
+ *  submitted prompt until the queued turn actually starts. Bounded anyway - past this the
+ *  wake is re-queued and delivered again rather than assumed. */
+const CONFIRM_POLL_MS = 500
+const CONFIRM_ATTEMPTS = 30  // ~15s
+
 /** Read until the needle is present (want=true) or gone (want=false), or the window ends.
  *  Returns what was actually observed, never what was hoped for. */
 async function readUntil({ call, paneId, needle, readLines, want }) {
@@ -126,6 +132,39 @@ async function readUntil({ call, paneId, needle, readLines, want }) {
     await new Promise((r) => setTimeout(r, RENDER_POLL_MS))
   }
   return { matched: false, text: last }
+}
+
+/**
+ * The COMPOSER's contents - the text sitting in the input box, not the whole screen.
+ *
+ * WHY THIS EXISTS, and it is the same mistake twice: a submitted prompt stays visible in
+ * the transcript ABOVE the input box, so "is our text on screen" answers yes both when it
+ * is waiting to be sent and when it has already been sent and answered. Measured - the
+ * needle read as present for 26 seconds after a submit that had completed and been
+ * replied to, because the echo was what matched.
+ *
+ * Claude Code draws the composer between two full-width rules at the bottom of the pane:
+ *
+ *     ❯ 📬 RelayRoom: ... (wake dd66e000)      <- transcript echo, already submitted
+ *     ● ...the reply...
+ *     ──────────────────────────────────────
+ *     ❯ Write the numbers 1 to 1000 ...        <- THE COMPOSER
+ *     ──────────────────────────────────────
+ *       /tmp/... status line
+ *
+ * Structural, not textual: it looks for the last two rules, never for words. If the
+ * layout ever changes this returns null and the caller falls back to the weaker signal
+ * rather than guessing - a UI change should cost accuracy, not correctness.
+ */
+export function composerText(screenText) {
+  const lines = String(screenText || "").split("\n")
+  const rules = []
+  lines.forEach((l, i) => { if (/^\s*─{20,}\s*$/.test(l)) rules.push(i) })
+  if (rules.length < 2) return null
+  const top = rules[rules.length - 2]
+  const bottom = rules[rules.length - 1]
+  if (bottom - top < 1) return null
+  return lines.slice(top + 1, bottom).join("\n")
 }
 
 /**
@@ -148,6 +187,17 @@ async function readUntil({ call, paneId, needle, readLines, want }) {
  * agent was visibly mid-turn. A counter of observed transitions is a fact; a judgement
  * about which state the agent is in is the screen-manifest guess this design avoids
  * everywhere else.
+ *
+ * BUT IT IS A NECESSARY SIGNAL, NOT A SUFFICIENT ONE, and that was measured too: a turn
+ * ENDING moves it as well, with no input from us at all (61 -> 62 six seconds after a
+ * submit, while nothing was being sent). So a swallowed Enter plus an in-flight turn that
+ * happens to finish inside the confirm window would look exactly like a successful
+ * submit. That is why the composer decides whenever it can be found; this counter only
+ * rules out "nothing happened at all".
+ *
+ * NOT MEASURED: the full set of transitions that move it. Turn start and turn end are
+ * confirmed; anything else - a tool boundary, a subagent, a status refresh - is unknown.
+ * Nothing here may treat this counter as proof that OUR text was submitted.
  */
 async function agentSeq(call, paneId) {
   try {
@@ -213,35 +263,59 @@ export async function deliverViaHerdr({ call, paneId, text, wakeId, readLines = 
   // CONFIRM. If the key name were wrong, or the TUI folded the Enter into the composer,
   // the text would still be sitting in the box - and reporting delivery then would be
   // the same lie the whole feature is built to stop telling.
-  // CONFIRM, in the order of how much the signal is worth.
+  // CONFIRM. Two signals, answering different questions:
   //
-  // 1. the transition counter moved -> submitted, whatever the screen looks like
-  // 2. no agent to count (a bare shell, or herdr has not detected one) -> fall back to
-  //    the screen: the text leaving the input area is the only evidence available
-  // 3. counter did not move AND the text is still there -> nothing was submitted
-  if (seqBefore !== null) {
-    for (let i = 0; i < RENDER_ATTEMPTS; i++) {
-      const now = await agentSeq(call, paneId)
-      if (now !== null && now > seqBefore) return { ok: true }
-      await new Promise((r) => setTimeout(r, RENDER_POLL_MS))
+  //   the COMPOSER emptying   - about OUR text specifically. The strong one
+  //   the transition counter  - about the agent in general. Rules out "nothing happened"
+  //
+  // The composer decides whenever it can be located, because the counter also moves when
+  // an unrelated turn ends - a swallowed Enter during a turn that finishes inside this
+  // window would otherwise read as a successful submit, and that is a wake reported
+  // delivered and never seen by anyone.
+  //
+  // The bias is deliberate: an unconfirmed delivery is re-queued, costing a duplicate
+  // wake. A wrongly confirmed one is silence. Between those two this errs toward the
+  // duplicate every time.
+  let sawComposer = false
+  let seqMoved = false
+  for (let i = 0; i < CONFIRM_ATTEMPTS; i++) {
+    let screen
+    try {
+      const res = await call("pane.read", { pane_id: paneId, source: "visible", lines: readLines })
+      screen = res?.read?.text ?? ""
+    } catch (err) {
+      // The submit already happened; failing to READ afterwards is not evidence it did
+      // not land, and re-queuing would deliver the wake twice.
+      log(`herdr: could not read while confirming (${err.code}) - treating the submit as delivered`)
+      return { ok: true }
     }
-  }
-  try {
-    const cleared = await readUntil({ call, paneId, needle, readLines, want: false })
-    if (!cleared.matched) {
-      return {
-        ok: false,
-        reason: seqBefore === null
-          ? "text is still in the input box after enter - not submitted"
-          : "no agent state change and the text is still in the input box - not submitted",
+    const composer = composerText(screen)
+    if (composer !== null) {
+      sawComposer = true
+      if (!screenContains(composer, needle)) return { ok: true }
+    }
+    if (seqBefore !== null) {
+      const now = await agentSeq(call, paneId)
+      if (now !== null && now > seqBefore) {
+        seqMoved = true
+        // Decisive ONLY when the composer cannot be found. Otherwise keep waiting for the
+        // box to empty, which is the signal that is about our own text.
+        if (!sawComposer) {
+          log("herdr: confirmed by state change only - the composer could not be located")
+          return { ok: true }
+        }
       }
     }
-  } catch (err) {
-    // The submit already happened; failing to READ afterwards is not evidence it did not
-    // land, and re-queuing would deliver the wake twice. Report success and say why.
-    log(`herdr: could not confirm after enter (${err.code}) - treating the submit as delivered`)
+    await new Promise((r) => setTimeout(r, CONFIRM_POLL_MS))
   }
-  return { ok: true }
+  return {
+    ok: false,
+    reason: sawComposer
+      ? `the wake is still in the composer after ${(CONFIRM_ATTEMPTS * CONFIRM_POLL_MS) / 1000}s - not submitted`
+      : seqMoved
+        ? "the agent changed state but nothing could be confirmed about our text"
+        : "no agent state change and no readable composer - not submitted",
+  }
 }
 
 /**
