@@ -14,6 +14,8 @@
 
 Wake delivery over herdr stages the text, verifies it reached the input box, and only then submits, because `agent.prompt` was measured answering a permission dialog on the user's behalf. When the pane is holding a dialog nothing is submitted and nothing is answered: the wake stays queued, a notification tells you once per blocked stretch, and the workspace is marked while it lasts.
 
+**After the herdr server itself restarts, re-run `./rr.sh up` in each worktree.** herdr restores the layout and brings each agent back on its own conversation, which is why this is easy to miss - the parts look fine. What does not come back is anything that was passed at launch: measured on a six-part fleet, the restored command is a bare `claude --resume <id>`, so a part that was started with `--bypass` comes back without it and stalls on the first permission prompt. The agent's name in herdr's sidebar is dropped by the same restart. `up` restores both.
+
 The status bar comes back inside the pane as a Claude Code `statusLine` (part, inbox, MCP, pager). It composes with a statusLine you already have - including one set in `~/.claude/settings.json` - rather than replacing it. Each part also gets its own name in herdr's agent list, since a grouped workspace otherwise shows every part under the same label.
 
 **The dashboard now shows which multiplexer is actually delivering, separately from the one that was asked for.** A part whose herdr socket is unreachable falls back to tmux and keeps delivering; that is a degraded state, not a healthy one, and it used to be indistinguishable from a plain tmux part. Migration 0024 adds the two columns; a pager that predates this release reports neither, and that reads as "not reported" rather than as tmux.
