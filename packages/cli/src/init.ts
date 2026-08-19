@@ -1556,13 +1556,51 @@ function assertInsideTmux(opts: InitOpts): void {
 }
 
 /**
+ * Running pagers whose --target is `session`, with the part each one serves.
+ *
+ * A pager addresses its agent BY SESSION NAME, so this is not trivia: whoever
+ * renames that session takes the pager's only address away, and the pager keeps
+ * running, keeps its SSE connection, keeps reporting healthy, and delivers
+ * nothing. Read from the process table rather than from any config, because the
+ * question is what a LIVE pager is holding, not what a file says it should be.
+ */
+export function pagersTargeting(session: string): Array<{ pid: string; part: string }> {
+  try {
+    const out = execFileSync("ps", ["-eo", "pid=,args="], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+    const found: Array<{ pid: string; part: string }> = []
+    for (const line of out.split("\n")) {
+      if (!line.includes("relayroom-pager.mjs")) continue
+      const m = /^\s*(\d+)\s+(.*)$/.exec(line)
+      if (!m) continue
+      const args = m[2]
+      const tgt = /--target\s+(\S+)/.exec(args)?.[1]
+      if (tgt !== session) continue
+      found.push({ pid: m[1], part: /--part\s+(\S+)/.exec(args)?.[1] ?? "?" })
+    }
+    return found
+  } catch { return [] }
+}
+
+/**
  * When init runs inside the agent's tmux session, rename that session to `target`
  * (the standard RR-<slug>-<part> name) if it differs - so a naming change applies
  * with no manual `tmux rename-session`. Best-effort: skipped when not in tmux, the
  * name already matches, tmux is unavailable, or a session named `target` already
  * exists (never clobber a different session).
+ *
+ * REFUSES to rename a session another part's pager is addressing. "init runs inside
+ * the agent's own session" is an assumption, not a fact: init for part B run from
+ * inside part A's session used to rename A's session to B's name, and A's pager -
+ * which had A's old name as its --target - went silent from that instant, with no
+ * error anywhere and every health signal still green. Measured on this machine: a
+ * stage-3 scratch init inside a live part's session cut that part's wakes off until
+ * a human noticed the missing replies and renamed it back. The `part` argument is
+ * what separates "renaming my own session" from "stealing someone else's".
  */
-function alignTmuxSessionName(target: string): void {
+function alignTmuxSessionName(target: string, part: string): void {
   if (!process.env.TMUX) return
   try {
     const current = execFileSync("tmux", ["display-message", "-p", "#S"], {
@@ -1570,6 +1608,22 @@ function alignTmuxSessionName(target: string): void {
       stdio: ["ignore", "pipe", "ignore"],
     }).trim()
     if (!current || current === target) return
+
+    // Someone else's pager is listening on this name. Renaming would mute it, so
+    // say so and leave both alone - a session that has to be renamed by hand is a
+    // far cheaper outcome than a part that stops receiving wakes silently.
+    const strangers = pagersTargeting(current).filter((p) => p.part !== part)
+    if (strangers.length > 0) {
+      const who = strangers.map((p) => `${p.part} (pid ${p.pid})`).join(", ")
+      console.log(
+        `NOT renaming tmux session '${current}' -> '${target}': a pager for ${who} is ` +
+        `addressing '${current}' and would stop delivering wakes to it. ` +
+        `You are probably running init for '${part}' from inside another part's session; ` +
+        `open a session for '${part}' instead, or rename by hand once that pager is stopped.`,
+      )
+      return
+    }
+
     // A session already named `target` means renaming would collide - leave both be.
     try {
       execFileSync("tmux", ["has-session", "-t", `=${target}`], { stdio: "ignore" })
@@ -1577,6 +1631,14 @@ function alignTmuxSessionName(target: string): void {
     } catch { /* no such session - the name is free */ }
     execFileSync("tmux", ["rename-session", "-t", `=${current}`, target], { stdio: "ignore" })
     console.log(`renamed tmux session: ${current} -> ${target}`)
+    // Our OWN pager, if it is running, still holds the old name. It would keep
+    // running and deliver nothing, so name the one command that fixes it.
+    if (pagersTargeting(current).length > 0) {
+      console.log(
+        `  this part's pager is still addressing '${current}' - run ./rr.sh pager restart, ` +
+        `or it will keep running and deliver nothing`,
+      )
+    }
   } catch { /* tmux not available - leave the session name as-is */ }
 }
 
@@ -1702,7 +1764,7 @@ export async function init(opts: InitOpts): Promise<void> {
   // without recreating the session. Best-effort: no tmux, or a name clash with an
   // existing target session, is silently skipped (rr.sh's migrate step is the
   // from-outside equivalent).
-  if (target) alignTmuxSessionName(target)
+  if (target && part) alignTmuxSessionName(target, part)
 
   // rr.sh control console: one entry point for tmux + pager + per-CLI setup, so a
   // reboot is just `./rr.sh up`. Lives at the worktree ROOT next to RELAYROOM.md
