@@ -387,7 +387,7 @@ async function selectBackend() {
     return
   }
   if (shake.protocolNote) log(`herdr: ${shake.protocolNote}`)
-  deliveryBackend = makeHerdrBackend({ call: herdrCall, worktreePath: DIR, log })
+  deliveryBackend = makeHerdrBackend({ call: herdrCall, worktreePath: DIR, part: PART, log })
   MUX_ACTIVE = "herdr"
   log(`multiplexer=herdr (server ${shake.version}, protocol ${shake.protocol}) - delivering over the socket`)
 }
@@ -561,6 +561,22 @@ async function flush() {
 // Heartbeat: keep the agent's last-seen fresh on the dashboard and report
 // whether RELAYROOM.md is present in the worktree. Connect-code only (the legacy
 // project-slug path has no heartbeat endpoint). Best-effort; never throws.
+/** Open-unread count for this part, or null when the hub could not be asked. The null
+ *  is the point: a status surface that turns "we do not know" into 0 is the one that
+ *  reports calm during an outage. */
+async function unreadCount() {
+  if (!CODE) return null
+  try {
+    const res = await fetch(`${SERVER}/mcp/${encodeURIComponent(CODE)}/unread?part=${encodeURIComponent(PART)}`, {
+      headers: wake.authHeaders({}),
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    })
+    if (!res.ok) return null
+    const json = await res.json().catch(() => null)
+    return typeof json?.count === "number" ? json.count : null
+  } catch { return null }
+}
+
 async function heartbeat() {
   if (!CODE) return
   try {
@@ -583,6 +599,14 @@ async function heartbeat() {
       const json = await res.json().catch(() => ({}))
       // leaseHeld:false => another pager took over; stop nudging until next claim.
       if (typeof json.leaseHeld === "boolean") leaseHeld = json.leaseHeld
+      // herdr has no tmux status bar to hang `inbox: N` off, so the count goes onto the
+      // workspace as display-only metadata instead. Read from the SAME endpoint the tmux
+      // status line reads, so the two surfaces cannot disagree about the number, and only
+      // written when the hub actually answered - `null` here means "we could not ask",
+      // which must not render as "nothing waiting".
+      if (MUX_ACTIVE === "herdr" && typeof deliveryBackend.reportInbox === "function") {
+        deliveryBackend.reportInbox(await unreadCount()).catch(() => {})
+      }
       // CLI update nudge: persist the latest npm version (or clear it) so rr.sh's
       // status line can show a `↑<ver>` marker. The hub decides updateAvailable by
       // comparing our reported version against npm.

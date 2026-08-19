@@ -319,11 +319,115 @@ export async function deliverViaHerdr({ call, paneId, text, wakeId, readLines = 
 }
 
 /**
+ * Why a deferral happened, in the only terms a HUMAN can act on. The delivery loop
+ * already distinguishes these - it just kept them to itself, which is how a part can sit
+ * on a trust dialog for an hour with every indicator green and nobody told.
+ *
+ *   "dialog"    the staged text never reached the input box. Measured meaning: something
+ *               is holding input - a trust prompt, an MCP approval, a permission dialog.
+ *               A person has to answer it; no amount of waiting fixes it
+ *   "composer"  our text is in the box and the Enter did not take. Retryable by us
+ *   "transport" the socket or the pane could not be reached. Nothing to tell a human yet
+ *
+ * Only "dialog" is announced. The other two are our problem, and a toast that fires for
+ * them teaches people to ignore the toast that matters.
+ */
+export function classifyDeferral(reason) {
+  const r = String(reason || "")
+  if (r.includes("staged text did not appear")) return "dialog"
+  if (r.includes("still in the composer") || r.includes("nothing could be confirmed") || r.includes("not submitted")) return "composer"
+  return "transport"
+}
+
+/**
+ * One toast per BLOCKED STRETCH, not per deferral.
+ *
+ * The pager retries a blocked wake on a backoff curve, so "notify on every deferral"
+ * would put a toast on the user's screen every few seconds for as long as they are away
+ * from the keyboard - which is exactly when the message is least likely to be read and
+ * most likely to be dismissed as noise. The streak shape is the channel watcher's, and
+ * for the same reason.
+ *
+ * `shown` is READ, not assumed. `notification.show` answers `{shown, reason}` and it
+ * really does refuse - measured `shown:false reason:"rate_limited"` for two calls in the
+ * same millisecond. A refused toast leaves the streak UNANNOUNCED so the next deferral
+ * tries again; marking it announced would be recording an event the human never saw,
+ * which is the failure this whole surface exists to stop.
+ */
+export function makeStuckNotifier({ notify, log = () => {} }) {
+  let announced = false
+  return {
+    /** @returns {Promise<{announced: boolean, why: string}>} */
+    async onDeferred(reason) {
+      if (classifyDeferral(reason) !== "dialog") return { announced: false, why: "not a dialog-shaped deferral" }
+      if (announced) return { announced: false, why: "already announced this stretch" }
+      let res
+      try {
+        res = await notify()
+      } catch (err) {
+        log(`herdr: could not show the blocked-wake notification (${err.message})`)
+        return { announced: false, why: "notify threw" }
+      }
+      if (res?.shown !== true) {
+        log(`herdr: the blocked-wake notification was NOT shown (${res?.reason ?? "no reason given"}) - the human has not been told`)
+        return { announced: false, why: `refused: ${res?.reason ?? "unknown"}` }
+      }
+      announced = true
+      return { announced: true, why: "shown" }
+    },
+    /** A delivery got through: the stretch is over, so the next one may announce again. */
+    onDelivered() {
+      const was = announced
+      announced = false
+      return was
+    },
+    isAnnounced: () => announced,
+  }
+}
+
+/**
+ * The workspace metadata tokens this part owns, as a diff against what is already there.
+ *
+ * TWO RULES, both from failures this project has already paid for:
+ *
+ *  - a token is written only for something MEASURED. `inbox` is absent when the count is
+ *    unknown (the fetch failed), not 0 - "0 unread" and "we could not ask" are different
+ *    facts and the surface that conflates them is the one that reports calm during an
+ *    outage
+ *  - a token that says nothing is not written at all. `inbox: 0` would be a permanent
+ *    true-and-useless indicator, the shape 0.6.1 removed; it is cleared instead
+ *
+ * herdr clears a token by SETTING IT EMPTY (measured: `tokens: {inbox: ""}` removes it;
+ * there is no clear_tokens field at protocol 19, despite the CLI flag).
+ */
+export function inboxTokens({ unread, blocked }) {
+  const tokens = {}
+  if (typeof unread === "number" && Number.isFinite(unread)) tokens.inbox = unread > 0 ? `inbox ${unread}` : ""
+  if (typeof blocked === "boolean") tokens.wake = blocked ? "wake blocked" : ""
+  return tokens
+}
+
+/**
  * The backend the pager holds. Same three questions the tmux backend answers, so the
  * flush loop does not know which multiplexer it is on.
  */
-export function makeHerdrBackend({ call, worktreePath, log = () => {} }) {
+export function makeHerdrBackend({ call, worktreePath, part = "", log = () => {} }) {
   let cachedPaneId = null
+  // Resolved beside the pane, from the SAME list entry, so the tokens can never land on
+  // a different workspace than the one the wake is being typed into.
+  let cachedWorkspaceId = null
+
+  const stuck = makeStuckNotifier({
+    log,
+    notify: () => call("notification.show", {
+      title: part ? `RelayRoom: ${part} cannot receive wakes` : "RelayRoom: a part cannot receive wakes",
+      // What was measured and what to do, in that order. No guess about WHICH dialog:
+      // we never detected a dialog, we observed that input is not reaching the box.
+      body: `A message is waiting but typing it into ${worktreePath} does not reach the input box - the pane is probably holding a prompt (trust, MCP approval, permission). Answer it and the wake is delivered on the next retry.`,
+      position: "top-right",
+      sound: "request",
+    }),
+  })
 
   async function resolvePane() {
     if (cachedPaneId) return cachedPaneId
@@ -331,7 +435,24 @@ export function makeHerdrBackend({ call, worktreePath, log = () => {} }) {
     const pane = matchPaneByCwd(list?.panes ?? [], worktreePath)
     if (!pane) throw new Error(`no herdr pane has cwd ${worktreePath}`)
     cachedPaneId = pane.pane_id
+    cachedWorkspaceId = pane.workspace_id ?? null
     return cachedPaneId
+  }
+
+  /** Write this part's tokens onto the workspace holding its pane. Display-only: it
+   *  never touches the workspace LABEL, which is the user's to name. */
+  async function report(tokens) {
+    if (Object.keys(tokens).length === 0) return { reported: false, why: "nothing measured to report" }
+    try {
+      await resolvePane()
+      if (!cachedWorkspaceId) return { reported: false, why: "no workspace id for this pane" }
+      await call("workspace.report_metadata", { workspace_id: cachedWorkspaceId, source: "relayroom", tokens })
+      return { reported: true, why: "" }
+    } catch (err) {
+      cachedPaneId = null
+      // Best-effort by design: a status surface must never be able to stop a delivery.
+      return { reported: false, why: `${err.code ?? "error"}: ${err.message}` }
+    }
   }
 
   return {
@@ -363,8 +484,24 @@ export function makeHerdrBackend({ call, worktreePath, log = () => {} }) {
       if (!res.ok) {
         cachedPaneId = null // re-resolve next time; the pane may have moved
         log(`herdr: ${res.reason}`)
+        // Tell the human ONCE per blocked stretch, and mark the workspace for as long as
+        // it lasts. The toast is what reaches someone looking elsewhere; the token is what
+        // is still true when they come back and the toast is long gone.
+        const said = await stuck.onDeferred(res.reason)
+        if (said.announced) await report(inboxTokens({ blocked: true }))
+        return false
       }
-      return res.ok
+      // Delivered: end the stretch and take the marker down. Only when one was up -
+      // writing "not blocked" on every success would be the permanently-true indicator
+      // rule 3 forbids.
+      if (stuck.onDelivered()) await report(inboxTokens({ blocked: false }))
+      return true
+    },
+    /** Called from the heartbeat with the count the hub reported, or null when the ask
+     *  failed. Null is NOT zero and writes nothing. */
+    async reportInbox(unread) {
+      if (typeof unread !== "number") return { reported: false, why: "unread count unknown - leaving the surface alone" }
+      return report(inboxTokens({ unread }))
     },
   }
 }

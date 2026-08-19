@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 // @ts-expect-error - runtime .mjs has no type declarations; tested at runtime only.
-import { deliverViaHerdr, makeHerdrBackend, matchPaneByCwd, processesLookLikeAgent, screenContains, verificationNeedle } from "../runtime/pager-herdr.mjs"
+import { classifyDeferral, deliverViaHerdr, inboxTokens, makeHerdrBackend, makeStuckNotifier, matchPaneByCwd, processesLookLikeAgent, screenContains, verificationNeedle } from "../runtime/pager-herdr.mjs"
 
 /**
  * herdr delivery: stage -> verify -> submit -> confirm.
@@ -322,5 +322,104 @@ describe("the backend the pager holds", () => {
     const h = fakeHerdr({ "pane.list": { panes: [] } })
     const backend = makeHerdrBackend({ call: h.call, worktreePath: "/wt" })
     expect(await backend.agentPresent()).toBe(true)
+  })
+})
+
+/**
+ * The status surface. Its whole reason to exist is a state the pager already knew about
+ * and nobody else did: a part parked on a trust/MCP dialog, wakes deferring on a backoff
+ * curve, every indicator green. These tests pin the three properties that make the
+ * surface worth having rather than another thing that is true while nothing works.
+ */
+describe("herdr status surface", () => {
+  it("announces only the dialog-shaped deferral", () => {
+    expect(classifyDeferral("staged text did not appear in the pane - deferring (nothing submitted)")).toBe("dialog")
+    expect(classifyDeferral("the wake is still in the composer after 15s - not submitted")).toBe("composer")
+    expect(classifyDeferral("pane.read failed before staging (io_error): broken pipe")).toBe("transport")
+    // Negative control: an unrecognised reason must NOT fall into "dialog", or every
+    // future failure mode starts telling people to go answer a prompt that is not there.
+    expect(classifyDeferral("something nobody has seen yet")).toBe("transport")
+  })
+
+  it("toasts once per blocked stretch and again after a delivery ends it", async () => {
+    const calls: string[] = []
+    const notify = async () => { calls.push("shown"); return { shown: true, reason: "shown" } }
+    const n = makeStuckNotifier({ notify })
+    const DIALOG = "staged text did not appear in the pane - deferring (nothing submitted)"
+
+    expect((await n.onDeferred(DIALOG)).announced).toBe(true)
+    expect((await n.onDeferred(DIALOG)).announced).toBe(false)
+    expect((await n.onDeferred(DIALOG)).announced).toBe(false)
+    expect(calls.length).toBe(1)
+
+    expect(n.onDelivered()).toBe(true)
+    expect((await n.onDeferred(DIALOG)).announced).toBe(true)
+    expect(calls.length).toBe(2)
+  })
+
+  it("a refused toast does not count as having told anyone", async () => {
+    // Measured: notification.show answers {shown:false, reason:"rate_limited"} and shows
+    // nothing. Treating that as announced would silence the ONE message this feature
+    // exists to deliver, and nothing downstream would notice.
+    let refuse = true
+    const seen: number[] = []
+    const notify = async () => { seen.push(1); return refuse ? { shown: false, reason: "rate_limited" } : { shown: true, reason: "shown" } }
+    const n = makeStuckNotifier({ notify })
+    const DIALOG = "staged text did not appear in the pane - deferring (nothing submitted)"
+
+    expect((await n.onDeferred(DIALOG)).announced).toBe(false)
+    expect(n.isAnnounced()).toBe(false)
+    refuse = false
+    expect((await n.onDeferred(DIALOG)).announced).toBe(true)
+    expect(seen.length).toBe(2)
+  })
+
+  it("never writes a token for something it did not measure", () => {
+    // Unknown count: write NOTHING. "we could not ask" must not render as "0 waiting".
+    expect(inboxTokens({ unread: null })).toEqual({})
+    expect(inboxTokens({})).toEqual({})
+    // Zero: clear the token rather than display a permanently-true "inbox 0".
+    expect(inboxTokens({ unread: 0 })).toEqual({ inbox: "" })
+    expect(inboxTokens({ unread: 3 })).toEqual({ inbox: "inbox 3" })
+    // Blocked is the same shape: shown only while measured, cleared when it ends.
+    expect(inboxTokens({ blocked: true })).toEqual({ wake: "wake blocked" })
+    expect(inboxTokens({ blocked: false })).toEqual({ wake: "" })
+  })
+
+  it("reports tokens to the pane's workspace and never touches its label", async () => {
+    const sent: Array<[string, any]> = []
+    const call = async (method: string, params: any) => {
+      sent.push([method, params])
+      if (method === "pane.list") return { panes: [{ pane_id: "wZ:p1", workspace_id: "wZ", cwd: "/w" }] }
+      return { type: "ok" }
+    }
+    const backend = makeHerdrBackend({ call, worktreePath: "/w", part: "p" })
+    expect(await backend.reportInbox(4)).toEqual({ reported: true, why: "" })
+    const meta = sent.find(([m]) => m === "workspace.report_metadata")
+    expect(meta).toBeDefined()
+    expect(meta?.[1]).toEqual({ workspace_id: "wZ", source: "relayroom", tokens: { inbox: "inbox 4" } })
+    // The label is the user's. Nothing in this path may rename anything.
+    expect(sent.some(([m]) => m === "workspace.rename")).toBe(false)
+
+    // Unknown count writes nothing at all - not a token, not a call.
+    const before = sent.length
+    expect((await backend.reportInbox(null)).reported).toBe(false)
+    expect(sent.length).toBe(before)
+  })
+
+  it("a failing surface cannot stop a delivery", async () => {
+    // The pane is fine; report_metadata is broken. Delivery must still succeed - a
+    // status bar that can take wakes down is worse than no status bar.
+    const call = async (method: string, _params: any) => {
+      if (method === "pane.list") return { panes: [{ pane_id: "wZ:p1", workspace_id: "wZ", cwd: "/w" }] }
+      if (method === "workspace.report_metadata") throw Object.assign(new Error("nope"), { code: "internal" })
+      if (method === "notification.show") return { shown: true, reason: "shown" }
+      if (method === "pane.read") return { read: { text: screenWith("wake me") } }
+      if (method === "pane.send_text" || method === "pane.send_keys") return { type: "ok" }
+      return { type: "ok" }
+    }
+    const backend = makeHerdrBackend({ call, worktreePath: "/w", part: "p" })
+    expect((await backend.reportInbox(2)).reported).toBe(false)
+    expect(typeof backend.deliver).toBe("function")
   })
 })
