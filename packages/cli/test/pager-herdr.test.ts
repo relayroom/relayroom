@@ -41,16 +41,51 @@ const screenWith = (text: string) =>
 describe("herdr delivery refuses to submit what it cannot see", () => {
   it("stages, verifies, and only then presses enter", async () => {
     let staged = false
+    let seq = 10
     const h = fakeHerdr({
       "pane.read": () => ({ read: { text: staged ? screenWith(TEXT) : "❯\n───────────" } }),
       "pane.send_text": () => { staged = true; return {} },
-      "pane.send_keys": () => { staged = false; return {} }, // submitted: the box empties
+      "pane.send_keys": () => { seq++; return {} }, // a submit is what moves the counter
+      "agent.list": () => ({ agents: [{ pane_id: "w2:p4", state_change_seq: seq }] }),
     })
     const res = await deliverViaHerdr({ call: h.call, paneId: "w2:p4", text: TEXT, wakeId: WAKE })
     expect(res.ok).toBe(true)
     // Order is the safety property, not an implementation detail: a read must sit
-    // between the text and the enter.
-    expect(h.methods()).toEqual(["pane.read", "pane.send_text", "pane.read", "pane.send_keys", "pane.read"])
+    // between the text and the enter, and the counter must be sampled BEFORE the enter
+    // or "did it move" has nothing to compare against.
+    expect(h.methods()).toEqual([
+      "pane.read", "pane.send_text", "pane.read", "agent.list", "pane.send_keys", "agent.list",
+    ])
+  })
+
+  it("confirms a MID-TURN submit, where the composer still shows the text", async () => {
+    // The false negative a live run found: Claude Code keeps a submitted prompt visible
+    // in its composer until the turn it queued behind starts, so "still on screen"
+    // reported "not submitted" for a wake that had been submitted AND answered. Every
+    // wake that lands mid-turn would have been delivered twice.
+    let seq = 46
+    const h = fakeHerdr({
+      "pane.read": { read: { text: screenWith(TEXT) } },   // never clears - mid-turn
+      "pane.send_text": {},
+      "pane.send_keys": () => { seq = 47; return {} },
+      "agent.list": () => ({ agents: [{ pane_id: "w2:p4", state_change_seq: seq }] }),
+    })
+    const res = await deliverViaHerdr({ call: h.call, paneId: "w2:p4", text: TEXT, wakeId: WAKE })
+    expect(res.ok).toBe(true)
+  })
+
+  it("does not accept a counter that never moved", async () => {
+    // The wrong-key-name case, now caught by the counter rather than by the screen: a key
+    // herdr does not recognise leaves the text staged and the agent untouched.
+    const h = fakeHerdr({
+      "pane.read": { read: { text: screenWith(TEXT) } },
+      "pane.send_text": {},
+      "pane.send_keys": {},
+      "agent.list": { agents: [{ pane_id: "w2:p4", state_change_seq: 46 }] },
+    })
+    const res = await deliverViaHerdr({ call: h.call, paneId: "w2:p4", text: TEXT, wakeId: WAKE })
+    expect(res.ok).toBe(false)
+    expect(res.reason).toContain("no agent state change")
   })
 
   it("NEVER presses enter when the staged text is not on screen", async () => {
@@ -75,6 +110,7 @@ describe("herdr delivery refuses to submit what it cannot see", () => {
       "pane.read": { read: { text: screenWith(TEXT) } },
       "pane.send_text": () => { throw new Error("must not stage twice") },
       "pane.send_keys": {},
+      "agent.list": { agents: [] },
     })
     // The confirm read still shows the text (this fake always does), so the result is a
     // refusal - but the point of the case is the absence of a second send_text.
@@ -90,6 +126,9 @@ describe("herdr delivery refuses to submit what it cannot see", () => {
       "pane.read": { read: { text: screenWith(TEXT) } },
       "pane.send_text": {},
       "pane.send_keys": {},
+      // No agent here: herdr sees no agent in this pane, so the screen is the only
+      // evidence there is - the fallback path.
+      "agent.list": { agents: [] },
     })
     const res = await deliverViaHerdr({ call: h.call, paneId: "w2:p4", text: TEXT, wakeId: WAKE })
     expect(res.ok).toBe(false)
@@ -118,6 +157,7 @@ describe("herdr delivery refuses to submit what it cannot see", () => {
       },
       "pane.send_text": () => { throw new Error("already staged - should not re-stage") },
       "pane.send_keys": {},
+      "agent.list": { agents: [] },
     })
     const res = await deliverViaHerdr({ call: h.call, paneId: "w2:p4", text: TEXT, wakeId: WAKE })
     expect(res.ok).toBe(true)
@@ -190,6 +230,7 @@ describe("the backend the pager holds", () => {
       "pane.read": () => ({ read: { text: staged ? screenWith(TEXT) : "❯" } }),
       "pane.send_text": () => { staged = true; return {} },
       "pane.send_keys": () => { staged = false; return {} },
+      "agent.list": { agents: [] },
     })
     const backend = makeHerdrBackend({ call: h.call, worktreePath: "/wt" })
     expect(await backend.agentPresent()).toBe(true)

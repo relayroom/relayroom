@@ -100,6 +100,65 @@ export function verificationNeedle(text, wakeId) {
  * one property worth testing here is what happens when the verify DOESN'T see the text,
  * and that is not reachable against a real pane on demand.
  */
+/**
+ * How long to give the terminal to RENDER what we just sent.
+ *
+ * Measured, and it is why these exist at all: the first live run of this algorithm sent
+ * the text, read the pane in the same millisecond, saw an empty input box and deferred a
+ * wake that arrived perfectly well a moment later. A single immediate read is a race with
+ * the renderer, and the test fake did not have one because a fake answers instantly.
+ *
+ * This does not weaken the gate. A dialog never shows the text at all, so the dialog case
+ * still deferrs - it just costs this window first. The window is spent only when
+ * something is wrong.
+ */
+const RENDER_POLL_MS = 250
+const RENDER_ATTEMPTS = 12   // ~3s
+
+/** Read until the needle is present (want=true) or gone (want=false), or the window ends.
+ *  Returns what was actually observed, never what was hoped for. */
+async function readUntil({ call, paneId, needle, readLines, want }) {
+  let last = ""
+  for (let i = 0; i < RENDER_ATTEMPTS; i++) {
+    const res = await call("pane.read", { pane_id: paneId, source: "visible", lines: readLines })
+    last = res?.read?.text ?? ""
+    if (screenContains(last, needle) === want) return { matched: true, text: last }
+    await new Promise((r) => setTimeout(r, RENDER_POLL_MS))
+  }
+  return { matched: false, text: last }
+}
+
+/**
+ * herdr's monotone counter of agent state transitions for this pane, or null when herdr
+ * sees no agent here.
+ *
+ * THE CONFIRM SIGNAL, and the reason it is not the screen. Measured mid-turn: after the
+ * Enter, Claude Code keeps the submitted text VISIBLE in its composer until the turn it
+ * queued behind actually starts - so "the text is still on screen" reported "not
+ * submitted" for a wake that had been submitted and answered. That false negative costs
+ * a duplicate wake every time a wake lands mid-turn, which is most of them.
+ *
+ * `state_change_seq` moved 46 -> 47 within one second of the Enter, and did NOT move when
+ * the text was merely staged. It is evidence about the submit rather than about the
+ * rendering, which is what step 4 of the stage-0 algorithm meant by "confirm by state
+ * transition or echo" - this is the transition half, and it is the half that survives a
+ * busy agent.
+ *
+ * Deliberately the SEQ and not `agent_status`: the same run reported `done` while the
+ * agent was visibly mid-turn. A counter of observed transitions is a fact; a judgement
+ * about which state the agent is in is the screen-manifest guess this design avoids
+ * everywhere else.
+ */
+async function agentSeq(call, paneId) {
+  try {
+    const list = await call("agent.list", {})
+    const mine = (list?.agents ?? []).find((a) => a.pane_id === paneId)
+    return typeof mine?.state_change_seq === "number" ? mine.state_change_seq : null
+  } catch {
+    return null
+  }
+}
+
 export async function deliverViaHerdr({ call, paneId, text, wakeId, readLines = 12, log = () => {} }) {
   const needle = verificationNeedle(text, wakeId)
 
@@ -127,20 +186,25 @@ export async function deliverViaHerdr({ call, paneId, text, wakeId, readLines = 
   }
 
   // VERIFY. The response to send_text says nothing about where the text went.
-  let after
+  let seen
   try {
-    after = await call("pane.read", { pane_id: paneId, source: "visible", lines: readLines })
+    seen = await readUntil({ call, paneId, needle, readLines, want: true })
   } catch (err) {
     return { ok: false, reason: `pane.read failed after staging (${err.code}): ${err.message}` }
   }
-  if (!screenContains(after?.read?.text, needle)) {
+  if (!seen.matched) {
     // Something swallowed it - a dialog, a dead pane, a TUI that is not accepting input.
     // NOTHING has been submitted and no dialog has been answered, which is the property
     // this ordering exists to guarantee. The wake stays queued.
     return { ok: false, reason: "staged text did not appear in the pane - deferring (nothing submitted)" }
   }
 
+  // Read the transition counter BEFORE the Enter, so "did it move" is answerable.
+  const seqBefore = await agentSeq(call, paneId)
+
   try {
+    // `enter`, and key names are `+`-joined when they are chords: `ctrl+u` is accepted,
+    // `ctrl-u` answers `invalid_key`. Measured, and it fails loudly either way.
     await call("pane.send_keys", { pane_id: paneId, keys: ["enter"] })
   } catch (err) {
     return { ok: false, reason: `pane.send_keys failed (${err.code}): ${err.message}` }
@@ -149,10 +213,28 @@ export async function deliverViaHerdr({ call, paneId, text, wakeId, readLines = 
   // CONFIRM. If the key name were wrong, or the TUI folded the Enter into the composer,
   // the text would still be sitting in the box - and reporting delivery then would be
   // the same lie the whole feature is built to stop telling.
+  // CONFIRM, in the order of how much the signal is worth.
+  //
+  // 1. the transition counter moved -> submitted, whatever the screen looks like
+  // 2. no agent to count (a bare shell, or herdr has not detected one) -> fall back to
+  //    the screen: the text leaving the input area is the only evidence available
+  // 3. counter did not move AND the text is still there -> nothing was submitted
+  if (seqBefore !== null) {
+    for (let i = 0; i < RENDER_ATTEMPTS; i++) {
+      const now = await agentSeq(call, paneId)
+      if (now !== null && now > seqBefore) return { ok: true }
+      await new Promise((r) => setTimeout(r, RENDER_POLL_MS))
+    }
+  }
   try {
-    const done = await call("pane.read", { pane_id: paneId, source: "visible", lines: readLines })
-    if (screenContains(done?.read?.text, needle)) {
-      return { ok: false, reason: "text is still in the input box after enter - not submitted" }
+    const cleared = await readUntil({ call, paneId, needle, readLines, want: false })
+    if (!cleared.matched) {
+      return {
+        ok: false,
+        reason: seqBefore === null
+          ? "text is still in the input box after enter - not submitted"
+          : "no agent state change and the text is still in the input box - not submitted",
+      }
     }
   } catch (err) {
     // The submit already happened; failing to READ afterwards is not evidence it did not
