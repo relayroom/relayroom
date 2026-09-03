@@ -1,4 +1,4 @@
-import { and, count, desc, eq, isNull, ne, sql } from "drizzle-orm"
+import { and, count, desc, eq, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm"
 
 // The virtual 'human' participant (server HUMAN_PART) is materialized on demand
 // when an agent addresses `to: ['human']` / needsHuman. It is not a connectable
@@ -6,8 +6,13 @@ import { and, count, desc, eq, isNull, ne, sql } from "drizzle-orm"
 const HUMAN_PART = "human"
 import type { ApiResultWithItem, ApiResultWithItems } from "@relayroom/shared"
 import { PAGER_ONLINE_WINDOW_MS, isPagerOnline } from "@/lib/pager-liveness"
+import {
+  deriveMultiplexer,
+  isDeliveryStalled,
+  type MultiplexerDelivery,
+} from "@/lib/multiplexer-status"
 import { db } from "@/modules/drizzle/db"
-import { agents, agentConnections, agentSnapshots, events, messages, threads, projects } from "@relayroom/db/schema"
+import { agents, agentConnections, agentSnapshots, events, messages, threads, projects, wakeIntents } from "@relayroom/db/schema"
 import { better_auth_user } from "@relayroom/db/auth-schema"
 import type { AgentStatus } from "@/components/agent/agent-status-badge"
 import { getErrorTranslations } from "@/lib/action-i18n"
@@ -33,6 +38,18 @@ export interface AgentRow {
   pagerOnline: boolean
   /** Timestamp the provider rate-limit lifts, or null if not limited. */
   limitedUntil: Date | null
+  /**
+   * Which multiplexer this part's pager is actually delivering through, as the
+   * pager measured it - never the selector an operator ticked in the connect
+   * dialog. `unreported` for a pager too old to say.
+   */
+  multiplexer: MultiplexerDelivery
+  /**
+   * A wake this part's pager took and never delivered. True is an observation of
+   * failure; false only means none is on record, which includes a part nothing has
+   * been sent to yet. See `isDeliveryStalled`.
+   */
+  deliveryStalled: boolean
   createdAt: Date
   // From latest connection
   model: string | null
@@ -146,6 +163,8 @@ export async function listAgents(
         lastSeenAt: agents.lastSeenAt,
         pagerLastSeenAt: agents.pagerLastSeenAt,
         limitedUntil: agents.limitedUntil,
+        multiplexerIntent: agents.multiplexerIntent,
+        multiplexerActive: agents.multiplexerActive,
         createdAt: agents.createdAt,
       })
       .from(agents)
@@ -157,6 +176,8 @@ export async function listAgents(
     const connectionMap = new Map<string, { id: string; status: string | null; lastSeenAt: Date | null }>()
     const usageMap = new Map<string, { input: number; output: number; cache: number; model: string | null }>()
     const eventMap = new Map<string, { type: string; createdAt: Date }>()
+    /** agentId -> oldest wake a pager leased and never reported delivering. */
+    const stalledMap = new Map<string, Date>()
 
     if (agentIds.length > 0) {
       // Latest connection per agent.
@@ -171,6 +192,35 @@ export async function listAgents(
       }
 
       const idList = sql.join(agentIds.map((id) => sql`${id}`), sql`, `)
+
+      // Wakes a pager took and never handed over.
+      //
+      // `state = 'pending'` with a lease is the whole signal, and it is an
+      // observation rather than an inference: the pager claims a lease, delivers,
+      // then reports, and only the report moves the row off 'pending'. A row still
+      // pending while its lease was taken is one where delivery was attempted and
+      // did not land - the case where a worktree asked for herdr, found no socket,
+      // fell back to tmux, and has no tmux session either. Nothing else on the
+      // screen can see that: the heartbeat keeps beating, because liveness and
+      // delivery are different code paths in the pager.
+      //
+      // No per-agent deduplication, because the table cannot hold two: the partial
+      // unique index on non-terminal states is a one-active-wake-per-agent
+      // invariant. Written through the query builder rather than as raw SQL after
+      // the first version selected `reserved_at` - `reservedAt` is the Drizzle
+      // property and `created_at` is the column, so the name was only wrong at the
+      // point where nothing checks it.
+      const stalledRows = await db
+        .select({ agentId: wakeIntents.agentId, reservedAt: wakeIntents.reservedAt })
+        .from(wakeIntents)
+        .where(
+          and(
+            inArray(wakeIntents.agentId, agentIds),
+            eq(wakeIntents.state, "pending"),
+            isNotNull(wakeIntents.leaseHolder),
+          ),
+        )
+      for (const row of stalledRows) stalledMap.set(row.agentId, row.reservedAt)
 
       // Usage totals per agent (one query).
       const usageRows = await db.execute(sql`
@@ -227,6 +277,11 @@ export async function listAgents(
         usageOutput: usage?.output ?? 0,
         usageCache: usage?.cache ?? 0,
         pagerOnline: isPagerOnline(r.pagerLastSeenAt),
+        multiplexer: deriveMultiplexer(r.multiplexerIntent, r.multiplexerActive),
+        deliveryStalled: isDeliveryStalled({
+          pagerOnline: isPagerOnline(r.pagerLastSeenAt),
+          stalledWakeSince: stalledMap.get(r.id) ?? null,
+        }),
         activity: deriveAgentStatus({
           connStatus: conn?.status ?? null,
           lastSeenAt: liveLastSeen,
