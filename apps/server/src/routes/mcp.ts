@@ -2446,7 +2446,11 @@ export function createMcpRoute(db: Db, bus: Bus) {
   route.post('/:connectCode/heartbeat', async (c) => {
     const connectCode = c.req.param('connectCode')
     const body = await c.req.json().catch(() => null) as
-      { part?: unknown; relayroomMd?: unknown; holder?: unknown; release?: unknown; host?: unknown; version?: unknown } | null
+      {
+        part?: unknown; relayroomMd?: unknown; holder?: unknown; release?: unknown
+        host?: unknown; version?: unknown
+        multiplexer?: { intent?: unknown; active?: unknown }
+      } | null
     const part = typeof body?.part === 'string' ? body.part : ''
     if (!isValidPart(part)) return c.json({ error: 'invalid part' }, 400)
     const holder = typeof body?.holder === 'string' ? body.holder : null
@@ -2469,11 +2473,26 @@ export function createMcpRoute(db: Db, bus: Bus) {
     if (!agent) return c.json({ error: 'agent not registered' }, 404)
     // The heartbeat is the pager's liveness signal - record it on every beat so
     // the UI can tell the pager is alive independent of the agent's own activity.
-    const agentUpdate: { pagerLastSeenAt: Date; relayroomMdSyncedAt?: Date | null } = {
+    const agentUpdate: {
+      pagerLastSeenAt: Date
+      relayroomMdSyncedAt?: Date | null
+      multiplexerIntent?: string
+      multiplexerActive?: string
+    } = {
       pagerLastSeenAt: new Date(),
     }
     if (typeof body?.relayroomMd === 'boolean') {
       agentUpdate.relayroomMdSyncedAt = body.relayroomMd ? new Date() : null
+    }
+    // What the pager asked for and what it actually found. Written only when the beat
+    // CARRIES them: a pager from before this field sends neither, and writing a default
+    // would turn "we have not been told" into a confident "tmux" for every part on the
+    // previous release. An unrecognised value is dropped rather than stored, so the
+    // column can only ever hold something this server knows how to render.
+    const mux = body?.multiplexer
+    if (mux && typeof mux === 'object') {
+      if (mux.intent === 'tmux' || mux.intent === 'herdr') agentUpdate.multiplexerIntent = mux.intent
+      if (mux.active === 'tmux' || mux.active === 'herdr') agentUpdate.multiplexerActive = mux.active
     }
     await db.update(agents).set(agentUpdate).where(eq(agents.id, agent.id))
 

@@ -11,6 +11,11 @@ export interface HookOpts {
   server?: string
   /** Override the config file to edit; default depends on the agent. */
   settings?: string
+  /** The worktree this part lives in. Only the statusLine needs it (it invokes that
+   *  worktree's rr.sh), and it is explicit rather than derived from the settings path
+   *  because `--settings` can point anywhere and a guessed worktree would write the
+   *  parked user command into someone else's directory. */
+  dir?: string
 }
 
 // ── Where things live ────────────────────────────────────────────────────────
@@ -149,6 +154,92 @@ export function printHook(opts: HookOpts): void {
 // ── Install ──────────────────────────────────────────────────────────────────
 
 /**
+ * The marker that makes our statusLine recognisable in someone else's settings file.
+ * Matched as a substring, so the command can grow flags without the check going stale.
+ */
+export const STATUSLINE_MARKER = "statusline --claude"
+
+/** Where a pre-existing user statusLine command is parked so ours can call it. */
+export function userStatuslinePath(dir: string): string {
+  return join(dir, ".relayroom", "statusline.user")
+}
+
+/**
+ * Install RelayRoom's statusLine into Claude Code's settings, COMPOSING with whatever
+ * the user already had.
+ *
+ * The bar (part, inbox, MCP, pager) was a tmux thing, and a herdr pane has no tmux bar.
+ * Rebuilding it as a statusLine also buys a property the workspace token cannot have:
+ * Claude Code POLLS this command, so the check runs in a different process from the
+ * thing it checks and a dead pager turns the bar red on its own. A pushed token is only
+ * as fresh as the last process alive to push it - it goes quiet exactly when it has
+ * something to say.
+ *
+ * NEVER OVERWRITES. A user's own statusLine (dir/branch/model is the common one) is
+ * parked in .relayroom/statusline.user and invoked by ours with the same stdin, so the
+ * two compose instead of one replacing the other. Silently replacing it would be the
+ * settings-file version of the session-rename bug: a configuration that belonged to
+ * someone else, gone, with nothing failing.
+ *
+ * @returns what happened, so the caller can say it out loud rather than guess.
+ */
+export function statusLineUpdate(
+  settings: AgentSettings,
+  dir: string,
+  userSettingsFile: string = join(homedir(), ".claude", "settings.json"),
+): { action: "installed" | "composed" | "unchanged" | "skipped"; wrapped?: string; why?: string } {
+  const script = join(dir, "rr.sh")
+  const command = `"${script}" ${STATUSLINE_MARKER}`
+
+  // ONLY POINT AT A SCRIPT THAT CAN ANSWER. rr.sh is generated per worktree and can be
+  // older than the CLI installing this - and an rr.sh without `--claude` does not fail,
+  // it falls through to the TMUX renderer and prints raw `#[fg=colour240]` markup into
+  // Claude Code's bar. Measured exactly that way on a live worktree here. A capability
+  // that is read from the file cannot drift; one that is assumed from the CLI's own
+  // version can, because the two are updated at different times.
+  let scriptSupports = false
+  try { scriptSupports = readFileSync(script, "utf8").includes("sl_claude") } catch { scriptSupports = false }
+  if (!scriptSupports) return { action: "skipped", why: `${script} has no --claude renderer (run ./rr.sh update --self first)` }
+
+  const existing = settings.statusLine as { type?: unknown; command?: unknown } | undefined
+  let existingCommand = typeof existing?.command === "string" ? existing.command : null
+
+  // THE PROJECT FILE IS NOT THE ONLY PLACE A STATUSLINE LIVES, and this is where the
+  // careless version of this function does its damage. Claude Code merges settings with
+  // the project file winning, and people configure their bar once in
+  // ~/.claude/settings.json - measured on this machine: the user had exactly that, and
+  // the project file had no statusLine at all. Writing ours into the project file would
+  // have overridden their global bar in every RelayRoom worktree while parking nothing,
+  // because a function that only reads the file it edits sees an empty slot and calls it
+  // free. So when the project file is silent, ask the user-level file before claiming it.
+  if (!existingCommand) {
+    try {
+      const raw = JSON.parse(readFileSync(userSettingsFile, "utf8")) as AgentSettings
+      const userLine = raw.statusLine as { command?: unknown } | undefined
+      if (typeof userLine?.command === "string" && userLine.command.trim()) existingCommand = userLine.command
+    } catch { /* no user settings, or not JSON - nothing to compose with */ }
+  }
+
+  // Already ours: leave it alone. Re-running install must not wrap our own wrapper -
+  // that would park OUR command as "the user's" and every install would add a layer.
+  if (existingCommand && existingCommand.includes(STATUSLINE_MARKER)) {
+    return { action: "unchanged" }
+  }
+
+  let wrapped: string | undefined
+  if (existingCommand) {
+    // Park it. Written only when there is something to park, so a re-install after an
+    // uninstall cannot resurrect a stale command.
+    mkdirSync(dirname(userStatuslinePath(dir)), { recursive: true })
+    writeFileSync(userStatuslinePath(dir), `${existingCommand}\n`)
+    wrapped = existingCommand
+  }
+  settings.statusLine = { type: "command", command, padding: 0 }
+  return { action: wrapped ? "composed" : "installed", wrapped }
+}
+
+/**
+ * Merge the RelayRoom usage hook into an agent's JSON config file./**
  * Merge the RelayRoom usage hook into an agent's JSON config file. Any existing
  * RelayRoom hook (matched by usage-report.mjs) is replaced, not duplicated, so
  * re-running is idempotent. Other hooks and settings are preserved.
@@ -159,6 +250,7 @@ export function installHook(opts: HookOpts): void {
 
   const path = resolve(opts.settings ?? defaultSettings(agent))
   const event = hookEvent(agent)
+  let statusLineNote: { action: string; wrapped?: string; why?: string } | null = null
 
   let settings: AgentSettings = {}
   if (existsSync(path)) {
@@ -204,6 +296,11 @@ export function installHook(opts: HookOpts): void {
     )
     for (const name of RELAYROOM_MCP_SERVERS) approved.add(name)
     settings.enabledMcpjsonServers = [...approved]
+
+    // The in-pane status bar. Lives here rather than in its own command because it is
+    // the same file, the same idempotent write, and the same "already current" check -
+    // a second writer to settings.json is a second chance to clobber it.
+    statusLineNote = statusLineUpdate(settings, resolve(opts.dir ?? process.cwd()))
   }
 
   // Write ONLY when the result differs. A no-op must be silent in every channel it can
@@ -221,6 +318,11 @@ export function installHook(opts: HookOpts): void {
   }
   if (current === next) {
     console.log(`RelayRoom usage hook already current (${event}) -> ${path}`)
+    // Say why there is no bar even when nothing else changed. A skipped statusLine is
+    // invisible by construction - the absence of a status bar looks like a status bar
+    // that has nothing to say - so the one line explaining it has to survive the
+    // no-op path too.
+    if (statusLineNote?.action === "skipped") console.log(`Skipped the RelayRoom statusLine: ${statusLineNote.why}`)
     if (agent === "codex") console.log(codexFeatureNote())
     return
   }
@@ -231,6 +333,13 @@ export function installHook(opts: HookOpts): void {
   if (agent === "claude") {
     console.log("Installed AskUserQuestion guard (PreToolUse, non-main only)")
     console.log(`Approved the RelayRoom MCP servers (${RELAYROOM_MCP_SERVERS.join(", ")}) so an unattended relaunch keeps its board and wakes`)
+    if (statusLineNote?.action === "skipped") {
+      console.log(`Skipped the RelayRoom statusLine: ${statusLineNote.why}`)
+    } else if (statusLineNote?.action === "composed") {
+      console.log(`Installed the RelayRoom statusLine AFTER your existing one (kept: ${statusLineNote.wrapped})`)
+    } else if (statusLineNote?.action === "installed") {
+      console.log("Installed the RelayRoom statusLine (part, inbox, MCP, pager)")
+    }
   }
 
   if (agent === "codex") console.log(codexFeatureNote())

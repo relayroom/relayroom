@@ -7,6 +7,9 @@ import { runtimePath } from "./runtime"
 import { DEFAULT_SERVER } from "./constants"
 import { AGENT_IDS } from "./providers"
 import { readConfig, writeConfig } from "./config"
+import { closePane, ensureWorkspace, findPane, herdrAgentName, herdrStatus, launchInPane, nameAgent } from "./herdr"
+import { herdrCall } from "../runtime/herdr-client.mjs"
+import { basename, resolve } from "node:path"
 
 const agentOption = () =>
   new Option("--agent <agent>", "coding CLI to target")
@@ -174,6 +177,109 @@ program
     console.log(`delivery=${mode} -> ${path}`)
   })
 
+// ── herdr: the verbs rr.sh needs from the socket API ───────────────────────────
+// One command with subcommands rather than several, because the shell calls them the
+// same way and a single `herdr` namespace keeps the CLI's top level from growing a verb
+// per multiplexer. Every one prints ONE line the script can read; nothing here is meant
+// for a human to parse twice.
+const herdrCmd = program
+  .command("herdr")
+  .description("herdr multiplexer helpers used by rr.sh (socket API)")
+
+herdrCmd
+  .command("status")
+  .description("Whether herdr is usable here, and whether this worktree has a pane with an agent in it")
+  .option("--dir <path>", "worktree directory", ".")
+  .action(async (opts: { dir: string }) => {
+    const st = await herdrStatus(resolve(opts.dir))
+    // A shell reads fields, not prose: `key=value` on one line, and `usable` first so a
+    // caller can branch on it without parsing the rest.
+    console.log(
+      [
+        `usable=${st.usable}`,
+        st.version ? `version=${st.version}` : "",
+        `pane=${st.pane?.pane_id ?? "none"}`,
+        `agent=${st.agent ? "yes" : "no"}`,
+        st.reason ? `reason=${JSON.stringify(st.reason)}` : "",
+      ].filter(Boolean).join(" "),
+    )
+    if (!st.usable) process.exit(1)
+  })
+
+herdrCmd
+  .command("ensure")
+  .description("Make sure a herdr workspace exists for this worktree (grouped under the repo when it is a git worktree)")
+  .option("--dir <path>", "worktree directory", ".")
+  .option("--label <label>", "workspace label")
+  .action(async (opts: { dir: string; label?: string }) => {
+    const dir = resolve(opts.dir)
+    const cfg = readConfig(opts.dir)
+    const label = opts.label ?? cfg.target ?? cfg.part ?? basename(dir)
+    const { pane, created, grouped, why } = await ensureWorkspace(dir, label)
+    console.log(
+      `pane=${pane.pane_id} workspace=${pane.workspace_id} created=${created} grouped=${grouped}` +
+        (grouped || !why ? "" : ` reason=${JSON.stringify(why)}`),
+    )
+  })
+
+herdrCmd
+  .command("launch")
+  .description("Type a launch command into this worktree's pane and confirm an agent actually started")
+  .argument("<command>", "the command to run in the pane")
+  .option("--dir <path>", "worktree directory", ".")
+  .action(async (command: string, opts: { dir: string }) => {
+    const pane = await findPane(resolve(opts.dir))
+    if (!pane) {
+      console.error(`error: no herdr pane has cwd ${resolve(opts.dir)} - run \`relayroom herdr ensure\` first`)
+      process.exit(1)
+    }
+    // Confirmed by watching the pane's processes, never by the response to send_keys:
+    // herdr answers "ok" to input it delivered nowhere.
+    const started = await launchInPane(pane.pane_id, command)
+    console.log(`pane=${pane.pane_id} started=${started}`)
+    if (!started) process.exit(1)
+  })
+
+herdrCmd
+  .command("close")
+  .description("Close this worktree's herdr pane (the equivalent of killing its tmux session)")
+  .option("--dir <path>", "worktree directory", ".")
+  .action(async (opts: { dir: string }) => {
+    const res = await closePane(resolve(opts.dir))
+    if (!res.closed) { console.log("pane=none closed=false"); return }
+    console.log(`pane=${res.pane} closed=true workspace=${res.workspace}`)
+  })
+
+herdrCmd
+  .command("focus")
+  .description("Bring this worktree's herdr workspace to the front")
+  .option("--dir <path>", "worktree directory", ".")
+  .action(async (opts: { dir: string }) => {
+    const pane = await findPane(resolve(opts.dir))
+    if (!pane) { console.error("error: no herdr pane for this worktree"); process.exit(1) }
+    await herdrCall("workspace.focus", { workspace_id: pane.workspace_id })
+    console.log(`workspace=${pane.workspace_id} focused=true`)
+  })
+
+herdrCmd
+  .command("name")
+  .description("Name this worktree's agent in herdr's agent list (the sidebar row)")
+  .argument("[part]", "the part name (default: from .relayroom/config.json)")
+  .option("--agent <id>", "the CLI running in the pane (default: from .relayroom/config.json)")
+  .option("--dir <path>", "worktree directory", ".")
+  .action(async (part: string | undefined, opts: { dir: string; agent?: string }) => {
+    const dir = resolve(opts.dir)
+    const cfg = readConfig(dir)
+    const p = part ?? cfg.part ?? ""
+    const agent = opts.agent ?? (cfg.agent ?? "").split(",")[0]
+    if (!p) { console.error("error: no part given and none in .relayroom/config.json"); process.exit(1) }
+    // Composed here, in the one place that knows herdr's naming rule, so a caller cannot
+    // build a name that the server will refuse.
+    const name = herdrAgentName(agent, p)
+    const res = await nameAgent(dir, name)
+    console.log(`named=${res.named} name=${name}${res.pane ? ` pane=${res.pane}` : ""}${res.why ? ` reason=${JSON.stringify(res.why)}` : ""}`)
+  })
+
 // ── channel: the INTENT to use Claude Code Channels (not the current mode) ──────
 // Two commands, not one field, because the outage this comes from was a single field
 // carrying both "what was asked for" and "what is running". `delivery` remains the
@@ -196,6 +302,25 @@ program
     }
   })
 
+program
+  .command("multiplexer")
+  .description("Choose the multiplexer this worktree's part runs under (intent, persisted)")
+  .argument("<name>", "tmux or herdr")
+  .option("--dir <path>", "worktree directory", ".")
+  .action((name: string, opts: { dir: string }) => {
+    if (name !== "tmux" && name !== "herdr") {
+      console.error(`error: multiplexer must be "tmux" or "herdr" (got "${name}")`)
+      process.exit(1)
+    }
+    // Written even for "tmux", rather than deleting the key. Absent and "tmux" behave
+    // identically at read time, but they are different FACTS: absent is "nobody has
+    // chosen", "tmux" is "someone chose tmux" - which is what a rollback is. Losing that
+    // distinction would make a rolled-back worktree indistinguishable from one that was
+    // never migrated, and the rollback is exactly the moment somebody will ask.
+    const path = writeConfig(opts.dir, { multiplexer: name })
+    console.log(`multiplexer=${name} -> ${path}`)
+  })
+
 // ── hooks: manage the per-agent usage turn-end hook ─────────────────────────────
 const hooks = program.command("hooks").description("Manage the RelayRoom usage hook")
 
@@ -207,6 +332,7 @@ hooks
   .addOption(agentOption())
   .option("--server <url>", "RelayRoom server base URL")
   .option("--settings <path>", "config file to edit (default depends on --agent)")
+  .option("--dir <path>", "worktree directory (the statusLine calls its rr.sh)", ".")
   .action((opts) => {
     const o = withConfig(opts)
     installHook({ ...o, code: need(o.code, "code"), part: need(o.part, "part") })

@@ -84,8 +84,8 @@ CONF="$ROOT/.relayroom/config.json"
 # Load all config fields in ONE node call (statusline runs every few seconds, so
 # avoid 6 separate spawns). Fields are slug/url/hex - none contain '|'. PREV is the
 # previous session name (if init just renamed it) so up can migrate a live session.
-_C="$(node -e 'var c=require(process.argv[1]);process.stdout.write([c.code,c.part,c.server,c.target,c.agent,c.token,c.previousTarget,c.channel?1:0].map(function(x){return String(x||"")}).join("|"))' "$CONF" 2>/dev/null || true)"
-IFS='|' read -r CODE PART SERVER SESSION AGENT TOKEN PREV CHANNEL_WANTED <<< "$_C"
+_C="$(node -e 'var c=require(process.argv[1]);process.stdout.write([c.code,c.part,c.server,c.target,c.agent,c.token,c.previousTarget,c.channel?1:0,c.multiplexer||"tmux"].map(function(x){return String(x||"")}).join("|"))' "$CONF" 2>/dev/null || true)"
+IFS='|' read -r CODE PART SERVER SESSION AGENT TOKEN PREV CHANNEL_WANTED MULTIPLEXER <<< "$_C"
 [ -n "$SERVER" ] || SERVER="http://localhost:48801"
 [ -n "$SESSION" ] || SESSION="$PART"
 PRIMARY="\${AGENT%%,*}"; [ -n "$PRIMARY" ] || PRIMARY="claude"
@@ -106,6 +106,39 @@ CLI="relayroom"; command -v relayroom >/dev/null 2>&1 || CLI="npx -y @relayroom/
 # pager's send-keys deferral. Sets LAUNCH (the command to run) + writes delivery to
 # config so the pager and the channel server agree. Probe is cheap: \`--channels\`
 # with no value makes commander print "argument missing" iff the flag exists.
+# EVERY FLAG \`up\` TAKES, IN ONE PLACE - and anything else is an error, never a no-op.
+#
+# The previous generation of this script picked out the flags it recognised and ignored
+# the rest, so \`./rr.sh up --use-herdr\` on an rr.sh that predates herdr started a tmux
+# session and said nothing. Observed on a user's machine: they believed they had switched
+# multiplexer and had not. We cannot fix the copies already written, but from here on an
+# unknown option stops the command instead of quietly doing the old thing - and the error
+# names the likeliest cause, which is a script older than the flag.
+assert_known_flags() {
+  local verb="$1"; shift
+  local allowed="$1"; shift
+  local a
+  for a in "$@"; do
+    case " $allowed " in
+      *" $a "*) ;;
+      *)
+        echo "rr: unknown option for '$verb': $a" >&2
+        echo "    $verb accepts: $allowed" >&2
+        echo "    If you expected that flag to exist, this rr.sh may predate it:" >&2
+        echo "      npm i -g @relayroom/cli && ./rr.sh update --self" >&2
+        exit 2 ;;
+    esac
+  done
+}
+
+# Checked HERE, before the loops below - one of them writes the multiplexer into config,
+# and a command that is about to be refused must not first change the thing it was
+# refused for. (Also before \`up\`'s self-update re-exec, for the same reason.)
+case "\${1:-help}" in
+  up)     assert_known_flags up "--bypass --new --restart --use-herdr --use-tmux --channel --no-channel" "\${@:2}" ;;
+  launch) assert_known_flags launch "--bypass --new --channel --no-channel" "\${@:2}" ;;
+esac
+
 # Opt-in bypass: \`./rr.sh up --bypass\` (or \`./rr.sh claude run --bypass\`) appends the
 # primary CLI's "skip approval prompts" launch flag. Detected anywhere in the args.
 BYPASS=0; for _a in "$@"; do [ "$_a" = "--bypass" ] && BYPASS=1; done
@@ -122,6 +155,24 @@ for _a in "$@"; do
   case "$_a" in
     --channel)    $CLI channel on  >/dev/null 2>&1 || true; CHANNEL_WANTED=1 ;;
     --no-channel) $CLI channel off >/dev/null 2>&1 || true; CHANNEL_WANTED=0 ;;
+  esac
+done
+# Choose the multiplexer, for good. \`--use-herdr\` / \`--use-tmux\` are ENTRY POINTS that
+# persist the choice, not per-invocation overrides, and the difference is the whole point:
+# the pager, reboot recovery and every rr.sh verb read the same \`multiplexer\` field, so a
+# flag that only applied to this run would migrate a herdr part back to tmux the first
+# time anyone typed a bare \`up\` - silently, and back onto a delivery path the worktree
+# had deliberately left. \`--use-tmux\` is the rollback and writes tmux explicitly rather
+# than deleting the key: absent and "tmux" read the same but mean different things
+# ("nobody chose" vs "someone chose tmux"), and the rollback is when that is asked about.
+#
+# Same shape as --channel/--no-channel above, for the same reason. It does NOT weaken the
+# loud failure: herdr intent plus an unreachable socket is still an error, never a quiet
+# fall back to tmux.
+for _a in "$@"; do
+  case "$_a" in
+    --use-herdr) $CLI multiplexer herdr --dir "$ROOT" >/dev/null 2>&1 || { echo "rr: could not record multiplexer=herdr in config - not switching" >&2; exit 1; }; MULTIPLEXER=herdr ;;
+    --use-tmux)  $CLI multiplexer tmux  --dir "$ROOT" >/dev/null 2>&1 || { echo "rr: could not record multiplexer=tmux in config - not switching"  >&2; exit 1; }; MULTIPLEXER=tmux  ;;
   esac
 done
 # Opt-in restart: \`./rr.sh up --restart\` replaces a running session instead of attaching
@@ -596,6 +647,42 @@ sl() {
   printf '%s %s %s %s %s %s %s%s' "$PART" "$sep" "$inbox" "$sep" "$mcp" "$sep" "$pgr" "$upd"
 }
 
+# The same bar for Claude Code's statusLine, in ANSI instead of tmux markup.
+#
+# WHY THIS EXISTS AT ALL: a herdr pane has no tmux status bar, so everything \`sl\` renders
+# disappears for a migrated part. And why it is not just the workspace token: statusLine
+# is POLLED - Claude Code re-runs this command - so the checker is a different process
+# from the thing it checks, and a pager that dies turns the bar red BY ITSELF. A pushed
+# token can only ever be as fresh as the last process that was alive to push it, which is
+# the stale-green shape: the push stops exactly when there is something to report.
+#
+# Written for a bar that is redrawn constantly: unread and MCP are already cached (4s and
+# 20s), and nothing here opens a socket on the render path outside those windows.
+sl_claude() {
+  local sep n inbox mcp pgr seg user_line
+  # Dim separator; the segment stays readable on both light and dark themes because it
+  # only ever uses the terminal's own palette.
+  sep="$(printf '\\033[2m│\\033[0m')"
+  n="$(unread_count)"
+  if [ "\${n:-0}" -gt 0 ] 2>/dev/null; then inbox="$(printf '\\033[33;1minbox %s\\033[0m' "$n")"; else inbox="$(printf '\\033[2minbox 0\\033[0m')"; fi
+  if mcp_online; then mcp="$(printf '\\033[32m●\\033[0m MCP')"; else mcp="$(printf '\\033[31;1m○ !MCP\\033[0m')"; fi
+  if pg_running;  then pgr="$(printf '\\033[32m●\\033[0m Pager')"; else pgr="$(printf '\\033[31;1m○ !Pager\\033[0m')"; fi
+  seg="$(printf '\\033[2m%s\\033[0m %s %s %s %s %s %s' "$PART" "$sep" "$inbox" "$sep" "$mcp" "$sep" "$pgr")"
+
+  # COMPOSE, never replace. The user's own statusLine command (dir/branch/model is a
+  # common one) was saved when we installed ours, and it gets the SAME stdin Claude Code
+  # handed us - it is a JSON document about the session, and a wrapper that ate it would
+  # silently break the thing it wrapped. Overwriting someone's statusline would be the
+  # settings-file version of the session-rename bug: their configuration, quietly gone.
+  if [ -f "$ROOT/.relayroom/statusline.user" ] && [ -s "$ROOT/.relayroom/statusline.user" ]; then
+    local payload
+    payload="$(cat)"
+    user_line="$(printf '%s' "$payload" | sh -c "$(cat "$ROOT/.relayroom/statusline.user")" 2>/dev/null | head -1 || true)"
+    if [ -n "$user_line" ]; then printf '%s %s %s\n' "$user_line" "$sep" "$seg"; return; fi
+  fi
+  printf '%s\n' "$seg"
+}
+
 # What happened to channel delivery on the last launch, in words. Silent when there is
 # nothing to say (no channel launch, or it worked), because a status line that speaks on
 # every run is one nobody reads by the time it matters.
@@ -638,7 +725,91 @@ assert_session_name() {
   exit 1
 }
 
-tx_exists() { tmux has-session -t "=$SESSION" 2>/dev/null; }
+# ── herdr ────────────────────────────────────────────────────────────────────
+# A SECOND MULTIPLEXER, not a replacement. Everything below is reached only when this
+# worktree asked for herdr (config \`multiplexer\`), so a tmux part never executes a line
+# of it - the same rule the pager's backend follows, and the reason a tmux user's
+# behaviour is byte-identical to before.
+#
+# The shell cannot speak herdr's unix socket, so every verb here is one call into the
+# node CLI, which prints \`key=value\` for this script to read. herdr ids are positional
+# and move; the worktree path is the join key everywhere.
+# INTENT, read from config - never from "is a herdr socket present". A machine can run
+# both multiplexers at once, so this is per worktree, and a detection result must never
+# rewrite what the worktree asked for. Absent means tmux.
+MUX="\${MULTIPLEXER:-tmux}"
+herdr_mode() { [ "$MUX" = "herdr" ]; }
+
+# \`usable=... pane=... agent=...\`, or a nonzero exit when herdr cannot be used at all.
+hd_status() { $CLI herdr status --dir "$ROOT" 2>/dev/null; }
+hd_field() { sed -n "s/.*\\b$1=\\([^ ]*\\).*/\\1/p"; }
+
+# Is there a herdr pane for this worktree? The equivalent of tx_exists, and it asks the
+# same question the pager asks when it delivers - by cwd, not by a stored id.
+hd_exists() { [ "$(hd_status | hd_field pane)" != "none" ] && [ -n "$(hd_status | hd_field pane)" ]; }
+hd_agent_running() { [ "$(hd_status | hd_field agent)" = "yes" ]; }
+
+tx_exists() { if herdr_mode; then hd_exists; else tmux has-session -t "=$SESSION" 2>/dev/null; fi; }
+
+# \`up\` for a herdr worktree: ensure the workspace, make sure an agent is in it, start the
+# pager pointed at the socket. Each step CONFIRMS rather than assumes, because every
+# response code in this API has been observed to succeed while doing nothing.
+hd_up() {
+  local st pane agent
+  st="$(hd_status)" || { echo "rr: herdr is not usable here - $st" >&2; return 1; }
+  setup || echo "rr: setup reported a problem - continuing. Run ./rr.sh doctor" >&2
+
+  # --restart means REPLACE. herdr has no respawn: measured, a pane's foreground process
+  # exiting just returns the shell, and there is no pane_start_command to re-run. So the
+  # deterministic replacement is to close the workspace and build it again, which is also
+  # the only way to change launch flags for a running agent.
+  if [ "$RESTART" = "1" ] && hd_exists; then
+    echo "rr: replacing this worktree's herdr pane (--restart)"
+    $CLI herdr close --dir "$ROOT" >/dev/null 2>&1 || true
+    sleep 1
+  fi
+
+  $CLI herdr ensure --dir "$ROOT" --label "$SESSION" || { echo "rr: could not create a herdr workspace" >&2; return 1; }
+  if hd_agent_running; then
+    # SAY WHAT IS BEING SKIPPED. Launch flags are applied when the agent starts, so an
+    # \`up --bypass\` against a pane that already has an agent applies nothing - and the
+    # old message said only that something was running, which reads like success. That
+    # matters most right after a herdr server restart, when the fleet comes back on bare
+    # \`claude --resume\` and the first instinct is to re-run \`up\` with the flags.
+    echo "rr: an agent is already running in this worktree's pane - launch flags from this"
+    echo "    command were NOT applied. Use ./rr.sh up --restart to replace it with one that has them."
+  else
+    prepare_launch
+    echo "starting '$LAUNCH' in this worktree's herdr pane"
+    # The launch is confirmed by watching the pane's processes, never by the response to
+    # send_keys - herdr answers ok to input it delivered nowhere.
+    $CLI herdr launch --dir "$ROOT" "$LAUNCH" || {
+      echo "rr: the command was typed into the pane but no agent process appeared." >&2
+      echo "    The pane is still there - look at it before retrying." >&2
+      return 1
+    }
+  fi
+
+  # Name the agent row. Without this every part in the grouped workspace renders as the
+  # same thing - the workspace label and the repo name are shared by construction, and the
+  # terminal title belongs to Claude Code, which rewrites it as the conversation changes.
+  # Re-applied on every up because the agent record belongs to the terminal, so a relaunch
+  # is a new agent; setting it each time is cheaper than knowing which cases drop it.
+  _nm="$($CLI herdr name "$PART" --agent "$PRIMARY" --dir "$ROOT" 2>/dev/null || true)"
+  case "\${_nm:-}" in
+    named=true*) : ;;
+    # Cosmetic, so it never fails the launch - but silence here is indistinguishable from
+    # success, and the symptom (every part showing the same label) looks like herdr's
+    # doing rather than ours.
+    *) echo "rr: could not name this part's agent row in herdr (\${_nm:-no answer}) - the sidebar will show a shared label" >&2 ;;
+  esac
+
+  # RESTART the pager, same reason as the tmux path: it reads delivery and multiplexer
+  # once at startup, so a pager left from a previous launch would deliver the old way.
+  pg_stop >/dev/null 2>&1 || true; pg_start
+  $CLI herdr focus --dir "$ROOT" >/dev/null 2>&1 || true
+  echo "rr: this part is running under herdr (workspace focused; there is no tmux session to attach)"
+}
 tx_start() {
   if tx_exists; then echo "session '$SESSION' exists - attaching"; tmux attach -t "=$SESSION";
   else
@@ -649,7 +820,26 @@ tx_start() {
     tmux new-session -s "$SESSION" "$LAUNCH"
   fi
 }
-tx_status() { tx_exists && echo "tmux: session '$SESSION' running" || echo "tmux: no session '$SESSION'"; }
+# NAMES THE MULTIPLEXER IT IS TALKING ABOUT. It used to say "tmux:" unconditionally, and
+# once tx_exists learned about herdr that line reported a running tmux session for a part
+# that has no tmux at all - true-sounding and wrong, which is the exact shape this project
+# keeps paying for. A status line that cannot be wrong about which world it is in is worth
+# the extra branch.
+tx_status() {
+  if herdr_mode; then
+    local st
+    st="$(hd_status 2>/dev/null || true)"
+    if [ -z "$st" ] || [ "$(printf '%s' "$st" | hd_field usable)" != "true" ]; then
+      echo "herdr: NOT USABLE here (\${st:-no answer from the socket}) - wakes cannot be delivered"
+    elif hd_exists; then
+      echo "herdr: workspace for this worktree is open (pane $(printf '%s' "$st" | hd_field pane), agent: $(printf '%s' "$st" | hd_field agent))"
+    else
+      echo "herdr: no workspace for this worktree yet - ./rr.sh up creates one"
+    fi
+  else
+    tx_exists && echo "tmux: session '$SESSION' running" || echo "tmux: no session '$SESSION'"
+  fi
+}
 
 # A fingerprint of the config a session reads at startup. Content, not mtime: \`claude mcp
 # add\` rewrites .mcp.json unconditionally and is not ours to fix, so \`up\` running setup
@@ -1045,7 +1235,7 @@ mcp_add() {
   echo "registered relayroom MCP for $a"
   [ "$a" = "claude" ] && report_sibling_worktrees || true
 }
-hooks_install() { $CLI hooks install --agent "$1"; }
+hooks_install() { $CLI hooks install --agent "$1" --dir "$ROOT"; }
 # Fall back to PRIMARY when config names no agent. Everything else already defaults that
 # way (\`PRIMARY="\${AGENT%%,*}"\` then claude), but \`read -ra\` splits an empty string into
 # ZERO words, so setup used to run its loop no times and register nothing - silently, and
@@ -1202,10 +1392,12 @@ doctor() {
 usage() {
   cat <<EOF
 RelayRoom console (part=$PART, session=$SESSION, agent=$AGENT)
-  rr.sh up [--bypass] [--new] [--restart]
+  rr.sh up [--bypass] [--new] [--restart] [--use-herdr|--use-tmux]
                                  auto-update if a newer CLI is out, ensure setup, then
                                  rebuild session + start pager + attach (after reboot).
                                  --restart replaces a session that predates its config
+                                 --use-herdr/--use-tmux switch this worktree's multiplexer
+                                 for good (written to config), then start it
   rr.sh launch [--bypass] [--new]  from INSIDE a session: set delivery + pager + run the agent
   rr.sh reconnect                from INSIDE a session: re-register + replace the session
                                  so it reloads MCP (resumes the same conversation)
@@ -1229,6 +1421,14 @@ case "\${1:-help}" in
   up)
     assert_session_name
     self_update_if_pending "$@"   # auto-update first if the hub flagged a newer CLI (may re-exec)
+    # HERDR TAKES ITS OWN PATH AND RETURNS. Not a branch threaded through the tmux body
+    # below: that body is about tmux sessions, corpses, remain-on-exit and attach, and
+    # herdr has none of those. Measured rather than assumed - a foreground process exiting
+    # leaves the pane on its shell (no corpse to detect), and the SHELL exiting takes the
+    # whole workspace with it (nothing to attach to). Sharing the code would mean teaching
+    # every check about a second world; keeping them apart is what makes "nothing changes
+    # for tmux users" checkable by reading.
+    if herdr_mode; then hd_up "$@"; exit $?; fi
     migrate_session_name          # rename a still-running old-named session to the standard name
     # \`up\` is meant to be the one command that makes a part work, so it ENSURES the
     # registration rather than treating it as a separate ceremony. setup is idempotent
@@ -1404,7 +1604,13 @@ case "\${1:-help}" in
           rm -f "$_hdrs" 2>/dev/null || true
         else rm -f "$_hdrs" 2>/dev/null || true; echo "rr.sh: failed to fetch RELAYROOM.md from $SERVER" >&2; exit 1; fi ;;
     esac ;;
-  statusline) sl ;;
+  statusline)
+    # --claude renders the same facts for Claude Code's statusLine (ANSI, composed with
+    # the user's own command); the bare form stays tmux markup for the tmux bar.
+    case "\${2:-}" in
+      --claude) sl_claude ;;
+      *)        sl ;;
+    esac ;;
   help|-h|--help) usage ;;
   *) usage; exit 1 ;;
 esac
@@ -1465,13 +1671,51 @@ function assertInsideTmux(opts: InitOpts): void {
 }
 
 /**
+ * Running pagers whose --target is `session`, with the part each one serves.
+ *
+ * A pager addresses its agent BY SESSION NAME, so this is not trivia: whoever
+ * renames that session takes the pager's only address away, and the pager keeps
+ * running, keeps its SSE connection, keeps reporting healthy, and delivers
+ * nothing. Read from the process table rather than from any config, because the
+ * question is what a LIVE pager is holding, not what a file says it should be.
+ */
+export function pagersTargeting(session: string): Array<{ pid: string; part: string }> {
+  try {
+    const out = execFileSync("ps", ["-eo", "pid=,args="], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+    const found: Array<{ pid: string; part: string }> = []
+    for (const line of out.split("\n")) {
+      if (!line.includes("relayroom-pager.mjs")) continue
+      const m = /^\s*(\d+)\s+(.*)$/.exec(line)
+      if (!m) continue
+      const args = m[2]
+      const tgt = /--target\s+(\S+)/.exec(args)?.[1]
+      if (tgt !== session) continue
+      found.push({ pid: m[1], part: /--part\s+(\S+)/.exec(args)?.[1] ?? "?" })
+    }
+    return found
+  } catch { return [] }
+}
+
+/**
  * When init runs inside the agent's tmux session, rename that session to `target`
  * (the standard RR-<slug>-<part> name) if it differs - so a naming change applies
  * with no manual `tmux rename-session`. Best-effort: skipped when not in tmux, the
  * name already matches, tmux is unavailable, or a session named `target` already
  * exists (never clobber a different session).
+ *
+ * REFUSES to rename a session another part's pager is addressing. "init runs inside
+ * the agent's own session" is an assumption, not a fact: init for part B run from
+ * inside part A's session used to rename A's session to B's name, and A's pager -
+ * which had A's old name as its --target - went silent from that instant, with no
+ * error anywhere and every health signal still green. Measured on this machine: a
+ * stage-3 scratch init inside a live part's session cut that part's wakes off until
+ * a human noticed the missing replies and renamed it back. The `part` argument is
+ * what separates "renaming my own session" from "stealing someone else's".
  */
-function alignTmuxSessionName(target: string): void {
+function alignTmuxSessionName(target: string, part: string): void {
   if (!process.env.TMUX) return
   try {
     const current = execFileSync("tmux", ["display-message", "-p", "#S"], {
@@ -1479,6 +1723,22 @@ function alignTmuxSessionName(target: string): void {
       stdio: ["ignore", "pipe", "ignore"],
     }).trim()
     if (!current || current === target) return
+
+    // Someone else's pager is listening on this name. Renaming would mute it, so
+    // say so and leave both alone - a session that has to be renamed by hand is a
+    // far cheaper outcome than a part that stops receiving wakes silently.
+    const strangers = pagersTargeting(current).filter((p) => p.part !== part)
+    if (strangers.length > 0) {
+      const who = strangers.map((p) => `${p.part} (pid ${p.pid})`).join(", ")
+      console.log(
+        `NOT renaming tmux session '${current}' -> '${target}': a pager for ${who} is ` +
+        `addressing '${current}' and would stop delivering wakes to it. ` +
+        `You are probably running init for '${part}' from inside another part's session; ` +
+        `open a session for '${part}' instead, or rename by hand once that pager is stopped.`,
+      )
+      return
+    }
+
     // A session already named `target` means renaming would collide - leave both be.
     try {
       execFileSync("tmux", ["has-session", "-t", `=${target}`], { stdio: "ignore" })
@@ -1486,6 +1746,14 @@ function alignTmuxSessionName(target: string): void {
     } catch { /* no such session - the name is free */ }
     execFileSync("tmux", ["rename-session", "-t", `=${current}`, target], { stdio: "ignore" })
     console.log(`renamed tmux session: ${current} -> ${target}`)
+    // Our OWN pager, if it is running, still holds the old name. It would keep
+    // running and deliver nothing, so name the one command that fixes it.
+    if (pagersTargeting(current).length > 0) {
+      console.log(
+        `  this part's pager is still addressing '${current}' - run ./rr.sh pager restart, ` +
+        `or it will keep running and deliver nothing`,
+      )
+    }
   } catch { /* tmux not available - leave the session name as-is */ }
 }
 
@@ -1611,7 +1879,7 @@ export async function init(opts: InitOpts): Promise<void> {
   // without recreating the session. Best-effort: no tmux, or a name clash with an
   // existing target session, is silently skipped (rr.sh's migrate step is the
   // from-outside equivalent).
-  if (target) alignTmuxSessionName(target)
+  if (target && part) alignTmuxSessionName(target, part)
 
   // rr.sh control console: one entry point for tmux + pager + per-CLI setup, so a
   // reboot is just `./rr.sh up`. Lives at the worktree ROOT next to RELAYROOM.md

@@ -54,6 +54,26 @@ export interface RelayRoomConfig {
    * wakes slightly less precisely beats a part that does not wake at all.
    */
   channel?: boolean
+  /**
+   * WHICH MULTIPLEXER this worktree asked for: "tmux" (default) or "herdr".
+   *
+   * INTENT, and deliberately not the same field as whatever was detected at launch. The
+   * pair `channel`/`delivery` exists for the same reason one release earlier: a single
+   * field carrying both "what was asked for" and "what is running" cannot represent the
+   * state where they disagree, so the disagreement gets written down as a normal value
+   * and every reader agrees with it. That shape cost a four-part project every wake it
+   * should have received.
+   *
+   * Absent means tmux. Every part running today is on tmux, and a default that flipped
+   * them the moment a herdr socket appeared on the machine would move the fleet onto a
+   * path nobody chose - a machine can run both at once, so this is per worktree.
+   *
+   * A part that asks for herdr and cannot have it (no socket, or a server older than the
+   * client understands) falls back to tmux delivery and SAYS SO in the pager log. It does
+   * not rewrite this field: the request stays on record and works the moment herdr is
+   * back.
+   */
+  multiplexer?: "tmux" | "herdr"
   /** Wake delivery path for the primary agent. "channel" => Claude Code Channels
    *  (the pager skips send-keys; the channel server pushes notifications). "headless"
    *  => the pager spawns the part's CLI (codex/agy) once per wake instead of typing

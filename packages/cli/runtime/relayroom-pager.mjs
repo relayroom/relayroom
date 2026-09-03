@@ -33,6 +33,8 @@ import { basename, join } from "node:path"
 // are unit-testable and so peer/server-controlled subject/fromPart can never carry a
 // control byte (e.g. \r => Enter) into `tmux send-keys -l`. See pager-text.mjs.
 import { buildText } from "./pager-text.mjs"
+import { herdrAgentName, herdrCall, herdrSocketPresent, handshake } from "./herdr-client.mjs"
+import { makeHerdrBackend } from "./pager-herdr.mjs"
 // Headless delivery (delivery=headless, codex/agy only): spawn the part's CLI per wake
 // instead of tmux send-keys. Pure spec/prompt builders live in a testable sibling module.
 import { buildHeadlessPrompt, headlessSpawnSpec, makeWakeDedup } from "./pager-headless.mjs"
@@ -79,6 +81,16 @@ const HEARTBEAT_MS = 30000
 // the pager keeps SSE + lease + heartbeat but the delivery step is a process spawn.
 const DELIVERY = arg("delivery", CFG.delivery ?? "pager")
 const HEADLESS = DELIVERY === "headless"
+// WHICH MULTIPLEXER THIS PART ASKED FOR - intent, not measurement, and the two are kept
+// apart for the reason 0.7.0 had to learn: a single field carrying both means the state
+// where they disagree cannot be written down, so a detection failure silently rewrites
+// the user's choice. `multiplexer` is what the worktree asked for; MUX_ACTIVE below is
+// what this process actually found and is using.
+//
+// Absent means tmux. Every part running today is on tmux, and a default that flipped
+// them to herdr because a socket happens to exist on the machine would move the whole
+// fleet onto an untested path without anyone choosing it.
+const MULTIPLEXER = arg("multiplexer", CFG.multiplexer ?? "tmux")
 // The CLI to spawn under headless delivery (config.agent's primary entry). codex/agy only.
 const AGENT_CLI = arg("agent-cli", String(CFG.agent ?? "").split(",")[0].trim())
 // Cap one headless wake so a hung/looping child can't pin the single-flight flush forever.
@@ -112,9 +124,12 @@ const SUBMIT_DELAY_MS = (() => {
 // can never claim a lease, so it would fail-closed forever (or, with the backoff
 // re-queue, spin). Require CODE so that can't happen.
 // TARGET is required for the tmux paths (pager/channel) but NOT for headless, which
-// spawns a CLI instead of typing into a pane. Headless instead needs a supported AGENT_CLI.
-if (!CODE || !PART || (!HEADLESS && !TARGET)) {
-  console.error("usage: node relayroom-pager.mjs --code <connect_code> --part <part> --target <tmux-target> [--server url] [--debounce ms] [--token bearer] [--retries K]")
+// spawns a CLI instead of typing into a pane, and NOT for herdr, whose pane is resolved
+// by the worktree cwd rather than named in config - a herdr pane id moves when workspaces
+// are reordered, so storing one would be storing a value that goes stale on its own.
+// Headless instead needs a supported AGENT_CLI.
+if (!CODE || !PART || (!HEADLESS && MULTIPLEXER !== "herdr" && !TARGET)) {
+  console.error("usage: node relayroom-pager.mjs --code <connect_code> --part <part> --target <tmux-target> [--multiplexer tmux|herdr] [--server url] [--debounce ms] [--token bearer] [--retries K]")
   process.exit(1)
 }
 if (HEADLESS && !headlessSpawnSpec(AGENT_CLI, {})) {
@@ -337,6 +352,46 @@ async function sendKeysOnce(text) {
   return await retryTmux(["send-keys", "-t", TARGET, "Enter"])
 }
 
+// ── delivery backend ────────────────────────────────────────────────────────
+// Two multiplexers, one flush loop. The three questions the loop asks - is the agent
+// there, may I type now, deliver this - are the entire interface.
+//
+// THE TMUX BACKEND IS THE FUNCTIONS ABOVE, not a reimplementation of them. That is
+// deliberate and is the acceptance condition for this change: a tmux part must behave
+// byte-for-byte as it did before the abstraction existed, so the tmux path is the same
+// code reached through one more object property. If a future change needs to touch both
+// backends to work, the abstraction is in the wrong place.
+const tmuxBackend = {
+  describe: () => `tmux(${TARGET})`,
+  agentPresent,
+  waitUntilQuiet,
+  deliver: (text) => sendKeysOnce(text),
+}
+
+// Chosen once, at startup, and reported. `MULTIPLEXER` is the intent; this is what was
+// found. A part that asked for herdr and cannot have it falls back to tmux LOUDLY - the
+// alternative is a pager that looks healthy and delivers nothing, which is the failure
+// this whole feature exists downstream of.
+let MUX_ACTIVE = "tmux"
+let deliveryBackend = tmuxBackend
+
+async function selectBackend() {
+  if (MULTIPLEXER !== "herdr") return
+  if (!herdrSocketPresent()) {
+    log("multiplexer=herdr requested, but no herdr socket is present - falling back to tmux delivery")
+    return
+  }
+  const shake = await handshake()
+  if (!shake.ok) {
+    log(`multiplexer=herdr requested, but ${shake.reason} - falling back to tmux delivery`)
+    return
+  }
+  if (shake.protocolNote) log(`herdr: ${shake.protocolNote}`)
+  deliveryBackend = makeHerdrBackend({ call: herdrCall, worktreePath: DIR, part: PART, log })
+  MUX_ACTIVE = "herdr"
+  log(`multiplexer=herdr (server ${shake.version}, protocol ${shake.protocol}) - delivering over the socket`)
+}
+
 // ── Headless delivery (codex/agy) ─────────────────────────────────────────────
 // Instead of typing into a tmux pane, spawn the part's CLI once for this wake so it
 // reads/handles its inbox via the RelayRoom MCP tools and exits. Subscription-covered
@@ -459,11 +514,11 @@ async function flush() {
 
       // 2) Don't type into a bare shell (agent exited). Re-queue (the agent usually
       //    comes back); the active wake won't be re-issued by the sweep meanwhile.
-      if (!(await agentPresent())) { requeue(batch, "target is a bare shell (agent exited)"); break }
+      if (!(await deliveryBackend.agentPresent())) { requeue(batch, "target is a bare shell (agent exited)"); break }
 
       // 3) Hold until the pane is quiet (no active typing / streaming / copy-mode).
       //    This can wait up to DEFER_MAX_MS, so the lease/wake/agent may change.
-      await waitUntilQuiet()
+      await deliveryBackend.waitUntilQuiet()
 
       // 4) Re-validate the lease AFTER the defer: if the wake was settled (caught up)
       //    or another pager took the part while we waited, do NOT inject a stale nudge.
@@ -481,17 +536,20 @@ async function flush() {
 
       // 5) The agent may have exited DURING the defer - re-check before injecting so
       //    we never type a nudge into a bare shell.
-      if (!(await agentPresent())) { requeue(batch, "agent exited during defer"); break }
+      if (!(await deliveryBackend.agentPresent())) { requeue(batch, "agent exited during defer"); break }
 
       // 6) Deliver, then fence the wake pending -> delivered with the re-claimed wakeId.
-      const ok = await sendKeysOnce(buildText(batch, wakeId, PART))
+      const ok = await deliveryBackend.deliver(buildText(batch, wakeId, PART), wakeId)
       if (ok) {
         retries = 0
-        log(`nudged ${TARGET}: ${batch.length} msg`)
+        log(`nudged ${deliveryBackend.describe()}: ${batch.length} msg`)
         await wake.reportDelivered(wakeId)
       } else {
-        // tmux send failed after its own retries -> transient; re-queue with backoff.
-        requeue(batch, "send-keys failed"); break
+        // Delivery failed or deferred -> transient; re-queue with backoff. Under herdr a
+        // false here can mean "the text never reached the input box", which is a DEFER:
+        // nothing was submitted and no dialog was answered, so re-queuing is correct
+        // rather than a retry of something half-done.
+        requeue(batch, `${MUX_ACTIVE} delivery failed`); break
       }
     }
   } finally {
@@ -503,13 +561,38 @@ async function flush() {
 // Heartbeat: keep the agent's last-seen fresh on the dashboard and report
 // whether RELAYROOM.md is present in the worktree. Connect-code only (the legacy
 // project-slug path has no heartbeat endpoint). Best-effort; never throws.
+/** Open-unread count for this part, or null when the hub could not be asked. The null
+ *  is the point: a status surface that turns "we do not know" into 0 is the one that
+ *  reports calm during an outage. */
+async function unreadCount() {
+  if (!CODE) return null
+  try {
+    const res = await fetch(`${SERVER}/mcp/${encodeURIComponent(CODE)}/unread?part=${encodeURIComponent(PART)}`, {
+      headers: wake.authHeaders({}),
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    })
+    if (!res.ok) return null
+    const json = await res.json().catch(() => null)
+    return typeof json?.count === "number" ? json.count : null
+  } catch { return null }
+}
+
 async function heartbeat() {
   if (!CODE) return
   try {
     const res = await fetch(`${SERVER}/mcp/${encodeURIComponent(CODE)}/heartbeat`, {
       method: "POST",
       headers: wake.authHeaders({ "content-type": "application/json" }),
-      body: JSON.stringify({ part: PART, holder: HOLDER, host: hostname(), relayroomMd: existsSync(join(DIR, "RELAYROOM.md")), version: VERSION }),
+      // `multiplexer` carries BOTH halves and keeps them apart: what this worktree asked
+      // for, and what selectBackend() actually found. They disagree exactly when the herdr
+      // socket was unreachable and delivery fell back to tmux - wakes still arrive, but not
+      // the way the part was configured, and that is a state the hub cannot see from either
+      // value alone.
+      body: JSON.stringify({
+        part: PART, holder: HOLDER, host: hostname(),
+        relayroomMd: existsSync(join(DIR, "RELAYROOM.md")), version: VERSION,
+        multiplexer: { intent: MULTIPLEXER, active: MUX_ACTIVE },
+      }),
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     })
     // A rejected heartbeat is silent otherwise: presence, the status color, the lease
@@ -525,6 +608,19 @@ async function heartbeat() {
       const json = await res.json().catch(() => ({}))
       // leaseHeld:false => another pager took over; stop nudging until next claim.
       if (typeof json.leaseHeld === "boolean") leaseHeld = json.leaseHeld
+      // herdr has no tmux status bar to hang `inbox: N` off, so the count goes onto the
+      // workspace as display-only metadata instead. Read from the SAME endpoint the tmux
+      // status line reads, so the two surfaces cannot disagree about the number, and only
+      // written when the hub actually answered - `null` here means "we could not ask",
+      // which must not render as "nothing waiting".
+      if (MUX_ACTIVE === "herdr" && typeof deliveryBackend.reportInbox === "function") {
+        deliveryBackend.reportInbox(await unreadCount()).catch(() => {})
+        // And put this part's name back if a herdr server restart took it. The pager is
+        // the guarantee rather than the `[[startup]]` plugin hook, which fires earlier
+        // but is an optional install - a plugin-only repair would leave every
+        // non-plugin user with a sidebar that decays on each restart.
+        deliveryBackend.assertName?.(herdrAgentName(AGENT_CLI, PART)).catch(() => {})
+      }
       // CLI update nudge: persist the latest npm version (or clear it) so rr.sh's
       // status line can show a `↑<ver>` marker. The hub decides updateAvailable by
       // comparing our reported version against npm.
@@ -595,9 +691,14 @@ function setupStatusBar() {
 }
 
 async function main() {
+  // Before anything can be delivered, decide what we are delivering THROUGH. Awaited,
+  // not fired and forgotten: a wake arriving in the gap would otherwise be sent through
+  // the tmux backend by a part that asked for herdr.
+  await selectBackend()
   // Headless delivery has no tmux pane, so skip status-bar wiring; heartbeat still runs
   // (it is the presence signal for a headless part, and skips its own tmux paint below).
-  if (!HEADLESS) setupStatusBar()
+  // The status bar is tmux's; under herdr there is nothing to paint yet (stage 4).
+  if (!HEADLESS && MUX_ACTIVE === "tmux") setupStatusBar()
   heartbeat()
   setInterval(heartbeat, HEARTBEAT_MS)
   // Channel delivery: a Claude Channels server owns wakes. Keep heartbeat/statusline
@@ -609,7 +710,7 @@ async function main() {
   if (HEADLESS) {
     log(`delivery=headless for part=${PART} → wakes spawn \`${AGENT_CLI}\` (server ${SERVER}); no tmux/send-keys`)
   } else {
-    log(`watching part=${PART}${CODE ? "" : ` project=${PROJECT}`} -> tmux ${TARGET} (server ${SERVER})`)
+    log(`watching part=${PART}${CODE ? "" : ` project=${PROJECT}`} -> ${deliveryBackend.describe()} (server ${SERVER})`)
   }
   for (;;) {
     try {
