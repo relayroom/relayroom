@@ -1,5 +1,13 @@
 # @relayroom/shared
 
+## 0.8.0
+
+### Patch Changes
+
+- The usage report prices Claude Opus 5, Fable 5 and Mythos 5. Until now the model doing most of the work had no entry in the price table, so its tokens were counted and its cost was zero - 86% of spend on one project showed as no cost at all. A model that is still missing from the table is now named in a warning on stderr rather than priced silently at nothing.
+
+  RELAYROOM.md gains a section on processes an agent backgrounds from its shell: a child must carry its own end (`timeout`), because a cleanup line at the bottom of a script only runs if the parent gets there. A load test that did not follow this left busy-loops burning twenty cores for nine days.
+
 ## 0.7.0
 
 ### Minor Changes

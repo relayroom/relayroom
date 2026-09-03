@@ -4,6 +4,102 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.8.0] - 2026-09-03
+
+Minor release. **herdr is now a first-class multiplexer next to tmux.** For a tmux user
+nothing changes: a worktree that never asked for herdr stays on tmux, and an `rr.sh` written
+by an earlier release keeps working as it did. Migration 0024 adds two nullable columns and
+touches no rows.
+
+### Added
+
+**herdr as a multiplexer.** A part can run in a [herdr](https://herdr.dev) pane and receive
+its wakes over herdr's socket, with the session lifecycle, the status surfaces and `up` all
+working there. It is a per-worktree choice, not a migration: `./rr.sh up --use-herdr`
+switches a worktree to herdr for good, `./rr.sh up --use-tmux` switches it back, and the
+choice is written to `.relayroom/config.json` as `multiplexer`. A worktree with no such field
+is tmux. `up` does not detect that it is being run inside a herdr pane; only the flag
+switches.
+
+Wake delivery over herdr stages the text, verifies it reached the input box, and only then
+submits, because herdr's `agent.prompt` was measured answering a permission dialog on the
+user's behalf. When the pane is holding a dialog nothing is submitted and nothing is
+answered: the wake stays queued, a notification says so once per blocked stretch, and the
+workspace is marked while it lasts.
+
+**The status bar inside a herdr pane** comes back as a Claude Code `statusLine` (part,
+inbox, MCP, pager). It composes with a statusLine you already have, including one set in
+`~/.claude/settings.json`, rather than replacing it. Each part also gets its own name in
+herdr's agent list, since a grouped workspace otherwise shows every part under the same
+label.
+
+**The connect guide offers tmux or herdr** and generates the right setup for whichever is
+picked. The herdr setup is a single block, because herdr creates its own workspace and there
+is no session to make first; leaving the tmux block in place would have created a session
+nothing goes on to use. The selector records what you are about to ask for; it is never
+shown as the part's state.
+
+**A part shows which multiplexer it is actually delivering through.** The value is measured
+by the part's own pager and reported on its heartbeat, never taken from the connect dialog:
+a worktree can ask for herdr, find none running, and fall back to tmux, and that
+disagreement is exactly what the badge shows, as degraded rather than broken, because wakes
+still arrive. A part that fell back to tmux and has no tmux session either used to look
+healthy, since liveness and delivery are separate paths inside the pager; it is now detected
+from a wake the pager leased and never reported delivering. Nothing renders as healthy: a
+part with no stuck wake may simply be one nothing has been sent to, and a pager older than
+this release reports nothing at all. Both are shown as what they are.
+
+### Changed
+
+**An option `up` or `launch` does not know is an error**, naming the flag and telling you to
+regenerate the script. Earlier generations of `rr.sh` picked out the flags they recognised
+and dropped the rest silently, so `./rr.sh up --use-herdr` on an old script started a tmux
+session and said nothing. The copies already written cannot be fixed; `grep multiplexer
+.relayroom/config.json` tells you whether a switch actually happened.
+
+**The hub records which multiplexer is delivering, separately from the one asked for.** The
+pager reports both on every heartbeat and migration 0024 stores them per part. A pager that
+predates this release reports neither, and both columns stay null: "not reported", which is
+not the same fact as tmux.
+
+**RELAYROOM.md** gains a section on processes an agent backgrounds from its shell: a child
+must carry its own end, because a cleanup line at the bottom of a script only runs if the
+parent gets there. A load test that did not follow this left busy-loops burning twenty cores
+for nine days.
+
+### Fixed
+
+**The usage report prices Claude Opus 5, Fable 5 and Mythos 5.** The model doing most of the
+work had no entry in the price table, so its tokens were counted and its cost was zero; on
+one project 86% of spend showed as no cost at all. A model still missing from the table is
+now named in a warning on stderr rather than priced silently at nothing.
+
+### Migrations
+
+**0024** adds `multiplexer_intent` and `multiplexer_active` to the agent table, nullable, no
+default, no data change. Apply the hub before upgrading any pager: the heartbeat sends the
+new fields as soon as the CLI is updated, and the columns have to exist to receive them.
+
+### Upgrading
+
+In this order, because each step is a different process on a different release cycle:
+
+1. Upgrade the hub (server + migration 0024).
+2. `npm i -g @relayroom/cli`
+3. In each worktree, `./rr.sh update --self` - the new flags exist only in an `rr.sh`
+   written by this release.
+4. `./rr.sh up --use-herdr` where you want herdr. Skip this step and nothing changes.
+
+**After the herdr server itself restarts**, a part started with `--bypass` needs
+`./rr.sh up --restart`. herdr restores the layout and brings each agent back on its own
+conversation, which is why this is easy to miss: the parts look fine, but the restored
+command is a bare `claude --resume <id>`, so a part started with `--bypass` comes back
+without it and stalls on the first permission prompt. A plain `./rr.sh up` will not fix it,
+and says so. Note what `--restart` costs: it relaunches with `--continue`, which picks the
+most recently touched conversation in the project rather than the exact session herdr had
+just restored. The sidebar name is dropped by the same restart and the pager puts it back on
+its own.
+
 ## [0.7.0] - 2026-08-05
 
 Minor release, and a breaking one. **Migration 0023 deletes rows.** Project knowledge is now
