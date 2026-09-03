@@ -86,12 +86,15 @@ export default async function ThreadsPage({ params, searchParams }: Props) {
 
   return (
     <div className="py-6 px-4 xs:px-6 space-y-4 max-w-6xl mx-auto">
-      <div className="flex items-center justify-between gap-4">
+      {/* `flex-wrap` because the right-hand group cannot shrink past the search
+          box's fixed width: measured at 480px the row ran 33px past the viewport.
+          Wrapping puts the controls on their own line instead of widening the page. */}
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <h2 className="text-base font-semibold">{t("threads.pageTitle")}</h2>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-1 flex-wrap items-center justify-end gap-2">
           <NewThreadButton slug={slug} projectId={project.id} agents={agentTargets} />
           {/* Search - client side would be ideal, but server works with form submit */}
-          <form method="GET" action={`/projects/${slug}/threads`} className="flex gap-2">
+          <form method="GET" action={`/projects/${slug}/threads`} className="flex min-w-0 flex-1 gap-2 xs:flex-none">
           {statusFilter && <input type="hidden" name="status" value={statusFilter} />}
           {agentId && <input type="hidden" name="agent" value={agentId} />}
           <input
@@ -99,7 +102,7 @@ export default async function ThreadsPage({ params, searchParams }: Props) {
             name="q"
             defaultValue={q}
             placeholder={t("threads.searchPlaceholder")}
-            className="h-8 w-56 rounded-md border border-border bg-background px-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-foreground/20"
+            className="h-8 w-full min-w-0 xs:w-56 rounded-md border border-border bg-background px-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-foreground/20"
           />
           </form>
         </div>
@@ -112,8 +115,13 @@ export default async function ThreadsPage({ params, searchParams }: Props) {
         </div>
       )}
 
-      {/* Status filter tabs */}
-      <div className="flex gap-1 border-b border-border">
+      {/* Status filter tabs.
+          `overflow-x-auto` because these links are `whitespace-nowrap` and there
+          are six of them: measured at 480px they ran 33px past the viewport and
+          the whole page scrolled sideways. The knowledge and proposals filters
+          are the same strip and already had it - this one is the copy that did
+          not, which is why the bug showed up here and nowhere else. */}
+      <div className="flex gap-1 overflow-x-auto border-b border-border">
         {STATUS_TAB_KEYS.map((key) => {
           const active =
             key === activeStatus ||

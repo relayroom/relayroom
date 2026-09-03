@@ -52,7 +52,7 @@ export function TelemetryConsentBanner() {
 
   return (
     <div className="rounded-lg border border-border bg-muted/40 p-4 sm:flex sm:items-center sm:gap-4">
-      <div className="flex flex-1 items-start gap-3">
+      <div className="flex min-w-0 flex-1 items-start gap-3">
         <div className="mt-0.5 hidden shrink-0 rounded-md bg-background p-2 sm:block">
           <BarChart3Icon className="h-4 w-4 text-muted-foreground" />
         </div>
@@ -70,7 +70,13 @@ export function TelemetryConsentBanner() {
         </div>
       </div>
 
-      <div className="mt-3 flex shrink-0 items-center gap-2 sm:mt-0">
+      {/* `shrink-0` made this 554px row unshrinkable, so at 700px the banner ran
+          51px past the viewport and the whole dashboard scrolled sideways.
+          Dropping shrink-0 is the half that matters: `flex-wrap` alone changed
+          nothing, because a row that is never squeezed never has a reason to
+          wrap. Without it the row can narrow, and then wrapping puts the buttons
+          on a second line instead of widening the page. */}
+      <div className="mt-3 flex flex-wrap items-center justify-end gap-2 sm:mt-0">
         <Button
           type="button"
           size="sm"

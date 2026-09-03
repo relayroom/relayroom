@@ -22,9 +22,13 @@ export default async function OrganizationsPage() {
 
   return (
     <div className="py-6 px-4 xs:px-6 space-y-6 max-w-6xl mx-auto">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-4">
-        <div>
+      {/* Header.
+          `flex-wrap` because the button is `shrink-0` and its label is long:
+          measured at 414px the 230px button ran 22px past the viewport and the
+          page scrolled sideways. `min-w-0` lets the title column give up space
+          first, so the two only stack once that is not enough. */}
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="min-w-0">
           <h1 className="text-2xl font-bold tracking-tight">{t("list.pageTitle")}</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             {t("list.pageDescription")}
