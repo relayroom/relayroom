@@ -135,7 +135,12 @@ export default async function AgentDetailPage({ params, searchParams }: Props) {
         <div className="flex items-start gap-4">
           <AgentAvatar color={agent.color} icon={agent.icon} seed={agent.part} size="lg" />
           <div className="flex-1 min-w-0 space-y-3">
-            <div className="flex items-center gap-2">
+            {/* `min-w-0` so the part name can shrink: a part name is operator-chosen
+                and unbroken, and at 375px a 71-character one ran 54px past the
+                card. The name itself breaks (`break-all` in AgentEditForm) rather
+                than being truncated, because it is the identity of the thing on
+                screen and a clipped one cannot be read or copied. */}
+            <div className="flex min-w-0 items-center gap-2">
               <AgentEditForm agentId={agent.id} part={agent.part} nickname={agent.nickname} badge={agent.badge} />
               {isMain && <MainAgentBadge />}
             </div>

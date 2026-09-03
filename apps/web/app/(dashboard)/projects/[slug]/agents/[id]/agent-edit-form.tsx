@@ -78,7 +78,7 @@ export function AgentEditForm({ agentId, part, nickname, badge }: AgentEditFormP
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-1">
           <div className="flex items-baseline gap-2 flex-wrap">
-            <span className="text-2xl font-bold font-mono">{part}</span>
+            <span className="min-w-0 break-all text-2xl font-bold font-mono">{part}</span>
             {nickname && <span className="text-base text-muted-foreground">{nickname}</span>}
           </div>
           {badge && <p className="text-sm text-muted-foreground">{badge}</p>}

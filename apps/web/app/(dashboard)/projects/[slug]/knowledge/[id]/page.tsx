@@ -113,7 +113,7 @@ export default async function KnowledgeDetailPage({ params }: Props) {
           </Badge>
           {/* Wrapped, not truncated. The list clips a title to keep rows scannable;
               clipping it here too would leave nowhere to read it in full. */}
-          <h1 className="min-w-0 flex-1 text-base font-semibold leading-6">{entry.title}</h1>
+          <h1 className="min-w-0 flex-1 break-words text-base font-semibold leading-6">{entry.title}</h1>
           <Badge variant={stateVariant(entry.validationState)} className="mt-0.5 shrink-0 text-xs">
             {t(`knowledge.state${titleKey(entry.validationState)}` as Parameters<typeof t>[0])}
           </Badge>
@@ -127,8 +127,12 @@ export default async function KnowledgeDetailPage({ params }: Props) {
         <h2 className="text-xs font-semibold text-muted-foreground">
           {t("knowledge.detailBodyTitle")}
         </h2>
-        {/* No clamp. This is the screen that exists so the list is allowed to have one. */}
-        <p className="whitespace-pre-wrap text-sm leading-6">{entry.body}</p>
+        {/* No clamp. This is the screen that exists so the list is allowed to have one.
+            `break-words` because `whitespace-pre-wrap` only breaks at whitespace,
+            and a lesson quoting a token, URL or stack frame has runs with none:
+            measured, a 308-character token pushed this page 1608px wide at a
+            1440px viewport, so it was not a narrow-screen problem at all. */}
+        <p className="whitespace-pre-wrap break-words text-sm leading-6">{entry.body}</p>
       </section>
 
       <section className="space-y-2">
