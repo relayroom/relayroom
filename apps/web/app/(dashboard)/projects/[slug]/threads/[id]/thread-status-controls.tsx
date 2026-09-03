@@ -64,7 +64,11 @@ export function ThreadStatusControls({ threadId, status, slug }: ThreadStatusCon
   return (
     <>
       {confirmDialog}
-      <div className="flex items-center gap-2">
+      {/* `flex-wrap` because these three buttons are one flex item to the row
+          above, and that row already wraps: dropping onto its own line still left
+          a 458px group in a 417px column, so it ran 41px past the viewport at
+          480px. Wrapping has to happen where the buttons are, not one level up. */}
+      <div className="flex flex-wrap items-center justify-end gap-2">
         {s !== "answered" && (
           <Button
             variant="outline"
