@@ -155,6 +155,35 @@ nudge with that same wake id, just re-check the inbox and finish quickly with
 idempotent, so under at-least-once delivery a duplicate nudge converges instead
 of fanning out into extra billed turns.
 
+## Background processes you start in the shell
+
+**Anything you launch with \`&\` must know how to end without you.** Your shell can
+exit for reasons you did not plan - a \`timeout\`, a pipe closing, the turn ending -
+and a cleanup line at the bottom of the script only runs if you reach it.
+
+This is not hypothetical. A load test here backgrounded 24 busy-loops to saturate a
+machine's cores, and ended with \`kill $HOGS\`. The parent exited before that line;
+the loops were adopted by init and **burned 20 cores for nine days** computing
+nothing. The measurement it was for was sound and its answer was correct. Only the
+cleanup failed, and nothing reported it: no test, no alert, no error. Someone
+eventually looked at \`ps\`.
+
+So: **give the child its own end, do not give the parent a duty.**
+
+\`\`\`sh
+timeout 60 sh -c 'while :; do :; done' &   # ends on its own, however you exit
+(while :; do :; done) &                    # outlives you if you never reach kill
+\`\`\`
+
+\`trap 'kill $PIDS' EXIT INT TERM\` covers more exits than a final line, but not
+\`SIGKILL\` and not a parent that dies mid-pipe. Prefer a bound the child enforces.
+A daemon meant to outlive you (a pager, a watcher) is the same rule seen from the
+other side: it survives on purpose, so it needs its own stop condition, not yours.
+
+**And check afterwards.** \`ps -eo pid,etime,pcpu,args --sort=-pcpu | head\` costs a
+second. A process nobody is looking at is the one kind of failure that never
+announces itself.
+
 ## Project knowledge (recall / learn / close)
 
 The project accumulates what it has learned - conventions, pitfalls, decisions -
