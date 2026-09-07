@@ -4,6 +4,37 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.8.2] - 2026-09-07
+
+Patch release. No migration.
+
+### Fixed
+
+**`./rr.sh up` run from inside the worktree's own herdr pane now launches the agent instead
+of detecting itself.** From a shell in the pane herdr had given him, a user ran
+`./rr.sh up --bypass --use-herdr` and got two lines that cannot both be true: "an agent is
+already running in this worktree's pane" and "could not name this part's agent row (agent
+target not found)". The pane held nothing but `zsh`. The agent check asked "is there a
+foreground process here that is not a shell", and when `up` runs inside the pane, the
+process it finds is the CLI asking the question. "Run it from another pane" was not a
+workaround either: `rr.sh` cd's to the worktree root, so the caller's pane matched the
+worktree-path search too.
+
+Both checks are now made on process identity: a pane whose foreground process group is the
+caller's own, or that holds the caller or one of its ancestors, is not evidence of an agent
+and never wins the pane search against a real one. The caller's own pane is still the right
+answer when its shell sits in the worktree, which is the normal way to run this.
+
+**A launch into the pane you are typing in is reported as `deferred`, not as started.** The
+shell only reads the queued command once `up` exits, so `up` says the command is queued and
+will start when it finishes, and leaves the sidebar naming to the pager rather than
+reporting a failure to name an agent that has not started yet. Measured before it was
+relied on: a process that types into its own pane does have its command run, right after
+it exits.
+
+If you hit the old behaviour, nothing is stuck: the pane is unchanged, and re-running `up`
+after upgrading launches normally.
+
 ## [0.8.1] - 2026-09-07
 
 Patch release. No migration.
