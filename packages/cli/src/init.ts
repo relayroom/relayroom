@@ -2,7 +2,7 @@ import { chmodSync, existsSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { execFileSync } from "node:child_process"
 import { join, resolve } from "node:path"
 import { DEFAULT_SERVER } from "./constants"
-import { RELAYROOM_DIR, writeConfig, readConfig } from "./config"
+import { RELAYROOM_DIR, writeConfig, readConfig, type RelayRoomConfig } from "./config"
 import { runtimePath } from "./runtime"
 
 /**
@@ -1644,27 +1644,83 @@ export interface InitOpts {
   reference?: boolean
   /** false to skip the "must be inside tmux" guard (commander --no-tmux-check). */
   tmuxCheck?: boolean
+  /** Which multiplexer this worktree will run under. Written to config at init time,
+   *  and the reason the tmux guard can be answered truthfully rather than bypassed. */
+  multiplexer?: "tmux" | "herdr"
+  /** Re-point a worktree that is already registered as a different part/agent. */
+  force?: boolean
 }
 
 /**
- * The pager wakes the agent by sending keystrokes to its tmux pane, so the agent
- * (and this setup) must run inside tmux. Block early with guidance unless the
- * caller explicitly bypassed the check. Returns when it is safe to proceed.
+ * The pager wakes the agent by typing into its pane, so `init` checks that there IS such
+ * a pane. Under tmux that means running inside a session; under herdr it means nothing at
+ * all, because herdr addresses a pane by the worktree path and does not need this process
+ * to be inside anything.
+ *
+ * THE GUARD USED TO ASK THE WRONG QUESTION. It tested for tmux unconditionally, and the
+ * only way past it was `--no-tmux-check`, which reads as "disable a safety check" - so a
+ * user on a machine with no tmux at all could not follow the documented order (`init`,
+ * then `up --use-herdr`) without being told to bypass something. Reported by a real user
+ * on macOS with herdr and no tmux: init refused, they worked around it, and the workaround
+ * left a stale config that launched the wrong agent.
+ *
+ * `multiplexer` is resolved from the flag OR from what the worktree already recorded, so a
+ * re-init in a worktree that is already on herdr (the usual way to re-pull RELAYROOM.md)
+ * is not blocked either.
  */
-function assertInsideTmux(opts: InitOpts): void {
-  if (opts.tmuxCheck === false || process.env.TMUX) return
+function assertPaneAvailable(opts: InitOpts, multiplexer: "tmux" | "herdr"): void {
+  if (opts.tmuxCheck === false || multiplexer === "herdr" || process.env.TMUX) return
   const part = opts.part ?? "agent"
   console.error(
     [
       "error: not inside a tmux session.",
       "",
-      "RelayRoom delivers messages by sending keystrokes to your agent's tmux pane,",
-      "so the agent must run inside tmux. Create a session and re-run inside it:",
+      "RelayRoom delivers messages by typing into your agent's pane. Under tmux that",
+      "means this must run inside a session. Create one and re-run inside it:",
       "",
       `  tmux new -s relayroom-${part}`,
       "",
-      "Then, inside that tmux session, run your agent and the relayroom commands.",
-      "(advanced: pass --no-tmux-check to skip this guard.)",
+      "Using herdr instead? Say so and this check does not apply:",
+      "",
+      "  relayroom init --multiplexer herdr ...",
+      "",
+      "(advanced: --no-tmux-check skips the check without recording a multiplexer.)",
+    ].join("\n"),
+  )
+  process.exit(1)
+}
+
+/**
+ * Refuse to silently re-point a worktree that is already registered as something else.
+ *
+ * Identity fields resolve flag -> saved, which is what makes a bare `relayroom init`
+ * work in an existing worktree. The gap that leaves: an EXPLICIT flag that disagrees with
+ * the saved value used to win without comment, so a worktree could change part or agent
+ * because someone re-ran a command from their shell history. That is the same shape as
+ * the flag that was silently ignored - the command reports success and the worktree is
+ * not what the person just typed.
+ *
+ * Only an explicit flag can trigger this. An omitted one still means "reuse what is
+ * saved", because that is the documented way to re-pull RELAYROOM.md.
+ */
+function assertIdentityMatches(opts: InitOpts, saved: RelayRoomConfig): void {
+  if (opts.force) return
+  const clashes: string[] = []
+  if (opts.part && saved.part && opts.part !== saved.part) clashes.push(`part: ${saved.part} -> ${opts.part}`)
+  if (opts.agent && saved.agent && opts.agent !== saved.agent) clashes.push(`agent: ${saved.agent} -> ${opts.agent}`)
+  if (clashes.length === 0) return
+  console.error(
+    [
+      "error: this worktree is already registered as something else.",
+      "",
+      ...clashes.map((c) => `  ${c}`),
+      "",
+      "Re-running init here would re-point it, and everything that reads the config -",
+      "the pager, the wake hook, rr.sh - would follow. If that is what you want:",
+      "",
+      "  relayroom init --force ...",
+      "",
+      "If you meant a different worktree, run it there instead.",
     ].join("\n"),
   )
   process.exit(1)
@@ -1782,15 +1838,22 @@ function ensureLine(
  * and reference it from CLAUDE.md / AGENTS.md with one `@RELAYROOM.md` line.
  */
 export async function init(opts: InitOpts): Promise<void> {
-  // Guard: must run inside tmux so the pager can wake this agent. Blocks unless
-  // --no-tmux-check. When inside tmux, default the pager target to this session.
-  assertInsideTmux(opts)
-
   const dir = resolve(opts.dir ?? ".")
   // Identity resolves explicit flag -> previously-saved config, so a re-init in an
   // existing worktree needs NO flags (e.g. `! relayroom init` from inside the agent
   // to re-pull RELAYROOM.md). writeConfig merges, so omitted fields keep their value.
+  //
+  // READ BEFORE THE GUARDS, both of which need it: the pane check has to know whether
+  // this worktree is already on herdr, and the identity check has to know what it is
+  // already registered as.
   const saved = readConfig(dir)
+  const multiplexer = opts.multiplexer ?? saved.multiplexer ?? "tmux"
+  // Guard: there must be a pane the pager can type into. Under tmux that means running
+  // inside a session; under herdr the worktree path is the address and nothing here has
+  // to be inside anything.
+  assertPaneAvailable(opts, multiplexer)
+  // Guard: do not re-point a worktree that is registered as a different part/agent.
+  assertIdentityMatches(opts, saved)
   const code = opts.code ?? saved.code
   if (!code) {
     console.error(
@@ -1868,6 +1931,10 @@ export async function init(opts: InitOpts): Promise<void> {
     server,
     agent: opts.agent,
     token: opts.token,
+    // Only an explicit flag writes this. Defaulting it to "tmux" here would stamp a
+    // choice on every worktree that never made one, and "absent" is a different fact
+    // from "someone chose tmux" - the rollback path depends on telling them apart.
+    multiplexer: opts.multiplexer,
   })
   console.log(`wrote ${configFile}`)
   if (ensureLine(join(dir, ".gitignore"), `${RELAYROOM_DIR}/`, { create: true }) === "added") {

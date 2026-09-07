@@ -83,7 +83,15 @@ program
   .option("--dir <path>", "worktree directory", ".")
   .option("--no-reference", "do not add @RELAYROOM.md to the agent instruction file")
   .option("--no-tmux-check", "skip the guard that requires running inside a tmux session")
-  .action((opts) => init(opts))
+  .option("--multiplexer <name>", "tmux (default) or herdr - herdr worktrees need no tmux session")
+  .option("--force", "re-point a worktree already registered as a different part/agent")
+  .action((opts) => {
+    if (opts.multiplexer !== undefined && opts.multiplexer !== "tmux" && opts.multiplexer !== "herdr") {
+      console.error(`error: --multiplexer must be "tmux" or "herdr" (got "${opts.multiplexer}")`)
+      process.exit(1)
+    }
+    return init(opts)
+  })
 
 // ── pager: wake an idle tmux session on new messages ────────────────────────────
 program
