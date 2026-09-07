@@ -51,11 +51,26 @@ export function matchPaneByCwd(panes, worktreePath) {
  *  backend uses, for the same reason: typing a wake into a shell spams it. */
 const SHELL_NAMES = new Set(["zsh", "bash", "sh", "fish", "tcsh", "dash", "ksh"])
 
-/** Does this pane hold something other than a login shell? herdr answers directly with
- *  the foreground process list, which is the check tmux needed a `ps` subtree walk for. */
-export function processesLookLikeAgent(processes) {
+/**
+ * Does this pane hold something other than a login shell? herdr answers directly with the
+ * foreground process list, which is the check tmux needed a `ps` subtree walk for.
+ *
+ * `excludePids` IS NOT AN OPTIMISATION. A caller that runs INSIDE the pane it is asking
+ * about is in that foreground list itself, and it does not look like a shell: measured,
+ * a node process in a herdr pane is reported as `MainThread`, so the name test says
+ * "agent" about the asker. A user who did the natural thing - cd into the worktree in the
+ * pane herdr gave him and run `up` - got "an agent is already running" from a pane whose
+ * only other process was zsh, and no agent was ever launched.
+ *
+ * Names cannot fix this (`MainThread` is not a name anything can special-case), so the
+ * exclusion is by pid: the caller passes its own pid and its ancestors, and anything in
+ * that chain is not evidence of an agent.
+ */
+export function processesLookLikeAgent(processes, excludePids) {
   if (!Array.isArray(processes) || processes.length === 0) return false
+  const skip = excludePids instanceof Set ? excludePids : new Set(excludePids ?? [])
   return processes.some((p) => {
+    if (skip.has(Number(p?.pid))) return false
     const name = String(p?.name || "").replace(/^-/, "")
     return name && !SHELL_NAMES.has(name.split("/").pop())
   })
