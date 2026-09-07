@@ -4,6 +4,34 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.8.3] - 2026-09-07
+
+Patch release. No migration.
+
+### Fixed
+
+**`./rr.sh up` now notices that the script itself is older than the installed CLI, and
+regenerates before doing anything.** `rr.sh` is written into each worktree and never
+updates itself, so a machine can carry a current CLI and a script from three releases back.
+That drift does not announce itself: a flag the old script does not know is silently
+dropped, so `./rr.sh up --bypass --use-herdr` on a 0.7.0-generation script started tmux and
+said nothing about it. Observed on worktrees last set up on 2026-08-05, with 0.8.2
+installed the whole time.
+
+There was already an update path and it could not cover this. It fires on
+`.relayroom/.update`, which the pager writes from the hub's heartbeat reply, so a worktree
+whose pager is dead never gets the marker, and a dead pager is exactly the state after a
+reboot, a herdr restart, or a month away. It answers "is there a newer CLI on npm". The
+new check answers "is the installed CLI newer than this script", which needs neither the
+hub nor a running pager. Both stay.
+
+`init` now stamps `RR_GENERATED` into the script, and `up` and `launch` compare it with
+`relayroom --version` before anything else runs: installed newer, the script regenerates
+and re-execs once; equal, nothing happens; **no stamp, stale**, because every script written
+before this release has none and those are precisely the ones that need it; installed
+older than the stamp, a warning and nothing else; CLI cannot answer, nothing happens.
+`status` and `statusline` are exempt, since the status bar polls them constantly.
+
 ## [0.8.2] - 2026-09-07
 
 Patch release. No migration.
