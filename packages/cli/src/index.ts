@@ -7,6 +7,7 @@ import { runtimePath } from "./runtime"
 import { DEFAULT_SERVER } from "./constants"
 import { AGENT_IDS } from "./providers"
 import { readConfig, writeConfig } from "./config"
+import { CLI_VERSION } from "./version"
 import { closePane, ensureWorkspace, findPane, herdrAgentName, herdrStatus, launchInPane, nameAgent } from "./herdr"
 import { herdrCall } from "../runtime/herdr-client.mjs"
 import { basename, resolve } from "node:path"
@@ -43,9 +44,9 @@ function need(value: string | undefined, name: string): string {
 }
 
 // Injected at build time by tsup from package.json, so `relayroom --version`
-// always matches the published (lockstep) version.
-declare const __CLI_VERSION__: string
-const VERSION = typeof __CLI_VERSION__ === "string" ? __CLI_VERSION__ : "0.0.0-dev"
+// always matches the published (lockstep) version - and matches the stamp `init`
+// writes into rr.sh, which is what makes the staleness check meaningful.
+const VERSION = CLI_VERSION
 
 const program = new Command()
   .name("relayroom")

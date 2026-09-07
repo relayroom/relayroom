@@ -108,7 +108,17 @@ exit 0
       { mode: 0o755 },
     )
     chmodSync(join(bin, "relayroom"), 0o755)
-    env = { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, RR_CHANNEL_WATCH_TICKS: "1" }
+    // RR_SELF_UPDATED: this suite generates rr.sh from SRC (where the build-time version
+    // define is absent, so the stamp reads 0.0.0-dev) and then runs it against the built
+    // dist, which reports the real version. That is a genuine mismatch and `up` correctly
+    // wants to regenerate - which would replace the script mid-test and assert about a
+    // different run. The flag is the same "already regenerated" guard the re-exec uses.
+    env = {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH ?? ""}`,
+      RR_CHANNEL_WATCH_TICKS: "1",
+      RR_SELF_UPDATED: "1",
+    }
     delete env.TMUX
     hub = createServer((_req, res) => {
       res.writeHead(200, { "content-type": "text/markdown", "x-relayroom-project-slug": "demo" })
