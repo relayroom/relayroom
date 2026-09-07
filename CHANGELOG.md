@@ -4,6 +4,47 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.8.1] - 2026-09-07
+
+Patch release. No migration.
+
+### Fixed
+
+**`relayroom init` no longer demands tmux from a herdr user.** Pass `--multiplexer herdr`
+and it records the choice and skips the tmux check; a worktree that is already on herdr is
+not asked again. A new user on macOS with herdr and no tmux followed the setup page and
+could not get past `init`: it answered "not inside a tmux session" and offered only
+`--no-tmux-check`, a flag that reads as switching a safety check off. The documented order
+made it worse, because the `multiplexer` field was written by `up --use-herdr`, which runs
+after the command that refuses. The refusal message now names the herdr path.
+
+**`init` refuses to re-point a worktree registered as a different part or agent.** The
+same user's next command ran against a `.relayroom/config.json` left by an earlier attempt
+(another part, `codex` as the agent): `up` launched codex, and what they saw was "claude
+did not run". Nothing had failed; the tool did what an old file said. `init` now prints
+both values and `--force` if that is what you want. An omitted flag still means "reuse
+what is saved", so a bare `relayroom init` keeps re-pulling RELAYROOM.md.
+
+**Dashboard pages no longer scroll sideways on narrow screens.** Every route was rendered
+from 1440px down to 375px. Four overflowed at the page level (the telemetry banner's
+button row, the Organizations header button, the threads page's header row and status
+filter strip); three more overflowed on content once the fixtures carried a 200-character
+subject, a 300-character unbroken token and a 71-character part name (thread status
+controls, agent header, knowledge body). The knowledge one was not a narrow-screen bug:
+`whitespace-pre-wrap` breaks only at whitespace, so a lesson quoting a token or a stack
+frame pushed the page 1608px wide on a 1440px desktop. Everything now shrinks, wraps or
+breaks inside its own container; nothing hides overflow on the page.
+
+**The project tab bar scrolls the active tab into view.** It already contained its own
+overflow; it did not show where you were, so opening Settings on a phone drew the row from
+Overview with the active tab 400px off-screen.
+
+### Known limitation
+
+herdr detects `claude` panes natively and not `codex`, so `herdr name` (the part's row in
+herdr's sidebar) applies to claude parts only. A codex part in a herdr pane works; it shows
+up unnamed.
+
 ## [0.8.0] - 2026-09-03
 
 Minor release. **herdr is now a first-class multiplexer next to tmux.** For a tmux user
