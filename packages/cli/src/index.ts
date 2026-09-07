@@ -243,9 +243,14 @@ herdrCmd
     }
     // Confirmed by watching the pane's processes, never by the response to send_keys:
     // herdr answers "ok" to input it delivered nowhere.
-    const started = await launchInPane(pane.pane_id, command)
-    console.log(`pane=${pane.pane_id} started=${started}`)
-    if (!started) process.exit(1)
+    const res = await launchInPane(pane.pane_id, command)
+    // `deferred` is a real outcome, not a soft failure: the command is in the pane's
+    // input and the shell runs it the moment this process exits. Reporting it as
+    // started=false would send the caller down the "no agent appeared" path for a launch
+    // that is about to happen, and reporting it as started=true would be a claim nobody
+    // checked. It gets its own word.
+    console.log(`pane=${pane.pane_id} started=${res.started} deferred=${res.deferred}`)
+    if (!res.started && !res.deferred) process.exit(1)
   })
 
 herdrCmd

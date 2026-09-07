@@ -782,12 +782,27 @@ hd_up() {
     prepare_launch
     echo "starting '$LAUNCH' in this worktree's herdr pane"
     # The launch is confirmed by watching the pane's processes, never by the response to
-    # send_keys - herdr answers ok to input it delivered nowhere.
-    $CLI herdr launch --dir "$ROOT" "$LAUNCH" || {
+    # send_keys - herdr answers ok to input it delivered nowhere. The exception is a
+    # launch into the pane THIS SCRIPT is running in, which cannot be watched: the shell
+    # only reads the typed command once this script exits. That case reports \`deferred\`.
+    _lr="$($CLI herdr launch --dir "$ROOT" "$LAUNCH")" || {
       echo "rr: the command was typed into the pane but no agent process appeared." >&2
       echo "    The pane is still there - look at it before retrying." >&2
       return 1
     }
+    echo "$_lr"
+    case "$_lr" in
+      *deferred=true*) LAUNCH_DEFERRED=1 ;;
+    esac
+  fi
+
+  # A deferred launch has not happened yet, so anything that needs a running agent must
+  # not be attempted and must not be reported as broken. Naming is the one such step, and
+  # its failure line ("could not name this part's agent row") was appearing next to "an
+  # agent is already running" in the same output - two lines that cannot both be true.
+  if [ "\${LAUNCH_DEFERRED:-0}" = "1" ]; then
+    echo "rr: '$LAUNCH' is queued in THIS pane and starts when this command finishes."
+    echo "    Naming and the sidebar row are left to the pager, which re-asserts them."
   fi
 
   # Name the agent row. Without this every part in the grouped workspace renders as the
@@ -795,8 +810,10 @@ hd_up() {
   # terminal title belongs to Claude Code, which rewrites it as the conversation changes.
   # Re-applied on every up because the agent record belongs to the terminal, so a relaunch
   # is a new agent; setting it each time is cheaper than knowing which cases drop it.
-  _nm="$($CLI herdr name "$PART" --agent "$PRIMARY" --dir "$ROOT" 2>/dev/null || true)"
+  _nm="skipped"
+  [ "\${LAUNCH_DEFERRED:-0}" = "1" ] || _nm="$($CLI herdr name "$PART" --agent "$PRIMARY" --dir "$ROOT" 2>/dev/null || true)"
   case "\${_nm:-}" in
+    skipped) : ;;
     named=true*) : ;;
     # Cosmetic, so it never fails the launch - but silence here is indistinguishable from
     # success, and the symptom (every part showing the same label) looks like herdr's
