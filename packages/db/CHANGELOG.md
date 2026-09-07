@@ -1,5 +1,11 @@
 # @relayroom/db
 
+## 0.8.3
+
+### Patch Changes
+
+- @relayroom/shared@0.8.3
+
 ## 0.8.2
 
 ### Patch Changes
