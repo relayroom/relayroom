@@ -19,12 +19,16 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { connectAgent } from "@/modules/agent/actions"
 import { useRealtime } from "@/components/realtime/realtime-provider"
 
-type AgentId = "claude" | "agy" | "codex"
-// Selectable CLIs in the connect guide. (Google shut down the Gemini CLI on
-// 2026-06-18; its successor Antigravity CLI `agy` replaces it here.)
+type AgentId = "claude" | "codex"
+// Selectable CLIs in the connect guide.
+//
+// `agy` (Antigravity) is deliberately NOT offered here any more, and this is a
+// change to the GUIDE only: the CLI still accepts `--agent agy`, rr.sh still
+// launches it and the hooks path is intact, so worktrees already set up that way
+// keep working. Removing it from the type as well is the point - a selectable id
+// with no branch to build its command is a dead path that compiles.
 const AGENTS: { id: AgentId; label: string }[] = [
   { id: "claude", label: "Claude Code" },
-  { id: "agy", label: "Antigravity CLI" },
   { id: "codex", label: "Codex" },
 ]
 
@@ -35,27 +39,18 @@ const AGENTS: { id: AgentId; label: string }[] = [
 const CLI_CMD = process.env.NEXT_PUBLIC_RELAYROOM_CLI ?? "npx -y @relayroom/cli"
 
 // The token authenticates every MCP call. Bake it into the command so the agent
-// authenticates directly (no OAuth/IDE prompt): claude/agy take an inline
-// header; codex reads it from an env var (the `export` line above the add). We
-// remove any existing entry first so a re-connect swaps in the fresh token
-// instead of hitting "already exists" and keeping a stale (failing) config.
+// authenticates directly (no OAuth/IDE prompt): claude takes an inline header;
+// codex reads it from an env var (the `export` line above the add). We remove any
+// existing entry first so a re-connect swaps in the fresh token instead of hitting
+// "already exists" and keeping a stale (failing) config.
+//
+// The `agy` branch that used to live here merged a server into
+// ~/.gemini/config/mcp_config.json by hand, because Antigravity has no `mcp add`.
+// It went with the option: the guide cannot offer agy any more, so the branch was
+// unreachable, and an unreachable copy of a config-file writer is the kind that
+// drifts from the CLI's own AGY_MCP_MERGE_SCRIPT without anyone noticing. That
+// script in packages/cli/src/providers.ts is the surviving one.
 function mcpAddCommand(agent: AgentId, name: string, url: string, token: string): string {
-  if (agent === "agy") {
-    // agy (Antigravity) has no `mcp add` command - it reads
-    // ~/.gemini/config/mcp_config.json. Merge the server in via node, preserving any
-    // other servers. Token via env so it stays out of shell history. Mirrors the
-    // AGY_MCP_MERGE_SCRIPT in packages/cli/src/providers.ts.
-    const merge =
-      'const fs=require("fs"),os=require("os"),path=require("path");' +
-      'if(!process.env.RELAYROOM_TOKEN){console.error("agy MCP: RELAYROOM_TOKEN not set");process.exit(1)}' +
-      'const p=path.join(os.homedir(),".gemini","config","mcp_config.json");' +
-      'fs.mkdirSync(path.dirname(p),{recursive:true});' +
-      'let c={};try{c=JSON.parse(fs.readFileSync(p,"utf8")||"{}")}catch(e){}' +
-      'c.mcpServers=c.mcpServers||{};' +
-      'c.mcpServers[process.argv[2]]={url:process.argv[1],headers:{Authorization:"Bearer "+(process.env.RELAYROOM_TOKEN||"")}};' +
-      'fs.writeFileSync(p,JSON.stringify(c,null,2))'
-    return `RELAYROOM_TOKEN="${token}" node -e '${merge}' "${url}" ${name}`
-  }
   const bin = agent === "codex" ? "codex" : "claude"
   const add =
     agent === "codex"
@@ -311,12 +306,25 @@ export function AgentConnectGuideDialog({ connectCode, part, projectSlug, server
               // pager wakes whichever CLI is in front via `tmux send-keys`.
               const insideLines: string[] = clis.includes("codex") ? [`export RELAYROOM_TOKEN="${token}"`] : []
               for (const cli of clis) insideLines.push(mcpAddCommand(cli, "relayroom", url, token))
+              // `--multiplexer herdr` is what lets init run at all on a herdr machine.
+              // init guards on being inside a tmux session and refuses otherwise,
+              // writing no config - after which `hooks install` has no --code and
+              // ./rr.sh does not exist, so the rest of this block cannot complete. A
+              // herdr worktree legitimately has no tmux session, and this flag is the
+              // exemption. The guard gained it in 0.8.1; before that this block was
+              // correct, which is why it emitted a working sequence and then quietly
+              // stopped doing so without anything here changing.
+              //
+              // NOT written for tmux. Absence means tmux, and the field is intent:
+              // rollback reads "nobody chose" and "someone chose tmux" differently, so
+              // writing it here would spend that distinction on every default install.
+              const muxFlag = multiplexer === "herdr" ? " --multiplexer herdr" : ""
               insideLines.push(
                 // One init wires RELAYROOM.md + each CLI's instruction file (CSV).
                 // Pass --server so init fetches RELAYROOM.md from THIS hub (matching the
                 // mcp add URL); without it, init falls back to localhost and 404s on a
                 // remote/LAN deployment.
-                `${CLI_CMD} init --code ${connectCode} --part ${part} --target ${session} --agent ${clis.join(",")} --token ${token} --server ${base}`,
+                `${CLI_CMD} init --code ${connectCode} --part ${part} --target ${session} --agent ${clis.join(",")} --token ${token} --server ${base}${muxFlag}`,
               )
               for (const cli of clis) insideLines.push(`${CLI_CMD} hooks install --agent ${cli}`)
               // The last line differs by multiplexer, and it is a different VERB rather
