@@ -1,5 +1,5 @@
 # ---- deps + build stage ----
-FROM node:24-alpine AS builder
+FROM node:24.22.1-alpine AS builder
 RUN corepack enable
 
 WORKDIR /app
@@ -28,7 +28,7 @@ COPY test test
 RUN pnpm --filter @relayroom/web build
 
 # ---- runtime stage ----
-FROM node:24-alpine AS runner
+FROM node:24.22.1-alpine AS runner
 
 WORKDIR /app
 
