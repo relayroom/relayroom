@@ -4,6 +4,47 @@ All notable changes to RelayRoom are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com) and [Semantic Versioning](https://semver.org).
 Server, web, and the client packages release in lockstep under one version.
 
+## [0.8.5] - 2026-10-28
+
+Security patch release. No migration. Upgrade both hub containers and the CLI; nothing
+in the data model or the wire protocol changes.
+
+### Security
+
+**The container images now pin `node:24.22.1-alpine`.** The 0.8.4 images shipped Node
+24.21.0 because both Dockerfiles used the floating `node:24-alpine` tag and were built
+before 24.22.1 existed. 24.22.1 is the floor for the October 2026 advisory set: the
+Brotli out-of-bounds write (CVE-2026-111497), three TLS hostname-verification bypasses,
+and DNS NUL truncation. The server does not call zlib directly, so the Node upgrade is
+the whole fix on that side. The tag is pinned now and will be bumped on purpose.
+
+**Next.js 16.2.9 -> 16.4.3 in the dashboard.** 16.4.1 closes five critical remote code
+execution paths (two in the image optimizer, `next/og`, `use cache`, Windows paths) and
+16.2.11 a set of SSRF and denial-of-service issues. The dashboard renders `next/image`,
+so the optimizer path was reachable on a hub that is exposed, as the public one is.
+
+**Dependency floor raised across the board.** `@modelcontextprotocol/sdk` 1.29 -> 1.32.2
+(clears the `proxy-addr` critical and the `fast-uri` / `body-parser` highs it pulled in
+through express), `better-auth` 1.6.16 -> 1.6.33 (magic-link and email-OTP pre-account
+hijack, the oidc/mcp refresh-token and `javascript:` redirect fixes), `nodemailer` 8 ->
+10, `sharp` 0.35.5, `zod` 4.6.7, `dompurify` 3.4.17, `mermaid` 11.17.2, and a transitive
+refresh that clears `postcss`, `nanoid`, `js-yaml`, `brace-expansion`, `ip-address`,
+`browserslist` and `source-map-js`.
+
+`better-auth` stays on the 1.6 line deliberately. 1.7 moves the `mcp()` plugin into
+`@better-auth/mcp` with a flat option shape, a required `resource`, and a mandatory
+`jwt()` plugin. That rewrites the OAuth flow agents use to connect to a hub, which is a
+planned migration and not a patch. The three advisories the 1.6 line still reports each
+require a plugin this hub does not enable: GHSA-965c-763c-88jm needs magic link plus a
+social provider, GHSA-r4xp-prcw-77qf needs `oauthProxy`, GHSA-q84f-53jg-9ppm needs
+`deviceAuthorization`. The hub signs in with email and password only.
+
+### Upgrading
+
+Pull the 0.8.5 images and restart server and web. `npm i -g @relayroom/cli@0.8.5` on
+each client; the CLI itself has no code change in this release and is bumped in
+lockstep only.
+
 ## [0.8.4] - 2026-09-15
 
 Patch release. No migration.
