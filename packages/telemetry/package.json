@@ -9,10 +9,10 @@
   },
   "dependencies": {
     "@relayroom/db": "workspace:*",
-    "drizzle-orm": "^0.45.2"
+    "drizzle-orm": "^0.45.4"
   },
   "devDependencies": {
-    "vitest": "^4.1.8"
+    "vitest": "^4.1.12"
   },
   "private": true
 }

@@ -18,16 +18,16 @@
     "migrate": "tsx scripts/migrate.ts"
   },
   "dependencies": {
-    "drizzle-orm": "^0.45.2",
-    "postgres": "^3.4.9",
-    "@relayroom/shared": "workspace:*"
+    "@relayroom/shared": "workspace:*",
+    "drizzle-orm": "^0.45.4",
+    "postgres": "^3.4.9"
   },
   "devDependencies": {
-    "@types/pg": "^8.20.0",
-    "drizzle-kit": "^0.31.10",
-    "pg": "^8.21.0",
-    "tsx": "^4.22.4",
-    "vitest": "^4.1.8"
+    "@types/pg": "^8.23.1",
+    "drizzle-kit": "^0.31.11",
+    "pg": "^8.23.1",
+    "tsx": "^4.23.15",
+    "vitest": "^4.1.12"
   },
   "private": true
 }
